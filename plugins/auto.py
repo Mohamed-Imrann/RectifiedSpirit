@@ -38,7 +38,7 @@ async def send_to_bot_and_wait(userbot):
             edited_message_text = message.text
 
             await userbot.send_message(
-                bot_username,
+                BOT_USERNAME,
                 text=f"/quality {series_name} \"{language}\" \"{season}\" \"{quality}\" {edited_message_text}"
             )
             break
