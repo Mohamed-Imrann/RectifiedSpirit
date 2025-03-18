@@ -24,9 +24,9 @@ API_HASH = '047838cb76d54bc445e155a7cab44664'
 BOT_TOKEN = '7448922857:AAEiLcjbuhP_XNSl0KOiCj70OpBJWFWKbCA'
 #BOT_TOKEN = '7976955865:AAGZipH-V_-jrN5fKDrB0Bi_bPMtUzavA94' #test
 
-API_ID2 = "25460208" #Userbot Should Be Added In ADMINS and In CHANNELS
-API_HASH2 = "b815ff10e29033e7526686242428e113"
-SESSION_STRING = "BQAf70YAJnjQSkYuysscl5T0Q5rRCrTmCC8ZlLvSQFpg1D-it28aRBwfJr7aMpaUvphnO8ljqcKp0a852xzcywe7ftIdq3C5CR0L_XAwzbmsW8tJB2MVjgSLturI2l94QKfrun1IoPdP1H_-37pXFX7QKJBmBBpzyWTCqy8ZvfhnrzVjBnLLJsBsJNW-OX1tXSeT94sIdpXloJX7fBZtIsfzyJoD9877C9bMn8I2c0Y0rIS93uHZOk92VqeWKiTBBBQsTzQ8M0YAPihBbu3-Y6HMT01obHqFpwLRqhofJuaMdoMmnymMp-ohBDPZa6wYNs2elkEr1oytw4KyBKkoPk_HHjZQAAAAGH1bTlAA" #Pyrov2
+#API_ID2 = "25460208" #Userbot Should Be Added In ADMINS and In CHANNELS
+#API_HASH2 = "b815ff10e29033e7526686242428e113"
+#SESSION_STRING = "BQAf70YAJnjQSkYuysscl5T0Q5rRCrTmCC8ZlLvSQFpg1D-it28aRBwfJr7aMpaUvphnO8ljqcKp0a852xzcywe7ftIdq3C5CR0L_XAwzbmsW8tJB2MVjgSLturI2l94QKfrun1IoPdP1H_-37pXFX7QKJBmBBpzyWTCqy8ZvfhnrzVjBnLLJsBsJNW-OX1tXSeT94sIdpXloJX7fBZtIsfzyJoD9877C9bMn8I2c0Y0rIS93uHZOk92VqeWKiTBBBQsTzQ8M0YAPihBbu3-Y6HMT01obHqFpwLRqhofJuaMdoMmnymMp-ohBDPZa6wYNs2elkEr1oytw4KyBKkoPk_HHjZQAAAAGH1bTlAA" #Pyrov2
 
 # Bot settings
 CACHE_TIME = int(environ.get('CACHE_TIME', 300))
@@ -75,5 +75,5 @@ PROTECT_CONTENT = is_enabled((environ.get('PROTECT_CONTENT', "False")), False)
 PUBLIC_FILE_STORE = is_enabled((environ.get('PUBLIC_FILE_STORE', "False")), False)
 PORT = "8080"
 
-userbot = Client("my_userbot", api_id=API_ID2, api_hash=API_HASH2, session_string=SESSION_STRING)
-userbot.start()
+#userbot = Client("my_userbot", api_id=API_ID2, api_hash=API_HASH2, session_string=SESSION_STRING)
+#userbot.start()
