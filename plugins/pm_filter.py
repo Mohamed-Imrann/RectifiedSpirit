@@ -213,7 +213,7 @@ async def cb_handler(client, query: CallbackQuery):
                 return
 
             series = get_series_name(series_key)
-            links = get_links(f"{series_key.lower().replace(' ', '')}·{language}·{season}")
+            links = get_links(f"{series_key.lower().replace(' ', '')}-{language}-{season}")
             if links:
                 buttons = [
                     InlineKeyboardButton(quality, callback_data=f"gt:{link}")
