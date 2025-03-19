@@ -1,7 +1,7 @@
 import pyrogram 
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
-from info import ADMINS
+from info import ADMINS, SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG
 from database.crazy_db import (
     get_series, get_links, get_series_name, get_languages, get_seasons, get_poster_manuel
 )
@@ -15,9 +15,6 @@ import random
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.ERROR)
 
-SPELL = (
-    'https://envs.sh/kJj.jpg'
-).split()
 
 imdb = Cinemagoer()
 
@@ -40,7 +37,6 @@ def find_most_similar_title(query, search_results):
                 return movie
     return None
 
-DEFAULT_POSTER = "https://envs.sh/kJK.jpg"
 
 async def alert_admins(client, series_key):
     alert_message = f"⚠️ Failed to fetch poster for series: <code>{series_key}</code>"
@@ -86,13 +82,12 @@ async def series_filter(client, message):
         
         if close_matches:
             buttons = [
-                InlineKeyboardButton(match, callback_data=f"spellcheck·{series_infos[series_names.index(match)]['key']}·{user_id}")
+                InlineKeyboardButton(match, callback_data=f"spellcheck-{series_infos[series_names.index(match)]['key']}-{user_id}")
                 for match in close_matches
             ]
             buttons_chunked = chunk_buttons(buttons, chunk_size=2)
             reply_markup = InlineKeyboardMarkup(buttons_chunked)
-            etho = await message.reply_photo(photo=random.choice(SPELL), caption="<b>Choose Your Series:</b>", reply_markup=reply_markup)
-            asyncio.create_task(DeleteMessage(etho))
+            etho = await message.reply_photo(photo=random.choice(SPELL_CHECK_IMAGE), caption="<b>Choose Your Series:</b>", reply_markup=reply_markup)
             return
 
     if series_name:
@@ -112,18 +107,18 @@ async def series_filter(client, message):
             "Available Languages:\n"
         )
         poster_url = get_movie_poster(series_key)
-        buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}·{lang.lower().replace(' ', '')}·{user_id}") for lang in languages]
+        buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}-{lang.lower().replace(' ', '')}-{user_id}") for lang in languages]
         buttons_chunked = chunk_buttons(buttons, chunk_size=2)
         reply_markup = InlineKeyboardMarkup(buttons_chunked)
         try:
             if poster_url:
                 etho = await message.reply_photo(photo=poster_url, caption=reply_text, reply_markup=reply_markup)
             else:
-                etho = await message.reply_photo(photo=DEFAULT_POSTER, caption=reply_text, reply_markup=reply_markup)
-            asyncio.create_task(DeleteMessage(etho))
+                etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG, caption=reply_text, reply_markup=reply_markup)
+            logger.info("postertrying")
         except pyrogram.errors.MediaEmpty:
             await alert_admins(client, series_key)
-            etho = await message.reply_photo(photo=DEFAULT_POSTER, caption=reply_text, reply_markup=reply_markup)
+            etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG, caption=reply_text, reply_markup=reply_markup)
             asyncio.create_task(DeleteMessage(etho))
 
 
@@ -131,7 +126,7 @@ async def series_filter(client, message):
 async def cb_handler(client, query: CallbackQuery):
     data = query.data
     user_id = str(query.from_user.id)
-    parts = data.split("·")
+    parts = data.split("-")
     if data == "close_data":
         await query.message.delete()
     elif data == "pages":
@@ -152,7 +147,7 @@ async def cb_handler(client, query: CallbackQuery):
             await query.answer(url=f"https://t.me/{temp.U_NAME}?start={start_parameter}")
         except pyrogram.errors.exceptions.bad_request_400.UrlInvalid:
             await query.answer("Invalid URL provided.", show_alert=True)
-    elif data.startswith("spellcheck·"):
+    elif data.startswith("spellcheck-"):
         series_key = parts[1]
         query_user_id = parts[2]
         if query_user_id != user_id:
@@ -167,18 +162,18 @@ async def cb_handler(client, query: CallbackQuery):
                 f"○ <b>Title:</b> <code>{series['title']}</code>\n○ <b>Released On:</b> <code>{series['released_on']}</code>\n○ <b>Genre:</b> <code>{series['genre']}</code>\n○ <b>Rating:</b> <code>{series['rating']}</code>\n\n"
                 "Available Languages:\n"
             )
-            buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}·{lang.lower().replace(' ', '')}·{user_id}") for lang in languages]
+            buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}-{lang.lower().replace(' ', '')}-{user_id}") for lang in languages]
             buttons_chunked = chunk_buttons(buttons, chunk_size=2)
             reply_markup = InlineKeyboardMarkup(buttons_chunked)
             try:
                 if poster_url:
                     await query.message.edit_media(media=InputMediaPhoto(poster_url), reply_markup=reply_markup)
                 else:
-                    await query.message.edit_media(media=InputMediaPhoto(DEFAULT_POSTER), reply_markup=reply_markup)
+                    await query.message.edit_media(media=InputMediaPhoto(NO_POSTER_FOUND_IMG), reply_markup=reply_markup)
                 await query.message.edit_text(text=reply_text, reply_markup=reply_markup)
             except pyrogram.errors.MediaEmpty:
                 await alert_admins(client, series_key)
-                await query.message.edit_media(media=InputMediaPhoto(DEFAULT_POSTER), reply_markup=reply_markup)
+                await query.message.edit_media(media=InputMediaPhoto(NO_POSTER_FOUND_IMG), reply_markup=reply_markup)
                 await query.message.edit_text(text=reply_text, reply_markup=reply_markup)
         else:
             await query.message.edit_text(text="Series not found.", disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
@@ -198,7 +193,7 @@ async def cb_handler(client, query: CallbackQuery):
                     "Available Seasons:\n"
                 )
                 
-                buttons = [InlineKeyboardButton(season, callback_data=f"{series_key}·{language}·{season.lower().replace(' ', '')}·{user_id}") for season in seasons]
+                buttons = [InlineKeyboardButton(season, callback_data=f"{series_key}-{language}-{season.lower().replace(' ', '')}-{user_id}") for season in seasons]
                 buttons_chunked = chunk_buttons(buttons)
                 buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"spellcheck-{series_key}-{user_id}")])
                 reply_markup = InlineKeyboardMarkup(buttons_chunked)
@@ -221,7 +216,7 @@ async def cb_handler(client, query: CallbackQuery):
                 ]
                 buttons_chunked = chunk_buttons(buttons, chunk_size=2)
                 if buttons_chunked:
-                    buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"{series_key}·{language}·{user_id}")])
+                    buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"{series_key}-{language}-{user_id}")])
                     reply_markup = InlineKeyboardMarkup(buttons_chunked)
                     await query.message.edit_text(
                         text=(

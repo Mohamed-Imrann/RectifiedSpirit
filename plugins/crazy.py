@@ -8,7 +8,7 @@ import re
 import shutil
 import os
 from telegraph import upload_file
-from info import ADMINS, TMP_DOWNLOAD_DIRECTORY
+from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, IMGBB_API_KEY
 from database.users_chats_db import db
 from database.crazy_db import (
     add_series, add_series_links, delete_series_and_links, delete_all_series_and_links,
@@ -246,7 +246,7 @@ async def imdb_selection_callback(client: Client, callback_query):
         await callback_query.message.reply("Failed to retrieve IMDb data.")
         return
 
-    series_key = movie.get('title').lower().replace(" ", "")
+    series_key = movie.get('title').lower().replace(" ", "").replace("-", "~")
 
     series_data = {
         'title': movie.get('title', 'N/A'),
