@@ -1,10 +1,8 @@
 import re
 import asyncio
-from info import userbot, CHANNELS, BOT_USERNAME
+from info import userbot, BOT_USERNAME, CHANNELS
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from database.crazy_db import add_language, add_season, get_languages, get_seasons
-
 
 first_link = None
 last_link = None
@@ -13,12 +11,6 @@ language = None
 season = None
 quality = None
 
-first_link2 = None
-last_link2 = None
-series_name2 = None
-language2 = None
-season2 = None
-quality2 = None
 
 def extract_series_details(text):
     pattern = r'^SADD\s+([^\s]+)\s+"([^"]+)"\s+"([^"]+)"\s+"([^"]+)"'
@@ -28,20 +20,32 @@ def extract_series_details(text):
     return None, None, None, None
 
 
+def convert_link_to_format(first_link, last_link):
+    first_match = re.search(r't\.me/c/(\d+)/(\d+)', first_link)
+    last_match = re.search(r't\.me/c/(\d+)/(\d+)', last_link)
+
+    if first_match and last_match:
+        channel_id = first_match.group(1)
+        first_msg_id = int(first_match.group(2))
+        last_msg_id = int(last_match.group(2))
+
+        adjusted_first = first_msg_id + 1
+        adjusted_last = last_msg_id - 1
+
+        return f"get_{channel_id}_{adjusted_first}_{adjusted_last}"
+
+    return None
+
+
 async def send_to_bot_and_wait(userbot):
     global first_link, last_link, series_name, language, season, quality
-    await userbot.send_message(BOT_USERNAME, text=f"/batch {first_link} {last_link}")
-    await asyncio.sleep(5)
 
-    async for message in userbot.get_chat_history(BOT_USERNAME, limit=1):
-        if message and message.text:
-            edited_message_text = message.text
-
-            await userbot.send_message(
-                BOT_USERNAME,
-                text=f"/quality {series_name} \"{language}\" \"{season}\" \"{quality}\" {edited_message_text}"
-            )
-            break
+    converted_format = convert_link_to_format(first_link, last_link)
+    if converted_format:
+        await userbot.send_message(
+            BOT_USERNAME,
+            text=f"/quality {series_name} \"{language}\" \"{season}\" \"{quality}\" {converted_format}"
+        )
 
     first_link = None
     last_link = None
