@@ -22,9 +22,9 @@ API_ID = environ['API_ID']
 API_HASH = environ['API_HASH']
 BOT_TOKEN = environ['BOT_TOKEN']
 BOT_USERNAME = environ['BOT_USERNAME']
-API_ID2 = environ['API_ID2']
-API_HASH2 = environ['API_HASH2']
-SESSION_STRING = environ['SESSION_STRING']
+#API_ID2 = environ['API_ID2']
+#API_HASH2 = environ['API_HASH2']
+#SESSION_STRING = environ['SESSION_STRING']
 
 # Required Database and Channel Settings
 DATABASE_URI = environ['DATABASE_URI']
@@ -65,5 +65,5 @@ PROTECT_CONTENT = is_enabled(environ.get('PROTECT_CONTENT', "False"), False)
 PUBLIC_FILE_STORE = is_enabled(environ.get('PUBLIC_FILE_STORE', "False"), False)
 PORT = environ.get('PORT', "8080")
 
-userbot = Client("my_userbot", api_id=API_ID2, api_hash=API_HASH2, session_string=SESSION_STRING)
-userbot.start()
+#userbot = Client("my_userbot", api_id=API_ID2, api_hash=API_HASH2, session_string=SESSION_STRING)
+#userbot.start()
