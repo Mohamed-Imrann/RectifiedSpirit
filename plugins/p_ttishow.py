@@ -2,7 +2,7 @@ from pyrogram import Client, filters, enums
 import os, pytz, re, datetime, logging, asyncio, math, time, sys, psutil, shutil
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.errors.exceptions.bad_request_400 import MessageTooLong, PeerIdInvalid
-from info import ADMINS, LOG_CHANNEL, MELCOW_NEW_USERS
+from info import ADMINS, LOG_CHANNEL
 from database.users_chats_db import db
 from utils import get_size, temp, get_settings
 from Script import script
