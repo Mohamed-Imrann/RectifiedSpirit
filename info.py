@@ -67,5 +67,6 @@ PORT = environ.get('PORT', "8080")
 
 LONG_IMDB_DESCRIPTION = "True"
 MAX_LIST_ELM = "8"
+USE_CAPTION_FILTER = "False"
 #userbot = Client("my_userbot", api_id=API_ID2, api_hash=API_HASH2, session_string=SESSION_STRING)
 #userbot.start()
