@@ -2,7 +2,7 @@ import re
 import asyncio
 from pyrogram import filters, Client, enums
 from pyrogram.errors.exceptions.bad_request_400 import ChannelInvalid, UsernameInvalid, UsernameNotModified
-from pyrogram.types import IlineKeyboardButton, InlineKeyboardMarkup, Message
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from info import ADMINS, AUTH_CHANNEL, DB_CHANNEL
 from database.ia_filterdb import unpack_new_file_id
 from utils import temp, get_message_id
