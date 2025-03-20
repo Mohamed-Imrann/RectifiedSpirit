@@ -65,5 +65,7 @@ PROTECT_CONTENT = is_enabled(environ.get('PROTECT_CONTENT', "False"), False)
 PUBLIC_FILE_STORE = is_enabled(environ.get('PUBLIC_FILE_STORE', "False"), False)
 PORT = environ.get('PORT', "8080")
 
+LONG_IMDB_DESCRIPTION = "True"
+MAX_LIST_ELM = "8"
 #userbot = Client("my_userbot", api_id=API_ID2, api_hash=API_HASH2, session_string=SESSION_STRING)
 #userbot.start()
