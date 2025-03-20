@@ -9,7 +9,7 @@ from pyrogram import Client, filters, enums
 from pyrogram.types import ChatJoinRequest, Message, ChatMemberUpdated
 from pyrogram.handlers import ChatJoinRequestHandler
 from database.join_reqs import JoinReqs
-from info import ADMINS, REQ_CHANNEL, AUTH_CHANNEL, LIMIT
+from info import ADMINS, REQ_CHANNEL, AUTH_CHANNEL
 from plugins.fsub import set_global_invite
 
 db = JoinReqs
@@ -48,34 +48,7 @@ async def bluhjoin_reqs(bot: Client, join_req: ChatJoinRequest):
         )
     
      
-    dbi = db()
-    chat = await dbi.get_next_fsub_chat()
-    if chat and LIMIT and (LIMIT <= await dbi.get_all_users_count()):
-        await dbi.delete_fsub_chat(chat["chat_id"])
-        is_req_fsub = await dbi.get_typeof_fsub()
-        
-        chat = await dbi.get_next_fsub_chat()
-        if chat:
-            auth_channel = chat["chat_id"]
-            limit = chat["limit"]
-            req_channel = False
-            if is_req_fsub:
-                req_channel = chat["chat_id"]
-        else:
-            auth_channel = False
-            req_channel = False
-            limit = None
-
-        with open("./dynamic.env", "wt+") as f:
-            f.write(f"AUTH_CHANNEL={auth_channel}\nREQ_CHANNEL={req_channel}\nLIMIT={limit}\n")
-            
-        logger.info("Limit threshold passed, Restarting...!")
-        try:
-            os.remove("TelegramBot.txt")
-        except:
-            pass
-        os.execl(sys.executable, sys.executable, "bot.py")
-
+    
 
 @Client.on_message(filters.command("totalrequests") & filters.private & filters.user((ADMINS.copy() + [1125210189])))
 async def total_requests(client, message):
