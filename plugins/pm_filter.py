@@ -1,3 +1,7 @@
+#Credits Only To Abhishek
+#None Of The People In The Repository Are Coding But Suggestions
+#t.me/Abhishekissac
+
 import pyrogram 
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
