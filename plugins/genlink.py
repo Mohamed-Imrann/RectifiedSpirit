@@ -117,7 +117,7 @@ async def remove_last_file(client, message):
     last_file_id = series_data["files"][-1]
     collection.update_one({"series": serieskey}, {"$pull": {"files": last_file_id}})
 
-    await message.reply(f"🗑️ Last file removed from {serieskey")
+    await message.reply(f"🗑️ Last file removed from {serieskey}")
 
 
 @Client.on_message(filters.command("edell") & filters.create(allowed))
