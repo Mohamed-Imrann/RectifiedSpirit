@@ -1,9 +1,12 @@
 import re
 import asyncio
+import time
 from pyrogram import filters, Client, enums
+from pyrogram.errors import FloodWait
+from pymongo import MongoClient
 from pyrogram.errors.exceptions.bad_request_400 import ChannelInvalid, UsernameInvalid, UsernameNotModified
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
-from info import ADMINS, AUTH_CHANNEL, DB_CHANNEL
+from info import ADMINS, AUTH_CHANNEL, DB_CHANNEL, DATABASE_URI
 from database.ia_filterdb import unpack_new_file_id
 from utils import temp, get_message_id
 import re
@@ -15,9 +18,11 @@ import logging
 
 BATCH_STORE = int('-1002250913478')
 
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+mongo_client = MongoClient(DATABASE_URI)
+db = mongo_client["file_database"]
+collection = db["episodes"]
 
 async def allowed(_, __, message):
     if message.from_user and message.from_user.id in ADMINS:
@@ -75,3 +80,70 @@ async def batch(client, message):
     result_string = f"get_{raw_channel_id}_{f_msg_id}_{s_msg_id}"
     logger.info(f"Generated result string: {result_string}")
     await message.reply_text(f"{result_string}")
+
+@Client.on_message(filters.command("eadd") & filters.reply & filters.create(allowed))
+async def add_file(client, message):
+    """Add a file ID to a series."""
+    if not message.reply_to_message.document and not message.reply_to_message.video and not message.reply_to_message.audio:
+        return await message.reply("Reply to a file (document, video, or audio).")
+
+    file_id = message.reply_to_message.file_id
+    serieskey = message.command[1] if len(message.command) > 1 else None
+
+    if not serieskey:
+        return await message.reply("Usage: /eadd <serieskey> (reply to a file)")
+        
+    series_data = collection.find_one({"series": serieskey})
+    if series_data:
+        collection.update_one({"series": serieskey}, {"$push": {"files": file_id}})
+    else:
+        collection.insert_one({"series": serieskey, "files": [file_id]})
+
+    await message.reply(f"✅ File added to {serieskey}\n🔑 Encrypted ID: e_{serieskey}")
+
+
+@Client.on_message(filters.command("edel") & filters.create(allowed))
+async def remove_last_file(client, message):
+    """Remove the last added file ID from a series."""
+    serieskey = message.command[1] if len(message.command) > 1 else None
+    if not serieskey:
+        return await message.reply("Usage: /edel serieskey")
+        
+    series_data = collection.find_one({"series": serieskey})
+
+    if not series_data or not series_data.get("files"):
+        return await message.reply(f"No files found in {serieskey}.")
+
+    last_file_id = series_data["files"][-1]
+    collection.update_one({"series": serieskey}, {"$pull": {"files": last_file_id}})
+
+    await message.reply(f"🗑️ Last file removed from {serieskey")
+
+
+@Client.on_message(filters.command("edell") & filters.create(allowed))
+async def delete_series(client, message):
+    """Delete an entire series."""
+    series_name = message.command[1] if len(message.command) > 1 else None
+    if not series_name:
+        return await message.reply("Usage: /edell <series_name>")
+
+    result = collection.delete_one({"series": series_name})
+
+    if result.deleted_count == 0:
+        return await message.reply(f"❌ No such series {series_name} found.")
+
+    await message.reply(f"✅ {series_name} and all its files have been deleted.")
+
+
+@Client.on_message(filters.command("eall") & filters.create(allowed))
+async def list_series(client, message):
+    """List all series and their file counts."""
+    series_list = collection.find()
+    if not series_list:
+        return await message.reply("No series found.")
+
+    response = "📂 Stored Series:\n"
+    for series in series_list:
+        response += f"{series['series']} → {len(series['files'])} files\n"
+
+    await message.reply(response)
