@@ -139,21 +139,18 @@ async def series_filter(client, message):
 @Client.on_callback_query()
 async def cb_handler(client, query: CallbackQuery):
     data = query.data
-    user_id = str(query.from_user.id)
     parts = data.split("-")
-    reply_msg = query.message.reply_to_message
-
-    # Allow pages without restriction
+    user_id = query.from_user.id
+    chat_id = query.message.chat.id
+    request_key = f"{chat_id}•{query.message.id}"
+    requesteduser = requestor.get(request_key, None)
     if data == "pages":
         await query.answer()
         return
-
-    # Handle "b:" callbacks
     elif data.startswith("b:"):
-        start_parameter = data.split(":")[1]
-
-        if not reply_msg or query.from_user.id == reply_msg.from_user.id:
+        if not query.message.reply_to_message or user_id == query.message.reply_to_message.from_user.id or user_id == requesteduser or requesteduser is None:
             try:
+                start_parameter = data.split(":")[1]
                 string = f"https://t.me/{temp.U_NAME}?start={start_parameter}"
                 print(string)
                 await query.answer(url=string)
@@ -162,50 +159,41 @@ async def cb_handler(client, query: CallbackQuery):
         else:
             await query.answer("Not your request!", show_alert=True)
 
-    # Handle spellcheck callback
     elif data.startswith("spellcheck-"):
         series_key = parts[1]
-        if not reply_msg or query.from_user.id == reply_msg.from_user.id:
-            if reply_msg.from_user.id != query.from_user.id:
-                await query.answer("Request Yourself", show_alert=True)
-                return
+        if user_id != requesteduser:
+            await query.answer("Request Yourself", show_alert=True)
+            return
 
-            series = get_series_name(series_key)
-            if series:
-                poster_url = get_movie_poster(series_key)
-                languages = series.get("languages", [])
-                reply_text = (
-                    f"○ <b>Title:</b> <code>{series['title']}</code>\n"
-                    f"○ <b>Released On:</b> <code>{series['released_on']}</code>\n"
-                    f"○ <b>Genre:</b> <code>{series['genre']}</code>\n"
-                    f"○ <b>Rating:</b> <code>{series['rating']}</code>\n\n"
-                    "Available Languages:\n"
-                )
-                buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}-{lang.lower().replace(' ', '')}-{user_id}") for lang in languages]
-                buttons_chunked = chunk_buttons(buttons, chunk_size=2)
-                reply_markup = InlineKeyboardMarkup(buttons_chunked)
-
-                try:
-                    if poster_url:
-                        await query.message.edit_media(media=InputMediaPhoto(poster_url), reply_markup=reply_markup)
-                    else:
-                        await query.message.edit_media(media=InputMediaPhoto(NO_POSTER_FOUND_IMG), reply_markup=reply_markup)
-                    await query.message.edit_text(text=reply_text, reply_markup=reply_markup)
-                except pyrogram.errors.MediaEmpty:
-                    await alert_admins(client, series_key)
+        series = get_series_name(series_key)
+        if series:
+            poster_url = get_movie_poster(series_key)
+            languages = series.get("languages", [])
+            reply_text = (
+                f"○ <b>Title:</b> <code>{series['title']}</code>\n○ <b>Released On:</b> <code>{series['released_on']}</code>\n○ <b>Genre:</b> <code>{series['genre']}</code>\n○ <b>Rating:</b> <code>{series['rating']}</code>\n\n"
+                "Available Languages:\n"
+            )
+            buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}-{lang.lower().replace(' ', '')}") for lang in languages]
+            buttons_chunked = chunk_buttons(buttons, chunk_size=2)
+            reply_markup = InlineKeyboardMarkup(buttons_chunked)
+            try:
+                if poster_url:
+                    await query.message.edit_media(media=InputMediaPhoto(poster_url), reply_markup=reply_markup)
+                else:
                     await query.message.edit_media(media=InputMediaPhoto(NO_POSTER_FOUND_IMG), reply_markup=reply_markup)
-                    await query.message.edit_text(text=reply_text, reply_markup=reply_markup)
-            else:
-                await query.message.edit_text(text="Series not found.", disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
+                await query.message.edit_text(text=reply_text, reply_markup=reply_markup)
+            except pyrogram.errors.MediaEmpty:
+                await alert_admins(client, series_key)
+                await query.message.edit_media(media=InputMediaPhoto(NO_POSTER_FOUND_IMG), reply_markup=reply_markup)
+                await query.message.edit_text(text=reply_text, reply_markup=reply_markup)
         else:
-            await query.answer("Not your request!", show_alert=True)
+            await query.message.edit_text(text="Series not found.", disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML
+                                          
+    elif len(parts) == 2:
+        series_key, language = parts
 
-    # Handle Language Selection
-    elif len(parts) == 3:
-        series_key, language, query_user_id = parts
-
-        if not reply_msg or query.from_user.id == reply_msg.from_user.id:
-            if query_user_id != user_id:
+        if not reply_msg or user_id == reply_msg.from_user.id:
+            if requesteduser != user_id:
                 await query.answer("Request Yourself", show_alert=True)
                 return
 
@@ -222,18 +210,18 @@ async def cb_handler(client, query: CallbackQuery):
                 )
                 buttons = [InlineKeyboardButton(season, callback_data=f"{series_key}-{language}-{season.lower().replace(' ', '')}-{user_id}") for season in seasons]
                 buttons_chunked = chunk_buttons(buttons)
-                buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"spellcheck-{series_key}-{user_id}")])
+                buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"spellcheck-{series_key}")])
                 reply_markup = InlineKeyboardMarkup(buttons_chunked)
                 await query.message.edit_text(text=reply_text, reply_markup=reply_markup)
         else:
             await query.answer("Not your request!", show_alert=True)
 
     # Handle Season Selection
-    elif len(parts) == 4:
-        series_key, language, season, query_user_id = parts
+    elif len(parts) == 3:
+        series_key, language, season = parts
 
-        if not reply_msg or query.from_user.id == reply_msg.from_user.id:
-            if query_user_id != user_id:
+        if not reply_msg or user_id == reply_msg.from_user.id:
+            if user_id != requesteduser:
                 await query.answer("Request Yourself", show_alert=True)
                 return
 
@@ -241,10 +229,10 @@ async def cb_handler(client, query: CallbackQuery):
             links = get_links(f"{series_key.lower().replace(' ', '')}-{language}-{season}")
 
             if links:
-                buttons = [InlineKeyboardButton(quality, callback_data=f"gt:{link}") for quality, link in links.items()]
+                buttons = [InlineKeyboardButton(quality, callback_data=f"b:{link}") for quality, link in links.items()]
                 buttons_chunked = chunk_buttons(buttons, chunk_size=2)
                 if buttons_chunked:
-                    buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"{series_key}-{language}-{user_id}")])
+                    buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"{series_key}-{language}")])
                     reply_markup = InlineKeyboardMarkup(buttons_chunked)
                     await query.message.edit_text(
                         text=(
