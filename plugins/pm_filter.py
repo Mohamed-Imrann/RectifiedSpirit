@@ -192,7 +192,7 @@ async def cb_handler(client, query: CallbackQuery):
     elif len(parts) == 2:
         series_key, language = parts
 
-        if not reply_msg or user_id == reply_msg.from_user.id:
+        if not query.message.reply_to_message or user_id == query.message.reply_to_message.from_user.id:
             if requesteduser != user_id:
                 await query.answer("Request Yourself", show_alert=True)
                 return
