@@ -25,6 +25,9 @@ import pymongo
 BATCH_FILES = {}
 from utils import get_messages, delete_file
 
+mongo_client = MongoClient(DATABASE_URI)
+db = mongo_client["file_database"]
+collection = db["episodes"]
 logger = logging.getLogger(__name__)
 
 @Client.on_message(filters.command("start"))
@@ -47,122 +50,126 @@ async def start_command(client, message):
             return
         
         temp_msg = await message.reply("Please wait...")
-        try:
-            if deep_link.startswith("get_"):
-                argument = deep_link.split("_")
-                if len(argument) == 4:
-                    channel_id = argument[1]
-                    if int(channel_id) not in RAW_DB_CHANNEL:
-                        await temp_msg.edit("The channel is not in the allowed database channels!")
-                        return
-                    
-                    start = int(argument[2])
-                    end = int(argument[3])
-                    ids = range(start, end + 1)
-                else:
-                    await temp_msg.edit("Invalid parameters in the deep link!")
-                    return
-            else:
-                await temp_msg.edit("Invalid link format! The format should start with 'get_'")
-                return
-        except ValueError:
-            await temp_msg.edit("Invalid link format!")
-            return
-        
-        try:
-            messages = await get_messages(client, f"-100{channel_id}", ids)
-        except Exception as e:
-            await temp_msg.edit(f"Error while fetching messages: {str(e)}")
-            return
 
-        await temp_msg.delete()
-        track_msgs = []
-        
-        for msg in messages:
-            if bool(CUSTOM_CAPTION) and bool(msg.document):
+        if deep_link.startswith("get_"):
+            args = deep_link.split("_")
+            if len(args) == 4:
+                channel_id = args[1]
+                if int(channel_id) not in RAW_DB_CHANNEL:
+                    await temp_msg.edit("The channel is not in the allowed database channels!")
+                    return
+                
+                start = int(args[2])
+                end = int(args[3])
+                ids = range(start, end + 1)
+            else:
+                await temp_msg.edit("Invalid parameters in the deep link!")
+                return
+
+            try:
+                messages = await get_messages(client, f"-100{channel_id}", ids)
+            except Exception as e:
+                await temp_msg.edit(f"Error while fetching messages: {str(e)}")
+                return
+
+            await temp_msg.delete()
+            track_msgs = []
+
+            for msg in messages:
                 caption = CUSTOM_CAPTION.format(
                     previouscaption="" if not msg.caption else msg.caption.html,
                     filename=msg.document.file_name
-                )
-            else:
-                caption = "" if not msg.caption else msg.caption.html
+                ) if bool(CUSTOM_CAPTION) and bool(msg.document) else "" if not msg.caption else msg.caption.html
 
-            if True:
-                reply_markup = msg.reply_markup
-            else:
-                reply_markup = None
-
-            if AUTO_DELETE_TIME and AUTO_DELETE_TIME > 0:
                 try:
-                    copied_msg_for_deletion = await msg.copy(
+                    copied_msg = await msg.copy(
                         chat_id=message.from_user.id,
                         caption=caption,
                         parse_mode=enums.ParseMode.HTML
                     )
-                    if copied_msg_for_deletion:
-                        track_msgs.append(copied_msg_for_deletion)
-                except FloodWait as e:
-                    await asyncio.sleep(e.value)
-                    copied_msg_for_deletion = await msg.copy(
-                        chat_id=message.from_user.id,
-                        caption=caption,
-                        parse_mode=enums.ParseMode.HTML
-                    )
-                    if copied_msg_for_deletion:
-                        track_msgs.append(copied_msg_for_deletion)
-                except Exception as e:
-                    print(f"Error copying message: {e}")
-                    pass
-            else:
-                try:
-                    await msg.copy(
-                        chat_id=message.from_user.id,
-                        caption=caption,
-                        parse_mode=enums.ParseMode.HTML
-                    )
+                    if AUTO_DELETE_TIME and AUTO_DELETE_TIME > 0:
+                        track_msgs.append(copied_msg)
                     await asyncio.sleep(0.5)
                 except FloodWait as e:
                     await asyncio.sleep(e.value)
-                    await msg.copy(
+                    copied_msg = await msg.copy(
                         chat_id=message.from_user.id,
                         caption=caption,
                         parse_mode=enums.ParseMode.HTML
                     )
+                    if AUTO_DELETE_TIME and AUTO_DELETE_TIME > 0:
+                        track_msgs.append(copied_msg)
                 except:
                     pass
 
-        if track_msgs:
-            delete_data = await client.send_message(
-                chat_id=message.from_user.id,
-                text=AUTO_DELETE_MSG.format(time=AUTO_DELETE_TIME)
-            )
-            asyncio.create_task(delete_file(track_msgs, client, delete_data))
+            if track_msgs:
+                delete_data = await client.send_message(
+                    chat_id=message.from_user.id,
+                    text=AUTO_DELETE_MSG.format(time=AUTO_DELETE_TIME)
+                )
+                asyncio.create_task(delete_file(track_msgs, client, delete_data))
+
+            return
+
+        elif deep_link.startswith("e_"):
+            args = deep_link.split("_")
+            if len(args) < 2:
+                return await temp_msg.edit("❌ Invalid encryption key.")
+
+            encrypted_key = args[1]
+
+            try:
+                series_name = encrypted_key
+            except:
+                return await temp_msg.edit("❌ Invalid encryption key.")
+
+            series_data = collection.find_one({"series": encrypted_key})
+            if not series_data or not series_data.get("files"):
+                return await temp_msg.edit(f"No files found in {series_name}.")
+
+            await temp_msg.edit(f"📤 Sending {series_name} files...")
+
+            messages = []
+            for file_id in series_data["files"]:
+                try:
+                    sent_msg = await client.send_document(message.chat.id, file_id)
+                    messages.append(sent_msg)
+                    await asyncio.sleep(3)
+                except FloodWait as e:
+                    await asyncio.sleep(e.value)
+
+            await message.reply(f"✅ All files from {series_name} have been sent.")
+            await delete_files_later(messages, client, message)
+
+            return
+
         else:
-            print("No messages to track for deletion.")
-        
-        return
+            await temp_msg.edit("Invalid link format!")
+            return
 
     buttons = [[InlineKeyboardButton('Switch Inline', switch_inline_query_current_chat='')]]
     reply_markup = InlineKeyboardMarkup(buttons)
 
     if STICKER:
         await message.reply_sticker(STICKER_ID)
-        await message.reply_text(
-            text=START_TXT,
-            reply_markup=reply_markup
-        )
-    elif not STICKER and PIC:
-        await message.reply_photo(
-            photo=PICS,
-            text=START_TXT,
-            reply_markup=reply_markup
-        )
+        await message.reply_text(text=START_TXT, reply_markup=reply_markup)
+    elif PIC:
+        await message.reply_photo(photo=PICS, caption=START_TXT, reply_markup=reply_markup)
     else:
-        await message.reply_text(
-            text=START_TXT,
-            reply_markup=reply_markup
-        )
-    return
+        await message.reply_text(text=START_TXT, reply_markup=reply_markup)
+
+async def delete_files_later(messages, client, process):
+    """Auto-delete files after AUTO_DELETE_TIME."""
+    await asyncio.sleep(AUTO_DELETE_TIME)
+    for msg in messages:
+        try:
+            await client.delete_messages(msg.chat.id, msg.id)
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+        except Exception as e:
+            print(f"Failed to delete {msg.id}: {e}")
+
+    await process.reply(AUTO_DEL_SUCCESS_MSG)
 
 @Client.on_message(filters.command("logs") & filters.user(ADMINS))
 async def log_file(bot, message):
@@ -187,4 +194,5 @@ async def restart_bot(client, message):
     await msg.edit("<b>Restart Successfully Completed ✅</b>")
     system("git pull -f && pip3 install --no-cache-dir -r requirements.txt")
     execle(sys.executable, sys.executable, "bot.py", environ)
+
     
