@@ -187,7 +187,7 @@ async def cb_handler(client, query: CallbackQuery):
                 await query.message.edit_media(media=InputMediaPhoto(NO_POSTER_FOUND_IMG), reply_markup=reply_markup)
                 await query.message.edit_text(text=reply_text, reply_markup=reply_markup)
         else:
-            await query.message.edit_text(text="Series not found.", disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML
+            await query.message.edit_text(text="Series not found.", disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
                                           
     elif len(parts) == 2:
         series_key, language = parts
