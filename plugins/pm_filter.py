@@ -92,7 +92,7 @@ async def series_filter(client, message):
             reply_markup = InlineKeyboardMarkup(buttons_chunked)
             etho = await message.reply_photo(photo=random.choice(SPELL_CHECK_IMAGE), caption="<b>Choose Your Series:</b>", reply_markup=reply_markup)
             reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
-            requestor[f"{etho.chat.id}•{etho.message.id}"] = reply_etho_user_id
+            requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
             asyncio.create_task(DeleteMessage(etho))
             return
 
@@ -120,19 +120,19 @@ async def series_filter(client, message):
             if poster_url:
                 etho = await message.reply_photo(photo=poster_url, caption=reply_text, reply_markup=reply_markup)
                 reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
-                requestor[f"{etho.chat.id}•{etho.message.id}"] = reply_etho_user_id
+                requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
                 asyncio.create_task(DeleteMessage(etho))
             else:
                 etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG, caption=reply_text, reply_markup=reply_markup)
                 reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
-                requestor[f"{etho.chat.id}•{etho.message.id}"] = reply_etho_user_id
+                requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
                 asyncio.create_task(DeleteMessage(etho))
             logger.info("postertrying")
         except pyrogram.errors.MediaEmpty:
             await alert_admins(client, series_key)
             etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG, caption=reply_text, reply_markup=reply_markup)
             reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
-            requestor[f"{etho.chat.id}•{etho.message.id}"] = reply_etho_user_id
+            requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
             asyncio.create_task(DeleteMessage(etho))
 
 
