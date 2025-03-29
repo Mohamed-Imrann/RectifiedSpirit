@@ -161,6 +161,7 @@ async def cb_handler(client, query: CallbackQuery):
     elif data.startswith("b:"):
         try:
             start_parameter = parts[1]
+            print(start_parameter)
             url = f"https://t.me/{temp.U_NAME}?start={start_parameter}"
             await query.answer(url=url)
         except pyrogram.errors.exceptions.bad_request_400.UrlInvalid:
