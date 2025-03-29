@@ -27,8 +27,8 @@ BATCH_FILES = {}
 from utils import get_messages, delete_file
 
 mongo_client = MongoClient(DATABASE_URI)
-db = mongo_client["file_database"]
-collection = db["episodes"]
+edb = mongo_client["file_database"]
+ecollection = edb["episodes"]
 logger = logging.getLogger(__name__)
 
 @Client.on_message(filters.command("start"))
@@ -118,7 +118,7 @@ async def start_command(client, message):
                 return await temp_msg.edit("❌ Invalid series key.")
 
             series_name = args[1]
-            series_data = collection.find_one({"series": series_name})
+            series_data = ecollection.find_one({"series": series_name})
             if not series_data or not series_data.get("files"):
                 return await temp_msg.edit(f"No files found in {series_name}.")
 
