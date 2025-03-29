@@ -115,25 +115,23 @@ async def start_command(client, message):
         elif deep_link.startswith("e_"):
             args = deep_link.split("_")
             if len(args) < 2:
-                return await temp_msg.edit("❌ Invalid encryption key.")
+                return await temp_msg.edit("❌ Invalid series key.")
 
-            encrypted_key = args[1]
-
-            try:
-                series_name = encrypted_key
-            except:
-                return await temp_msg.edit("❌ Invalid encryption key.")
-
-            series_data = collection.find_one({"series": encrypted_key})
+            series_name = args[1]
+            series_data = collection.find_one({"series": series_name})
             if not series_data or not series_data.get("files"):
                 return await temp_msg.edit(f"No files found in {series_name}.")
 
             await temp_msg.edit(f"📤 Sending {series_name} files...")
-
             messages = []
-            for file_id in series_data["files"]:
+
+            for entry in series_data["files"]:
                 try:
-                    sent_msg = await client.send_document(message.chat.id, file_id)
+                    sent_msg = await client.send_cached_media(
+                        message.chat.id, 
+                        entry["file_id"],
+                        caption=entry.get("caption", "")
+                    )
                     messages.append(sent_msg)
                     await asyncio.sleep(3)
                 except FloodWait as e:
