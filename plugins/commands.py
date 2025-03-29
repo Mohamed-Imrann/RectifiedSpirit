@@ -246,6 +246,19 @@ async def start_command(client, message):
     )
     return
 
+
+async def delete_files_later(messages, client, process):
+    """Auto-delete files after AUTO_DELETE_TIME."""
+    await asyncio.sleep(AUTO_DELETE_TIME)
+    for msg in messages:
+        try:
+            await client.delete_messages(msg.chat.id, msg.id)
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+        except Exception as e:
+            print(f"Failed to delete {msg.id}: {e}")
+
+    await process.reply(AUTO_DELETE_MSG)
     
 @Client.on_message(filters.command("logs") & filters.user(ADMINS))
 async def log_file(bot, message):
