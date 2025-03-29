@@ -25,6 +25,9 @@ import pymongo
 BATCH_FILES = {}
 from utils import get_messages, delete_file
 
+mongo_client = pymongo.MongoClient(DATABASE_URI)
+edb = mongo_client["file_database"]
+ecollection = edb["episodes"]
 logger = logging.getLogger(__name__)
 
 @Client.on_message(filters.command("start"))
@@ -201,43 +204,36 @@ async def start_command(client, message):
                 await asyncio.sleep(1)
 
             await sts.delete()
-            st = await message.reply_sticker(
-                sticker=(random.choice(STIC))
-            )
+            await message.reply(f"✅ All files have been sent.")
             return
 
-        elif len(message.command) == 2 and message.command[1] in ["subscribe", "error", "okay", "help"]:
-            if message.command[1] == "subscribe":
-                await ForceSub(client, message)
-                return
+        elif deep_link.startswith("e_"):
+            args = deep_link.split("_")
+            if len(args) < 2:
+                return await message.reply("❌ Invalid series key.")
 
-            buttons = [[
-                InlineKeyboardButton('Switch Inline', switch_inline_query_current_chat='')
-            ]]
-            reply_markup = InlineKeyboardMarkup(buttons)
-            m = await message.reply_sticker("CAACAgUAAxkBAAJ0w2aZJMdpnEKbXtDVPJIvpL2XhIAhAAIrAAO8ljUq9-AkUFoHiMQeBA")
-            j = await message.reply_text(
-                text=script.START_TXT,
-                reply_markup=reply_markup,
-                disable_web_page_preview=True,
-                parse_mode=enums.ParseMode.HTML
-            )
-            await asyncio.sleep(30)
-            await m.delete()
-            await j.delete()
+            series_name = args[1]
+            series_data = ecollection.find_one({"series": series_name})
+            if not series_data or not series_data.get("files"):
+                return await message.reply(f"No files found in {series_name}.")
+
+            await message.reply(f"📤 Sending {series_name} files...")
+            messages = []
+
+            for entry in series_data["files"]:
+                try:
+                    sent_msg = await client.send_cached_media(
+                        message.chat.id, 
+                        entry["file_id"],
+                        caption=entry.get("caption", "")
+                    )
+                    messages.append(sent_msg)
+                    await asyncio.sleep(3)
+                except FloodWait as e:
+                    await asyncio.sleep(e.value)
+
+            await message.reply(f"✅ All files from {series_name} have been sent.")
             return
-
-        else:
-            kk, file_id = message.command[1].split("_", 1) if "_" in message.command[1] else (False, False)
-            pre = ('checksubp' if kk == 'filep' else 'checksub') if kk else False
-
-            if not file_id:
-                file_id = message.command[1]
-
-            temp_msg = await message.reply("Processing your request...")
-            await temp_msg.edit("Invalid link format! The format should start with 'get_' or 'B-'")
-            await asyncio.sleep(5)
-            await temp_msg.delete()
 
     buttons = [[InlineKeyboardButton('Switch Inline', switch_inline_query_current_chat='')]]
     reply_markup = InlineKeyboardMarkup(buttons)
@@ -249,6 +245,7 @@ async def start_command(client, message):
         parse_mode=enums.ParseMode.HTML
     )
     return
+
     
 @Client.on_message(filters.command("logs") & filters.user(ADMINS))
 async def log_file(bot, message):
@@ -274,3 +271,4 @@ async def restart_bot(client, message):
     system("git pull -f && pip3 install --no-cache-dir -r requirements.txt")
     execle(sys.executable, sys.executable, "bot.py", environ)
     
+
