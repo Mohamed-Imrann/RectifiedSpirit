@@ -8,6 +8,8 @@ logger.setLevel(logging.ERROR)
 myclient = pymongo.MongoClient(DATABASE_URI)
 mydb = myclient[DATABASE_NAME]
 
+
+
 async def add_gfilter(gfilters, text, reply_text, btn, file, alert):
     mycol = mydb[str(gfilters)]
 
@@ -24,10 +26,12 @@ async def add_gfilter(gfilters, text, reply_text, btn, file, alert):
     except:
         logger.exception('Some error occured!', exc_info=True)
              
+     
 async def find_gfilter(gfilters, name):
     mycol = mydb[str(gfilters)]
     
     query = mycol.find( {"text":name})
+    # query = mycol.find( { "$text": {"$search": name}})
     try:
         for file in query:
             reply_text = file['reply']
@@ -41,6 +45,7 @@ async def find_gfilter(gfilters, name):
     except:
         return None, None, None, None
 
+
 async def get_gfilters(gfilters):
     mycol = mydb[str(gfilters)]
 
@@ -53,6 +58,7 @@ async def get_gfilters(gfilters):
     except:
         pass
     return texts
+
 
 async def delete_gfilter(message, text, gfilters):
     mycol = mydb[str(gfilters)]
@@ -71,7 +77,7 @@ async def delete_gfilter(message, text, gfilters):
 
 async def del_allg(message, gfilters):
     if str(gfilters) not in mydb.list_collection_names():
-        await message.edit_text("Nothing to remove !")
+        await message.edit_text("Nothing to Remove !")
         return
 
     mycol = mydb[str(gfilters)]
@@ -87,6 +93,7 @@ async def count_gfilters(gfilters):
 
     count = mycol.count()
     return False if count == 0 else count
+
 
 async def gfilter_stats():
     collections = mydb.list_collection_names()
