@@ -53,8 +53,12 @@ class Bot(Client):
         await app.setup()
         bind_address = "0.0.0.0"
         await web.TCPSite(app, bind_address, PORT).start()
+        for admin in ADMINS:
+            try:
+                await self.send_message(admin, text="Bot Restarted")
+            except Exception as e:
+                logging.warning(f"Failed to send restart message to {admin}: {e}")
         
-    
     async def stop(self, *args):
         await super().stop()
         logging.info("Bot stopped. Bye.")
