@@ -150,7 +150,7 @@ async def cb_handler(client, query: CallbackQuery):
     else:
         requested_user = requestor.get(f"{chat_id}•{message_id}")
     
-    if requested_user and clicked_user != requested_user:
+    if chat_id < 0 and requested_user and clicked_user != requested_user:
         await query.answer("Not your request!", show_alert=True)
         return
 
