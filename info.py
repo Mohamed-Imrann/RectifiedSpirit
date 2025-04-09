@@ -60,7 +60,13 @@ BOT_USERNAME = "Spidy_Series_bot"
 # Others
 LOG_CHANNEL = '-1002361556192'
 CUSTOM_FILE_CAPTION = environ.get("CUSTOM_FILE_CAPTION", "{previouscaption}")
-BATCH_FILE_CAPTION = environ.get("BATCH_FILE_CAPTION", '{previouscaption}')
+BATCH_FILE_CAPTION = environ.get("BATCH_FILE_CAPTION", (
+    '{file_caption}\n\n'
+    '╭─────── • ◆ • ───────╮\n'
+    ' »   Tᴠ - Wᴇʙ Sᴇʀɪᴇs - <a href="https://t.me/addlist/Zg_9V3MwH8kwODNl">Jᴏɪɴ....</a>  «\n\n'
+    ' »         Mᴏᴠɪᴇs  - <a href="https://t.me/addlist/Zg_9V3MwH8kwODNl">Jᴏɪɴ....</a>          «\n'
+    '╰─────── • ◆ • ───────╯'
+))
 AUTO_DELETE_TIME = 0
 AUTO_DELETE_MSG = """‼️ 𝗜𝗠𝗣𝗢𝗥𝗧𝗔𝗡𝗧 ‼️\n\n<blockquote>⚠️ 𝙁𝙞𝙡𝙚 𝙒𝙞𝙡𝙡 𝘽𝙚 𝘿𝙚𝙡𝙚𝙩𝙚𝙙 𝙄𝙣 10 𝙈𝙞𝙣𝙪𝙩𝙚𝙨.</blockquote>\n\n𝗜𝗳 𝘆𝗼𝘂 𝘄𝗮𝗻𝘁 𝘁𝗼 𝗱𝗼𝘄𝗻𝗹𝗼𝗮𝗱 𝘁𝗵𝗲𝘀𝗲 𝗳𝗶𝗹𝗲𝘀, 𝗞𝗶𝗻𝗱𝗹𝘆 𝗙𝗼𝗿𝘄𝗮𝗿𝗱 𝘁𝗵𝗲𝘀𝗲 𝗳𝗶𝗹𝗲𝘀 𝘁𝗼 𝗮𝗻𝘆 𝗰𝗵𝗮𝘁 (𝘀𝗮𝘃𝗲𝗱) 𝗮𝗻𝗱 𝘀𝘁𝗮𝗿𝘁 𝗗𝗼𝘄𝗻𝗹𝗼𝗮𝗱...\n\n𝗧𝗵𝗮𝗻𝗸 𝗬𝗼𝘂 :)\n@TEAM_COLD"""
 DB_CHANNEL = [-1002400599577]
