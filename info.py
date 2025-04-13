@@ -48,10 +48,10 @@ DATABASE_NAME = environ.get('DATABASE_NAME', "Spidyy")
 COLLECTION_NAME = environ.get('COLLECTION_NAME', "Spidysries")
 
 # FSUB 
-auth_channel = environ.get('AUTH_CHANNEL' "-1002580517500")
+auth_channel = environ.get('AUTH_CHANNEL' "-1002637417486")
 AUTH_CHANNEL = int(auth_channel) if auth_channel and id_pattern.search(auth_channel) else None
 # Set to False inside the bracket if you don't want to use Request Channel else set it to Channel ID
-REQ_CHANNEL = environ.get("REQ_CHANNEL", -1002580517500)
+REQ_CHANNEL = environ.get("REQ_CHANNEL", -1002637417486)
 JOIN_REQS_DB = environ.get("JOIN_REQS_DB", DATABASE_URI)
 LIMIT = 2000
 
