@@ -255,7 +255,7 @@ async def imdb_selection_callback(client: Client, callback_query):
     quality = stored_data['quality']
     link = stored_data['link']
 
-    movie = await get_postr(imdb_id, id=True)
+    movie = await get_postr(movie_id, id=True)
     if not movie:
         await callback_query.message.reply("Failed to retrieve IMDb data.")
         return
