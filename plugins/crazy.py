@@ -177,6 +177,7 @@ async def get_postr(query, bulk=False, id=False):
             'rating': movie.get('rating', 'N/A'),
             'plot': movie.get('plot outline') or (movie.get('plot', ['N/A'])[0]),
             'poster': movie.get('full-size cover url', 'N/A'),
+            'movieID': movie_id,
             'imdb_id': movie_id,
             'url': f'https://www.imdb.com/title/tt{movie_id}'
         }
