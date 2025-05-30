@@ -156,16 +156,16 @@ async def start_command(client, message):
 
             return
 
-    buttons = [[InlineKeyboardButton('Switch Inline', switch_inline_query_current_chat='')]]
-    reply_markup = InlineKeyboardMarkup(buttons)
+    #buttons = [[InlineKeyboardButton('Switch Inline', switch_inline_query_current_chat='')]]
+    #reply_markup = InlineKeyboardMarkup(buttons)
 
     if STICKER:
         await message.reply_sticker(STICKER_ID)
-        await message.reply_text(text=START_TXT, reply_markup=reply_markup)
+        await message.reply_text(text=START_TXT)
     elif PIC:
-        await message.reply_photo(photo=PICS, caption=START_TXT, reply_markup=reply_markup)
+        await message.reply_photo(photo=PICS, caption=START_TXT)
     else:
-        await message.reply_text(text=START_TXT, reply_markup=reply_markup)
+        await message.reply_text(text=START_TXT)
 
 
 @Client.on_message(filters.command("logs") & filters.user(ADMINS))
