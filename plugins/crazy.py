@@ -140,35 +140,50 @@ import uuid
 callback_data_store = {}
 
 async def get_postr(query, bulk=False, id=False):
-    if not id:
-        search_results = imdb.search_movie(query)
-        if not search_results:
+    try:
+        if not id:
+            search_results = imdb.search_movie(query)
+            if not search_results:
+                return None
+            if bulk:
+                top_movies = []
+                for movie in search_results[:5]:
+                    try:
+                        movie_id = movie.movieID
+                        full_movie = imdb.get_movie(movie_id)
+                        top_movies.append({
+                            'title': full_movie.get('title', 'N/A'),
+                            'year': full_movie.get('year', 'N/A'),
+                            'imdb_id': movie_id
+                        })
+                    except Exception as e:
+                        print(f"Error fetching movie details: {e}")
+                        continue
+                return top_movies
+            movie = search_results[0]
+            movie_id = movie.movieID
+        else:
+            movie_id = query
+
+        movie = imdb.get_movie(movie_id)
+        if not movie:
             return None
-        if bulk:
-            return search_results[:10]  # Return top 10 results
-        movie = search_results[0]
-        movie_id = movie.movieID
-    else:
-        movie_id = query
 
-    movie = imdb.get_movie(movie_id)
-    if not movie:
+        return {
+            'title': movie.get('title', 'N/A'),
+            'year': movie.get('year', 'N/A'),
+            'genres': ', '.join(movie.get('genres', [])) or 'N/A',
+            'languages': ', '.join(movie.get('languages', [])) or 'Original Audio',
+            'rating': movie.get('rating', 'N/A'),
+            'plot': movie.get('plot outline') or (movie.get('plot', ['N/A'])[0]),
+            'poster': movie.get('full-size cover url', 'N/A'),
+            'imdb_id': movie_id,
+            'url': f'https://www.imdb.com/title/tt{movie_id}'
+        }
+
+    except Exception as e:
+        print(f"IMDb Error: {e}")
         return None
-
-    genres = ', '.join(movie.get('genres', [])) if movie.get('genres') else 'N/A'
-    poster = movie.get('full-size cover url', 'N/A')
-    title = movie.get('title', 'N/A')
-    year = movie.get('year', 'N/A')
-    rating = movie.get('rating', 'N/A')
-
-    return {
-        'title': title,
-        'year': year,
-        'genres': genres,
-        'rating': rating,
-        'poster': poster,
-        'imdb_id': movie_id
-    }
 
 @Client.on_message(filters.command('quality') & filters.user(ADMINS))
 async def add_quality_link(client: Client, message: Message):
