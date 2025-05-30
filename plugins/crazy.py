@@ -211,7 +211,7 @@ async def add_quality_link(client: Client, message: Message):
         for movie in search_results:
             movie_title = movie.get('title', 'N/A')
             movie_year = movie.get('year', 'N/A')
-            imdb_id = movie.movieID
+            imdb_id = movie.imdb_id
             
             # Store data in a local dictionary with a UUID
             unique_id = str(uuid.uuid4())
