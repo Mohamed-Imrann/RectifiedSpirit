@@ -146,20 +146,22 @@ async def get_postr(query, bulk=False, id=False):
             if not search_results:
                 return None
             if bulk:
-                top_movies = []
-                for movie in search_results[:5]:
-                    try:
-                        movie_id = movie.movieID  # ✅ Correct attribute
-                        full_movie = imdb.get_movie(movie_id)
-                        top_movies.append({
-                            'title': full_movie.get('title', 'N/A'),
-                            'year': full_movie.get('year', 'N/A'),
-                            'movieID': movie_id  # ✅ Use consistent naming
-                        })
-                    except Exception as e:
-                        print(f"Error fetching movie details: {e}")
-                        continue
-                return top_movies
+            return search_results[:10]
+            #if bulk:
+                #top_movies = []
+                #for movie in search_results[:5]:
+                    #try:
+                        #movie_id = movie.movieID  # ✅ Correct attribute
+                        #full_movie = imdb.get_movie(movie_id)
+                        #top_movies.append({
+                            #'title': full_movie.get('title', 'N/A'),
+                            #'year': full_movie.get('year', 'N/A'),
+                            #'movieID': movie_id  # ✅ Use consistent naming
+                        #})
+                    #except Exception as e:
+                        #print(f"Error fetching movie details: {e}")
+                        #continue
+                #return top_movies
             movie = search_results[0]
             movie_id = movie.movieID  # ✅ Correct attribute
         else:
