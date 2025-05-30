@@ -118,7 +118,7 @@ async def add_file(client, message):
 async def delete_series(client, message):
     series_name = message.command[1] if len(message.command) > 1 else None
     if not series_name:
-        return await message.reply("Usage: `/edell <series_name>`")
+        return await message.reply("Usage: `/edell series_name`")
     
     result = collection.delete_one({"series": series_name})
     

@@ -14,7 +14,7 @@ from database.ia_filterdb import Media, get_file_details, unpack_new_file_id
 from database.users_chats_db import db
 from plugins.fsub import ForceSub
 from pymongo import MongoClient
-from info import CHANNELS, ADMINS, AUTH_CHANNEL, LOG_CHANNEL, CUSTOM_FILE_CAPTION, PROTECT_CONTENT, DATABASE_URI, DATABASE_NAME, AUTO_DELETE_TIME, AUTO_DELETE_MSG, BATCH_FILE_CAPTION as CUSTOM_CAPTION, DB_CHANNEL, RAW_DB_CHANNEL, STICKER, STICKER_ID, PIC, PICS, START_TXT
+from info import ADMINS, AUTH_CHANNEL, LOG_CHANNEL, CUSTOM_FILE_CAPTION, PROTECT_CONTENT, DATABASE_URI, DATABASE_NAME, AUTO_DELETE_TIME, AUTO_DELETE_MSG, BATCH_FILE_CAPTION as CUSTOM_CAPTION, DB_CHANNEL, RAW_DB_CHANNEL, STICKER, STICKER_ID, PIC, PICS, START_TXT
 from utils import get_size, is_subscribed, temp, temp_requests
 import re
 import json
@@ -115,15 +115,15 @@ async def start_command(client, message):
         elif deep_link.startswith("e_"):
             args = deep_link.split("_")
             if len(args) < 2:
-                return await temp_msg.edit("❌ Invalid series key.")
+                return #await temp_msg.edit("❌ Invalid series key.")
 
             series_name = args[1]
             series_data = ecollection.find_one({"series": series_name})
             if not series_data or not series_data.get("files"):
-                return await temp_msg.edit(f"No files found in {series_name}.")
+                return #await temp_msg.edit(f"No files found in {series_name}.")
 
-            await temp_msg.edit(f"📤 Sending {series_name} files...")
-            messages = []
+            #await temp_msg.edit(f"📤 Sending {series_name} files...")
+            track_msgs = []
 
             for entry in series_data["files"]:
                 try:
@@ -132,18 +132,28 @@ async def start_command(client, message):
                         entry["file_id"],
                         caption=entry.get("caption", "")
                     )
-                    messages.append(sent_msg)
-                    await asyncio.sleep(3)
+                    if AUTO_DELETE_TIME and AUTO_DELETE_TIME > 0:
+                        track_msgs.append(sent_msg)
+                    await asyncio.sleep(0.5)
                 except FloodWait as e:
                     await asyncio.sleep(e.value)
+                    sent_msg = await client.send_cached_media(
+                        message.chat.id, 
+                        entry["file_id"],
+                        caption=entry.get("caption", "")
+                    )
+                    if AUTO_DELETE_TIME and AUTO_DELETE_TIME > 0:
+                        track_msgs.append(sent_msg)
+                except:
+                    pass
 
-            await message.reply(f"✅ All files from {series_name} have been sent.")
-            await delete_files_later(messages, client, message)
+            if track_msgs:
+                delete_data = await client.send_message(
+                    chat_id=message.from_user.id,
+                    text=AUTO_DELETE_MSG.format(time=AUTO_DELETE_TIME)
+                )
+                asyncio.create_task(delete_file(track_msgs, client, delete_data))
 
-            return
-
-        else:
-            await temp_msg.edit("Invalid link format!")
             return
 
     buttons = [[InlineKeyboardButton('Switch Inline', switch_inline_query_current_chat='')]]
@@ -157,18 +167,6 @@ async def start_command(client, message):
     else:
         await message.reply_text(text=START_TXT, reply_markup=reply_markup)
 
-async def delete_files_later(messages, client, process):
-    """Auto-delete files after AUTO_DELETE_TIME."""
-    await asyncio.sleep(AUTO_DELETE_TIME)
-    for msg in messages:
-        try:
-            await client.delete_messages(msg.chat.id, msg.id)
-        except FloodWait as e:
-            await asyncio.sleep(e.value)
-        except Exception as e:
-            print(f"Failed to delete {msg.id}: {e}")
-
-    await process.reply(AUTO_DEL_SUCCESS_MSG)
 
 @Client.on_message(filters.command("logs") & filters.user(ADMINS))
 async def log_file(bot, message):
