@@ -207,7 +207,7 @@ async def add_quality_link(client: Client, message: Message):
             return
 
         buttons = []
-    for movie in search_results:
+    for movie in search_results[:5]:
         movie_title = movie.get('title', 'N/A')
         movie_year = movie.get('year', 'N/A')
         movie_id = movie.get('movieID')  # ✅ Use consistent key
