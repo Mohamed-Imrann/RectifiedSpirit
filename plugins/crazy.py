@@ -146,7 +146,7 @@ async def get_postr(query, bulk=False, id=False):
             if not search_results:
                 return None
             if bulk:
-            return search_results[:10]
+                return search_results[:10]
             #if bulk:
                 #top_movies = []
                 #for movie in search_results[:5]:
