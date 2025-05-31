@@ -201,7 +201,7 @@ async def add_quality_link(client: Client, message: Message):
     k = await message.reply_text("Processing Request...")
 
     series_name, language, season_name, quality, link = parts
-    series_key = series_name.lower().replace(" ", "").replace("-", "")
+    series_key = series_name.lower().replace(" ", "").replace("-", "~")
 
     series = get_series_name(series_key)
     if not series:
