@@ -79,7 +79,6 @@ async def batch(client, message):
 
     raw_channel_id = channel_id.replace("-100", "")
     result_string = f"get_{raw_channel_id}_{f_msg_id}_{s_msg_id}"
-    logger.info(f"Generated result string: {result_string}")
     await message.reply_text(f"{result_string}")
 
 
