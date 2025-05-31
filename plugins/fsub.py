@@ -104,7 +104,7 @@ async def ForceSub(bot: Client, update: Message, file_id: str = False, mode="che
                 InlineKeyboardButton("ᴊᴏɪɴ ᴄʜᴀɴɴᴇʟ", url=invite_link)
             ],
             [
-                InlineKeyboardButton("ᴍᴇ ᴊᴏɪɴᴇᴅ", callback_data=f'gt:{file_id}')  # Changed to match old style
+                InlineKeyboardButton("ᴍᴇ ᴊᴏɪɴᴇᴅ", callback_data=f'b:{file_id}')  # Changed to match old style
             ]
         ]
 
