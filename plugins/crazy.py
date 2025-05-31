@@ -191,11 +191,14 @@ async def add_quality_link(client: Client, message: Message):
     parts = extract_parts(message.text)
 
     if len(parts) < 5:
-        await message.reply_text(
+        k = await message.reply_text(
             "Please follow the command format:\n\n"
             "/quality \"Series Name\" \"Language\" \"Season Name\" \"Quality\" \"Download Link\""
         )
+        asyncio.create_task(DeleteMessage(k))
         return
+
+    k = await message.reply_text("Processing Request...")
 
     series_name, language, season_name, quality, link = parts
     series_key = series_name.lower().replace(" ", "").replace("-", "")
@@ -205,7 +208,7 @@ async def add_quality_link(client: Client, message: Message):
         # Search on IMDb
         search_results = await get_postr(series_name, bulk=True)
         if not search_results:
-            await message.reply_text("No results found on IMDb for the provided series name.")
+            await k.edit_text("No results found on IMDb for the provided series name.")
             return
 
         # Create buttons for user to select the correct series
@@ -232,11 +235,11 @@ async def add_quality_link(client: Client, message: Message):
             buttons.append([button])
 
         reply_markup = InlineKeyboardMarkup(buttons)
-        msg = await message.reply_text(
-            "Multiple results found. Please select the correct series:",
+        await k.edit_text(
+            "Multiple results found for {series_name}. Please select the correct series:",
             reply_markup=reply_markup
         )
-        asyncio.create_task(DeleteMessage(msg))
+        asyncio.create_task(DeleteMessage(k))
         return
 
     # If series found in DB, proceed directly
@@ -275,7 +278,7 @@ async def imdb_selection_callback(client: Client, callback_query):
 
     add_series(series_data)
 
-    await callback_query.message.reply_text(
+    msg = await callback_query.message.reply_text(
         f"Series added successfully!\n\n"
         f"**Title:** {movie.get('title', 'N/A')}\n"
         f"**Year:** {movie.get('year', 'N/A')}\n"
@@ -283,7 +286,7 @@ async def imdb_selection_callback(client: Client, callback_query):
         f"**Rating:** {movie.get('rating', 'N/A')}\n"
         f"**Poster URL:** {movie.get('poster', 'N/A')}"
     )
-
+    asyncio.create_task(DeleteMessage(msg))
     await continue_add_quality_link(client, callback_query.message, series_key, language, season_name, quality, link)
     
 async def continue_add_quality_link(client, message, series_key, language, season_name, quality, link):
@@ -306,7 +309,7 @@ async def continue_add_quality_link(client, message, series_key, language, seaso
 
     add_series_links(link_key, links)
 
-    await message.reply_text(
+    msg = await message.reply_text(
         f"Link added successfully:\n\n"
         f"**Series:** {series_key.replace('-', ' ').title()}\n"
         f"**Language:** {language}\n"
@@ -314,6 +317,7 @@ async def continue_add_quality_link(client, message, series_key, language, seaso
         f"**Quality:** {quality}\n"
         f"**Link:** {link}"
     )
+    asyncio.create_task(DeleteMessage(msg))
 
 
 @Client.on_message(filters.command('seridel') & filters.user(ADMINS))
