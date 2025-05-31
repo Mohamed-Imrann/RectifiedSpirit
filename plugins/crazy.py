@@ -147,23 +147,8 @@ async def get_postr(query, bulk=False, id=False):
                 return None
             if bulk:
                 return search_results[:10]
-            #if bulk:
-                #top_movies = []
-                #for movie in search_results[:5]:
-                    #try:
-                        #movie_id = movie.movieID  # ✅ Correct attribute
-                        #full_movie = imdb.get_movie(movie_id)
-                        #top_movies.append({
-                            #'title': full_movie.get('title', 'N/A'),
-                            #'year': full_movie.get('year', 'N/A'),
-                            #'movieID': movie_id  # ✅ Use consistent naming
-                        #})
-                    #except Exception as e:
-                        #print(f"Error fetching movie details: {e}")
-                        #continue
-                #return top_movies
             movie = search_results[0]
-            movie_id = movie.movieID  # ✅ Correct attribute
+            movie_id = movie.movieID
         else:
             movie_id = query
 
@@ -179,13 +164,14 @@ async def get_postr(query, bulk=False, id=False):
             'rating': movie.get('rating', 'N/A'),
             'plot': movie.get('plot outline') or (movie.get('plot', ['N/A'])[0]),
             'poster': movie.get('full-size cover url', 'N/A'),
-            'movieID': movie_id,  # ✅ Use consistent naming
+            'movieID': movie_id,
             'url': f'https://www.imdb.com/title/tt{movie_id}'
         }
 
     except Exception as e:
         print(f"IMDb Error: {e}")
         return None
+    
         
 @Client.on_message(filters.command('quality') & filters.user(ADMINS))
 async def add_quality_link(client: Client, message: Message):
@@ -209,36 +195,36 @@ async def add_quality_link(client: Client, message: Message):
             return
 
         buttons = []
-    for movie in search_results[:5]:
-        movie_title = movie.get('title', 'N/A')
-        movie_year = movie.get('year', 'N/A')
-        movie_id = movie.get('movieID')  # ✅ Use consistent key
+        for movie in search_results[:5]:
+            movie_title = movie.get('title', 'N/A')
+            movie_year = movie.get('year', 'N/A')
+            movie_id = movie.get('movieID')  # ✅ Use consistent key
         
         # Store data in a local dictionary with a UUID
-        unique_id = str(uuid.uuid4())
-        callback_data_store[unique_id] = {
+            unique_id = str(uuid.uuid4())
+            callback_data_store[unique_id] = {
             'movieID': movie_id,  # ✅ Use consistent naming
             'language': language,
             'season_name': season_name,
             'quality': quality,
             'link': link
-        }
+            }
         
-        button = InlineKeyboardButton(
+            button = InlineKeyboardButton(
             text=f"{movie_title} ({movie_year})",
             callback_data=f"idb#{unique_id}"
-        )
-        buttons.append([button])
-        reply_markup = InlineKeyboardMarkup(buttons)
+            )
+            buttons.append([button])
+            reply_markup = InlineKeyboardMarkup(buttons)
 
-        etho = await message.reply_text(
+            etho = await message.reply_text(
             "Multiple results found. Please select the correct series:",
             reply_markup=reply_markup
-        )
-        asyncio.create_task(DeleteMessage(etho))
-        return
+            )
+            asyncio.create_task(DeleteMessage(etho))
+            return
 
-    await continue_add_quality_link(client, message, series_key, language, season_name, quality, link)
+        await continue_add_quality_link(client, message, series_key, language, season_name, quality, link)
 
 
 @Client.on_callback_query(filters.regex(r"^idb#"))
