@@ -161,11 +161,11 @@ async def start_command(client, message):
 
     if STICKER:
         await message.reply_sticker(STICKER_ID)
-        await message.reply_text(text=START_TXT)
+        await message.reply_text(text=START_TXT, parse_mode=enums.ParseMode.MARKDOWN)
     elif PIC:
-        await message.reply_photo(photo=PICS, caption=START_TXT)
+        await message.reply_photo(photo=PICS, caption=START_TXT, parse_mode=enums.ParseMode.MARKDOWN)
     else:
-        await message.reply_text(text=START_TXT)
+        await message.reply_text(text=START_TXT, parse_mode=enums.ParseMode.MARKDOWN)
 
 
 @Client.on_message(filters.command("logs") & filters.user(ADMINS))
