@@ -146,7 +146,20 @@ async def get_postr(query, bulk=False, id=False):
             if not search_results:
                 return None
             if bulk:
-                return search_results[:10]
+                top_movies = []
+                for movie in search_results[:5]:
+                    try:
+                        movie_id = movie.movieID
+                        full_movie = imdb.get_movie(movie_id)
+                        top_movies.append({
+                            'title': full_movie.get('title', 'N/A'),
+                            'year': full_movie.get('year', 'N/A'),
+                            'imdb_id': movie_id  # Updated key
+                        })
+                    except Exception as e:
+                        print(f"Error fetching movie details: {e}")
+                        continue
+                return top_movies
             movie = search_results[0]
             movie_id = movie.movieID
         else:
@@ -164,7 +177,7 @@ async def get_postr(query, bulk=False, id=False):
             'rating': movie.get('rating', 'N/A'),
             'plot': movie.get('plot outline') or (movie.get('plot', ['N/A'])[0]),
             'poster': movie.get('full-size cover url', 'N/A'),
-            'movieID': movie_id,
+            'imdb_id': movie_id,  # Updated key
             'url': f'https://www.imdb.com/title/tt{movie_id}'
         }
 
@@ -185,48 +198,50 @@ async def add_quality_link(client: Client, message: Message):
         return
 
     series_name, language, season_name, quality, link = parts
-    series_key = series_name.lower().replace(" ", "")
+    series_key = series_name.lower().replace(" ", "").replace("-", "")
 
     series = get_series_name(series_key)
     if not series:
+        # Search on IMDb
         search_results = await get_postr(series_name, bulk=True)
         if not search_results:
             await message.reply_text("No results found on IMDb for the provided series name.")
             return
 
+        # Create buttons for user to select the correct series
         buttons = []
-        for movie in search_results[:5]:
+        for movie in search_results:
             movie_title = movie.get('title', 'N/A')
             movie_year = movie.get('year', 'N/A')
-            movie_id = movie.get('movieID')  # ✅ Use consistent key
-        
-        # Store data in a local dictionary with a UUID
+            imdb_id = movie.get('imdb_id')  # Use consistent key
+
+            # Store data in the callback store
             unique_id = str(uuid.uuid4())
             callback_data_store[unique_id] = {
-            'movieID': movie_id,  # ✅ Use consistent naming
-            'language': language,
-            'season_name': season_name,
-            'quality': quality,
-            'link': link
+                'imdb_id': imdb_id,
+                'language': language,
+                'season_name': season_name,
+                'quality': quality,
+                'link': link
             }
-        
+
             button = InlineKeyboardButton(
-            text=f"{movie_title} ({movie_year})",
-            callback_data=f"idb#{unique_id}"
+                text=f"{movie_title} ({movie_year})",
+                callback_data=f"idb#{unique_id}"
             )
             buttons.append([button])
-            reply_markup = InlineKeyboardMarkup(buttons)
 
-            etho = await message.reply_text(
+        reply_markup = InlineKeyboardMarkup(buttons)
+        msg = await message.reply_text(
             "Multiple results found. Please select the correct series:",
             reply_markup=reply_markup
-            )
-            asyncio.create_task(DeleteMessage(etho))
-            return
+        )
+        asyncio.create_task(DeleteMessage(msg))
+        return
 
-        await continue_add_quality_link(client, message, series_key, language, season_name, quality, link)
-
-
+    # If series found in DB, proceed directly
+    await continue_add_quality_link(client, message, series_key, language, season_name, quality, link)
+    
 @Client.on_callback_query(filters.regex(r"^idb#"))
 async def imdb_selection_callback(client: Client, callback_query):
     data = callback_query.data.split("#")
@@ -237,18 +252,18 @@ async def imdb_selection_callback(client: Client, callback_query):
         return
 
     stored_data = callback_data_store.pop(unique_id)
-    movie_id = stored_data['movieID']
+    imdb_id = stored_data['imdb_id']
     language = stored_data['language']
     season_name = stored_data['season_name']
     quality = stored_data['quality']
     link = stored_data['link']
 
-    movie = await get_postr(movie_id, id=True)
+    movie = await get_postr(imdb_id, id=True)
     if not movie:
         await callback_query.message.reply("Failed to retrieve IMDb data.")
         return
 
-    series_key = movie.get('title').lower().replace(" ", "").replace("-", "~")
+    series_key = movie.get('title').lower().replace(" ", "").replace("-", "")
 
     series_data = {
         'title': movie.get('title', 'N/A'),
@@ -270,7 +285,7 @@ async def imdb_selection_callback(client: Client, callback_query):
     )
 
     await continue_add_quality_link(client, callback_query.message, series_key, language, season_name, quality, link)
-
+    
 async def continue_add_quality_link(client, message, series_key, language, season_name, quality, link):
     season_name = f"{season_name}"
     
