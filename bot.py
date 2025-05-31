@@ -56,8 +56,19 @@ class Bot(Client):
         for admin in ADMINS:
             try:
                 await self.send_message(admin, text="Bot Restarted")
+                logging.info("Admin Sending")
             except Exception as e:
                 logging.warning(f"Failed to send restart message to {admin}: {e}")
+        await asyncio.sleep(4)
+        for id in DB_CHANNEL:
+            try:
+                await self.get_chat(id)
+                test = await self.send_message(id, text="Bot Restarted")
+                logging.info("Channel Sending")
+                await test.delete()
+            except Exception as e:
+                logging.warning(f"Failed to send restart message to {id}: {e}")
+        logging.info('Done Things')
         
     async def stop(self, *args):
         await super().stop()
