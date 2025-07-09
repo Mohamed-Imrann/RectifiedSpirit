@@ -7,7 +7,7 @@ import re
 import shutil
 import os
 from telegraph import upload_file
-from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, DB_CHANNEL, TMDB_API_KEYl # NEW IMPORTS
+from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, DB_CHANNEL, TMDB_API_KEY # NEW IMPORTS
 from database.users_chats_db import db
 from database.crazy_db import (
     add_series, add_series_links, delete_series_and_links,
