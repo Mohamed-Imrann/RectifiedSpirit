@@ -3,7 +3,7 @@
 import pyrogram
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
-from info import ADMINS, DB_CHANNEL, TMDB_IMAGE_BASE_URL # NEW IMPORT for TMDB_IMAGE_BASE_URL
+from info import ADMINS, DB_CHANNEL # NEW IMPORT for TMDB_IMAGE_BASE_URL
 from database.crazy_db import (
     get_series, get_links, get_series_name, get_languages, get_seasons, get_poster_manuel,
     tadd_series, tadd_poster_to_db, tadd_language, tdelete_group,
@@ -12,7 +12,7 @@ from database.crazy_db import (
 )
 from utils import temp # Assuming 'temp' is still needed from your original utils.py
 # Import TMDB related functions and ADMIN_STATES from newuicrazy.py
-from newuicrazy import ADMIN_STATES, get_movie_details_from_tmdb, find_most_similar_title
+from crazy import ADMIN_STATES, get_movie_details_from_tmdb, find_most_similar_title
 
 import asyncio
 import difflib
@@ -27,6 +27,7 @@ SPELL = (
 ).split()
 
 DEFAULT_POSTER = "https://envs.sh/kJK.jpg"
+TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
 async def alert_admins(client, series_key):
     alert_message = f"⚠️ Failed to fetch poster for series: <code>{series_key}</code>"
