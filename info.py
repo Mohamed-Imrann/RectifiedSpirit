@@ -27,13 +27,12 @@ DATABASE_NAME = "cluster0"
 COLLECTION_NAME = "thernello_unda"
 ADMINS = [int(admin) if id_pattern.search(admin) else admin for admin in environ.get('ADMINS', '1129673243 5394954571 7188908429').split()]
 CHANNELS = [int(ch) if id_pattern.search(ch) else ch for ch in environ.get('CHANNELS', '-1001306691782').split()]
-auth_channel = environ.get('AUTH_CHANNEL', '')
-AUTH_CHANNEL = int(auth_channel) if auth_channel and id_pattern.search(auth_channel) else None
+
 # Your request to join channel Ids
-REQ_CHANNEL_ONE =environ.get("REQ_CHANNEL_ONE", None)
-REQ_CHANNEL_ONE = (int(REQ_CHANNEL_ONE) if REQ_CHANNEL_ONE and id_pattern.search(REQ_CHANNEL_ONE) else False) if REQ_CHANNEL_ONE is not None else None
-REQ_CHANNEL_TWO =environ.get("REQ_CHANNEL_TWO", None)
-REQ_CHANNEL_TWO = (int(REQ_CHANNEL_TWO) if REQ_CHANNEL_TWO and id_pattern.search(REQ_CHANNEL_TWO) else False) if REQ_CHANNEL_TWO is not None else None
+AUTH_CHANNEL =environ.get("REQ_CHANNEL_ONE", None)
+AUTH_CHANNEL = (int(REQ_CHANNEL_ONE) if REQ_CHANNEL_ONE and id_pattern.search(REQ_CHANNEL_ONE) else False) if REQ_CHANNEL_ONE is not None else None
+REQ_CHANNEL =environ.get("REQ_CHANNEL_TWO", None)
+REQ_CHANNEL = (int(REQ_CHANNEL_TWO) if REQ_CHANNEL_TWO and id_pattern.search(REQ_CHANNEL_TWO) else False) if REQ_CHANNEL_TWO is not None else None
 
 LOG_CHANNEL = "-1001593500302"
 DB_CHANNEL = [-1001306691782, -1002193376815]
