@@ -15,7 +15,7 @@ def is_enabled(value, default):
 # Required API Credentials and Bot Settings
 API_ID = 19680279
 API_HASH = "a32f974ade51b2dc74e8db4bb049ad01"
-BOT_TOKEN = "5883096902:AAF-tI_T-F_zVI4oIANJPuZxDsvskqmAw6A"
+BOT_TOKEN = "7338279657:AAGKuJTxHIujwmT05n3CMDV5GLkm2-i8za8"
 BOT_USERNAME = "MC_MovieBetaBot"
 #API_ID2 = environ['API_ID2']
 #API_HASH2 = environ['API_HASH2']
