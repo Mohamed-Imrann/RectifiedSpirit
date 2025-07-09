@@ -12,7 +12,7 @@ from database.crazy_db import (
 )
 from utils import temp # Assuming 'temp' is still needed from your original utils.py
 # Import TMDB related functions and ADMIN_STATES from newuicrazy.py
-from crazy import ADMIN_STATES, get_movie_details_from_tmdb, find_most_similar_title
+from .crazy import ADMIN_STATES, get_movie_details_from_tmdb, find_most_similar_title
 
 import asyncio
 import difflib
