@@ -29,10 +29,8 @@ ADMINS = [int(admin) if id_pattern.search(admin) else admin for admin in environ
 CHANNELS = [int(ch) if id_pattern.search(ch) else ch for ch in environ.get('CHANNELS', '-1001306691782').split()]
 
 # Your request to join channel Ids
-AUTH_CHANNEL =environ.get("REQ_CHANNEL_ONE", None)
-AUTH_CHANNEL = (int(REQ_CHANNEL_ONE) if REQ_CHANNEL_ONE and id_pattern.search(REQ_CHANNEL_ONE) else False) if REQ_CHANNEL_ONE is not None else None
-REQ_CHANNEL =environ.get("REQ_CHANNEL_TWO", None)
-REQ_CHANNEL = (int(REQ_CHANNEL_TWO) if REQ_CHANNEL_TWO and id_pattern.search(REQ_CHANNEL_TWO) else False) if REQ_CHANNEL_TWO is not None else None
+AUTH_CHANNEL = None
+REQ_CHANNEL = None
 
 LOG_CHANNEL = "-1001593500302"
 DB_CHANNEL = [-1001306691782, -1002193376815]
