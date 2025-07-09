@@ -3,15 +3,17 @@
 import pyrogram
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
-from info import ADMINS, DB_CHANNEL # Assuming DB_CHANNEL is defined in info.py
+from info import ADMINS, DB_CHANNEL, TMDB_IMAGE_BASE_URL # NEW IMPORT for TMDB_IMAGE_BASE_URL
 from database.crazy_db import (
     get_series, get_links, get_series_name, get_languages, get_seasons, get_poster_manuel,
     tadd_series, tadd_poster_to_db, tadd_language, tdelete_group,
     add_temp_series_data, get_temp_series_data, clear_temp_series_data, add_temp_quality_links,
     get_temp_quality_links, get_all_temp_qualities_for_series, publish_temp_data
 )
-from utils import temp
-from imdb import Cinemagoer
+from utils import temp # Assuming 'temp' is still needed from your original utils.py
+# Import TMDB related functions and ADMIN_STATES from newuicrazy.py
+from newuicrazy import ADMIN_STATES, get_movie_details_from_tmdb, find_most_similar_title
+
 import asyncio
 import difflib
 import logging
@@ -23,34 +25,6 @@ logger.setLevel(logging.ERROR)
 SPELL = (
     'https://envs.sh/kJj.jpg'
 ).split()
-
-imdb = Cinemagoer()
-
-# Dictionary to store temporary state for admin interactions (shared with crazy.py)
-# {user_id: {'state': 'waiting_for_quality_name', 'series_key': '...', 'language': '...', 'season': '...'}}
-ADMIN_STATES = {} # This should ideally be a shared state or managed via DB for persistence
-
-async def DeleteMessage(msg):
-    await asyncio.sleep(600)
-    try:
-        await msg.delete()
-    except Exception as e:
-        print(f"Error deleting message: {e}")
-
-def find_close_matches(query, possibilities, n=3, cutoff=0.6):
-    return difflib.get_close_matches(query, possibilities, n, cutoff)
-
-def chunk_buttons(buttons, chunk_size=3):
-    return [buttons[i:i + chunk_size] for i in range(0, len(buttons), chunk_size)]
-
-def find_most_similar_title(query, search_results):
-    titles = [movie.get('title', '').lower() for movie in search_results]
-    matches = difflib.get_close_matches(query.lower(), titles, n=1, cutoff=0.6)
-    if matches:
-        for movie in search_results:
-            if movie.get('title', '').lower() == matches[0]:
-                return movie
-    return None
 
 DEFAULT_POSTER = "https://envs.sh/kJK.jpg"
 
@@ -68,11 +42,25 @@ def get_movie_poster(series_key):
         series = get_series_name(series_key)
         if series:
             series_title = series.get('title', '')
-            search_results = imdb.search_movie(series_title.lower(), results=10)
+            # Use the TMDB utility function for search
+            # Note: This is a synchronous call in an async function, which is generally bad.
+            # For a quick fix, we'll use asyncio.run, but ideally, get_movie_details_from_tmdb
+            # should be awaited directly if possible, or the poster fetching logic refactored.
+            # However, get_poster_manuel is sync, so this might be unavoidable without deeper changes.
+            search_results = asyncio.run(get_movie_details_from_tmdb(query=series_title.lower(), bulk=True))
             if search_results:
                 movie = find_most_similar_title(series_title, search_results)
-                poster_url = movie.get('full-size cover url') if movie else None
+                if movie and movie.get('poster_path'):
+                    poster_url = f"{TMDB_IMAGE_BASE_URL}{movie['poster_path']}"
     return poster_url
+
+def find_close_matches(query, possibilities, n=3, cutoff=0.6):
+    return difflib.get_close_matches(query, possibilities, n, cutoff)
+
+def chunk_buttons(buttons, chunk_size=3):
+    return [buttons[i:i + chunk_size] for i in range(0, len(buttons), chunk_size)]
+
+# find_most_similar_title is now imported from newuicrazy.py
 
 @Client.on_message(filters.text & (filters.private | filters.group))
 async def handle_message(client, message):
@@ -236,7 +224,14 @@ async def process_and_add_quality_links(client, message, user_id, state_data):
                 elif forwarded_msg.audio:
                     file_id = forwarded_msg.audio.file_id
                 elif forwarded_msg.photo:
-                    file_id = forwarded_msg.photo.file_id # For photos, you might want to use the largest size
+                    # For photos, get the largest size's file_id
+                    if forwarded_msg.photo.sizes:
+                        file_id = forwarded_msg.photo.sizes[-1].file_id
+                elif forwarded_msg.sticker:
+                    file_id = forwarded_msg.sticker.file_id
+                elif forwarded_msg.animation:
+                    file_id = forwarded_msg.animation.file_id
+
 
                 if file_id:
                     # Simulate a direct download link. In a real scenario, you'd use a service
@@ -279,8 +274,8 @@ async def process_and_add_quality_links(client, message, user_id, state_data):
         await message.reply_text(summary_text, reply_markup=reply_markup, parse_mode=enums.ParseMode.MARKDOWN)
 
     except Exception as e:
-        logger.error(f"Failed to process files for quality: {e}")
-        await message.reply_text(f"An error occurred during file processing: {e}")
+        logger.error(f"An unexpected error occurred during file processing: {e}", exc_info=True)
+        await message.reply_text(f"An unexpected error occurred during file processing: {e}")
         clear_temp_series_data(user_id) # Clear temp data on error
 
 
@@ -293,33 +288,37 @@ async def cb_handler(client, query: CallbackQuery):
     # --- Admin Panel Callbacks ---
     if user_id in ADMINS:
         if data.startswith("addseries_select#"):
-            imdb_id = data.split("#")[1]
-            query_user_id = data.split("#")[2]
+            tmdb_id = data.split("#")[1]
+            media_type = data.split("#")[2] # Get media_type from callback data
+            query_user_id = data.split("#")[3]
             if query_user_id != user_id:
                 await query.answer("This selection is not for you.", show_alert=True)
                 return
 
-            await query.message.edit_text("Fetching IMDb data...")
-            movie = await client.get_postr(imdb_id, id=True) # Assuming get_postr is available or imported
+            await query.message.edit_text("Fetching TMDB data...")
+            # Use the TMDB utility function to get movie details by ID and media_type
+            movie = await get_movie_details_from_tmdb(tmdb_id=int(tmdb_id), media_type=media_type)
             if not movie:
-                await query.message.edit_text("Failed to retrieve IMDb data.")
+                await query.message.edit_text("Failed to retrieve TMDB data.")
                 return
 
             series_key = movie.get('title').lower().replace(" ", "")
             series_info = {
                 "key": series_key,
                 "title": movie.get('title', 'N/A'),
-                "released_on": movie.get('year', 'N/A'),
-                "genre": movie.get('genres', 'N/A'),
+                "released_on": movie.get('released_on', 'N/A'),
+                "genre": movie.get('genre', 'N/A'),
                 "rating": movie.get('rating', 'N/A'),
                 "poster": movie.get('poster', None),
+                "tmdb_id": movie.get('tmdb_id'), # Store TMDB ID
+                "media_type": movie.get('media_type'), # Store media type
                 "languages": [], # Initialize empty
                 "seasons": [] # Initialize empty
             }
             add_temp_series_data(user_id, {'series_info': series_info, 'qualities': {}})
 
             reply_markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("Add Language", callback_data=f"add_lang_temp#{series_key}#{user_id}")],
+                [InlineKeyboardButton("Add Language & Season", callback_data=f"add_lang_temp#{series_key}#{user_id}")],
                 [InlineKeyboardButton("Add Quality (Advanced)", callback_data=f"add_quality_flow_start_cb#{series_key}#{user_id}")],
                 [InlineKeyboardButton("Publish All Changes", callback_data=f"publish_temp_data#{user_id}")],
                 [InlineKeyboardButton("Discard All Temporary Changes", callback_data=f"discard_temp_data#{user_id}")]
@@ -330,8 +329,8 @@ async def cb_handler(client, query: CallbackQuery):
                     caption=(
                         f"**Series Selected (Temporary):**\n"
                         f"**Title:** {movie.get('title', 'N/A')}\n"
-                        f"**Released On:** {movie.get('year', 'N/A')}\n"
-                        f"**Genre:** {movie.get('genres', 'N/A')}\n"
+                        f"**Released On:** {movie.get('released_on', 'N/A')}\n"
+                        f"**Genre:** {movie.get('genre', 'N/A')}\n"
                         f"**Rating:** {movie.get('rating', 'N/A')}\n\n"
                         f"Series Key: `{series_key}`"
                     )
@@ -719,7 +718,9 @@ async def update_admin_panel_ui(client, message, user_id, series_key):
         f"**Released On:** {series_info.get('released_on', 'N/A')}\n"
         f"**Genre:** {series_info.get('genre', 'N/A')}\n"
         f"**Rating:** {series_info.get('rating', 'N/A')}\n\n"
-        f"Series Key: `{series_key}`\n\n"
+        f"Series Key: `{series_key}`\n"
+        f"TMDB ID: `{series_info.get('tmdb_id', 'N/A')}`\n"
+        f"Media Type: `{series_info.get('media_type', 'N/A').upper()}`\n\n"
         f"**Languages Added:** {', '.join(series_info.get('languages', [])) or 'None'}\n"
         f"**Seasons Added:** {', '.join(series_info.get('seasons', [])) or 'None'}\n\n"
         f"**Temporary Qualities Added:**\n"
@@ -727,10 +728,11 @@ async def update_admin_panel_ui(client, message, user_id, series_key):
 
     if qualities_data:
         for sk, langs in qualities_data.items():
-            for lang, seasons in langs.items():
-                for season, qualities in seasons.items():
-                    for quality_name, links in qualities.items():
-                        caption_text += f"- `{lang}` - `{season}` - `{quality_name}` ({len(links)} parts)\n"
+            if sk == series_key: # Only show qualities for the current series
+                for lang, seasons in langs.items():
+                    for season, qualities in seasons.items():
+                        for quality_name, links in qualities.items():
+                            caption_text += f"- `{lang}` - `{season}` - `{quality_name}` ({len(links)} parts)\n"
     else:
         caption_text += "None yet."
 

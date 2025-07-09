@@ -3,13 +3,11 @@
 import asyncio
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, InputMediaPhoto
-from imdb import Cinemagoer
-import difflib
 import re
 import shutil
 import os
 from telegraph import upload_file
-from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, DB_CHANNEL # Assuming DB_CHANNEL is defined in info.py
+from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, DB_CHANNEL, TMDB_API_KEY, TMDB_IMAGE_BASE_URL # NEW IMPORTS
 from database.users_chats_db import db
 from database.crazy_db import (
     add_series, add_series_links, delete_series_and_links,
@@ -22,12 +20,14 @@ from plugins.get_file_id import get_file_id
 import base64
 import hashlib
 import uuid
+import requests
+import tmdbsimple as tmdb # NEW IMPORT
 
-imdb = Cinemagoer()
+tmdb.API_KEY = TMDB_API_KEY # Initialize TMDB API key
 
 # Dictionary to store temporary state for admin interactions
 # {user_id: {'state': 'waiting_for_quality_name', 'series_key': '...', 'language': '...', 'season': '...'}}
-ADMIN_STATES = {}
+ADMIN_STATES = {} # This will be imported by newuipm_filter.py
 
 async def DeleteMessage(msg):
     await asyncio.sleep(40)
@@ -37,13 +37,86 @@ async def DeleteMessage(msg):
         print(f"Error deleting message: {e}")
 
 def find_most_similar_title(query, search_results):
-    titles = [movie.get('title', '').lower() for movie in search_results]
+    """
+    Finds the most similar title from TMDB search results.
+    TMDB search results have 'title' for movies and 'name' for TV shows.
+    """
+    titles = []
+    for item in search_results:
+        if item.get('media_type') == 'movie':
+            titles.append(item.get('title', '').lower())
+        elif item.get('media_type') == 'tv':
+            titles.append(item.get('name', '').lower())
+    
     matches = difflib.get_close_matches(query.lower(), titles, n=1, cutoff=0.6)
     if matches:
-        for movie in search_results:
-            if movie.get('title', '').lower() == matches[0]:
-                return movie
+        for item in search_results:
+            if item.get('media_type') == 'movie' and item.get('title', '').lower() == matches[0]:
+                return item
+            elif item.get('media_type') == 'tv' and item.get('name', '').lower() == matches[0]:
+                return item
     return None
+
+async def get_movie_details_from_tmdb(query=None, tmdb_id=None, media_type='multi', bulk=False):
+    """
+    Fetches movie/series details from TMDB.
+    :param query: Search query (title/name) if tmdb_id is None.
+    :param tmdb_id: If provided, fetches details for a specific TMDB ID.
+    :param media_type: 'movie', 'tv', or 'multi' (for search).
+    :param bulk: If True, returns a list of search results.
+    :return: Dictionary of movie/series details or list of search results.
+    """
+    try:
+        if tmdb_id:
+            if media_type == 'movie':
+                details = tmdb.Movies(tmdb_id).info()
+            elif media_type == 'tv':
+                details = tmdb.TV(tmdb_id).info()
+            else:
+                # This case should ideally not happen if media_type is correctly passed
+                # from a multi-search result.
+                print(f"Warning: Attempted to get details for unknown media_type: {media_type}")
+                return None
+
+            poster_path = details.get('poster_path')
+            poster_url = f"{TMDB_IMAGE_BASE_URL}{poster_path}" if poster_path else None
+
+            return {
+                'title': details.get('title') or details.get('name', 'N/A'), # 'title' for movies, 'name' for TV
+                'released_on': details.get('release_date') or details.get('first_air_date', 'N/A'),
+                'genre': ', '.join([g['name'] for g in details.get('genres', [])]) if details.get('genres') else 'N/A',
+                'rating': details.get('vote_average', 'N/A'),
+                'poster': poster_url,
+                'tmdb_id': tmdb_id,
+                'media_type': media_type # Store media type for later use
+            }
+        else:
+            search = tmdb.Search()
+            response = search.multi(query=query) # Searches movies, TV shows, and people
+
+            if not response['results']:
+                return None
+
+            if bulk:
+                # Filter out people and return top results
+                return [
+                    item for item in response['results']
+                    if item.get('media_type') in ['movie', 'tv']
+                ][:10] # Limit to top 10 relevant results
+
+            # Find the most similar title from multi-search results
+            best_match = find_most_similar_title(query, response['results'])
+            if best_match:
+                # Recursively call to get full details for the best match
+                return await get_movie_details_from_tmdb(
+                    tmdb_id=best_match['id'],
+                    media_type=best_match['media_type']
+                )
+            return None
+
+    except Exception as e:
+        print(f"Error fetching TMDB details: {e}")
+        return None
 
 def extract_parts(text):
     parts = []
@@ -73,37 +146,6 @@ def extract_parts(text):
 
     return parts
 
-async def get_postr(query, bulk=False, id=False):
-    if not id:
-        search_results = imdb.search_movie(query)
-        if not search_results:
-            return None
-        if bulk:
-            return search_results[:10]  # Return top 10 results
-        movie = search_results[0]
-        movie_id = movie.movieID
-    else:
-        movie_id = query
-
-    movie = imdb.get_movie(movie_id)
-    if not movie:
-        return None
-
-    genres = ', '.join(movie.get('genres', [])) if movie.get('genres') else 'N/A'
-    poster = movie.get('full-size cover url', 'N/A')
-    title = movie.get('title', 'N/A')
-    year = movie.get('year', 'N/A')
-    rating = movie.get('rating', 'N/A')
-
-    return {
-        'title': title,
-        'year': year,
-        'genres': genres,
-        'rating': rating,
-        'poster': poster,
-        'imdb_id': movie_id
-    }
-
 @Client.on_message(filters.command("addseries") & filters.user(ADMINS))
 async def add_series_command_new(client, message):
     user_id = message.from_user.id
@@ -112,26 +154,29 @@ async def add_series_command_new(client, message):
         await message.reply("Please provide a series name. Usage: `/addseries <series_name>`")
         return
 
-    search_results = imdb.search_movie(query_text)
+    # Use the TMDB utility function to search
+    search_results = await get_movie_details_from_tmdb(query=query_text, bulk=True)
     if not search_results:
-        await message.reply("No results found on IMDb.")
+        await message.reply("No results found on TMDB.")
         return
 
     buttons = []
-    for result in search_results[:5]:
-        movie_title = result.get('title', 'N/A')
-        movie_year = result.get('year', 'N/A')
-        imdb_id = result.movieID
+    for result in search_results[:5]: # Limit to top 5 for display
+        title = result.get('title') or result.get('name', 'N/A')
+        year = result.get('release_date', '')[:4] or result.get('first_air_date', '')[:4] or 'N/A'
+        tmdb_id = result.get('id')
+        media_type = result.get('media_type') # 'movie' or 'tv'
+
         buttons.append([
             InlineKeyboardButton(
-                f"{movie_title} - {movie_year}",
-                callback_data=f"addseries_select#{imdb_id}#{user_id}"
+                f"{title} - {year} ({media_type.upper()})",
+                callback_data=f"addseries_select#{tmdb_id}#{media_type}#{user_id}"
             )
         ])
     buttons.append([InlineKeyboardButton("Cancel", callback_data=f"cancel_addseries#{user_id}")])
 
     etho = await message.reply(
-        "Select a series from the results to add (this will be temporary until published):",
+        "Select a series/movie from the results to add (this will be temporary until published):",
         reply_markup=InlineKeyboardMarkup(buttons)
     )
     asyncio.create_task(DeleteMessage(etho))
