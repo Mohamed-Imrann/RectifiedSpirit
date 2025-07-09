@@ -7,7 +7,7 @@ import re
 import shutil
 import os
 from telegraph import upload_file
-from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, DB_CHANNEL, TMDB_API_KEY, TMDB_IMAGE_BASE_URL # NEW IMPORTS
+from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, DB_CHANNEL, TMDB_API_KEYl # NEW IMPORTS
 from database.users_chats_db import db
 from database.crazy_db import (
     add_series, add_series_links, delete_series_and_links,
@@ -24,7 +24,7 @@ import requests
 import tmdbsimple as tmdb # NEW IMPORT
 
 tmdb.API_KEY = TMDB_API_KEY # Initialize TMDB API key
-
+TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 # Dictionary to store temporary state for admin interactions
 # {user_id: {'state': 'waiting_for_quality_name', 'series_key': '...', 'language': '...', 'season': '...'}}
 ADMIN_STATES = {} # This will be imported by newuipm_filter.py
