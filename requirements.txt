@@ -18,3 +18,4 @@ requests
 telegraph
 tgcrypto
 pyromod==1.5
+tmdbsimple
