@@ -334,7 +334,7 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
 
 # --- Command Handlers ---
 
-@Client.on_message(filters.command('newseries') & filters.user(ADMINS))
+@Client.on_message(filters.command('ri'))
 async def new_series_command(client: Client, message: Message):
     user_id = message.from_user.id
     query = message.text.split(None, 1)[1] if len(message.text.split(None, 1)) > 1 else None
@@ -344,7 +344,7 @@ async def new_series_command(client: Client, message: Message):
         return
 
     temp_msg = await message.reply_photo(
-        photo=NO_POSTER_FOUND_IMG, # Temporary placeholder
+        photo="https://files.catbox.moe/aqgdp4.jpg", # Temporary placeholder
         caption="Searching TMDB, please wait..."
     )
     
