@@ -16,6 +16,3 @@ def is_enabled(value, default):
         return False
     else:
         return default
-
-# This is a placeholder for cl2 file.
-# Add any specific configuration or data here if needed.

@@ -1,3 +1,0 @@
-start - Start the bot
-help - Get help
-admin - Open admin panel
