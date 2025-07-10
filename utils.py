@@ -33,28 +33,41 @@ SMART_OPEN = '“'
 SMART_CLOSE = '”'
 START_CHAR = ('\'', '"', SMART_OPEN)
  
-class temp(object):
-    ME = None
-    U_NAME = None
-    B_NAME = None
-    START_TIME = time.time()
-    LINK_ONE = None
-    LINK_TWO = None
+class Temp(object):
+    def __init__(self):
+        self.ME = None
+        self.U_NAME = None
+        self.B_NAME = None
+        self.LINK_ONE = None
+        self.LINK_TWO = None
+
+temp = Temp()
 
 def get_readable_time(seconds: int) -> str:
-    result = ''
-    (days, remainder) = divmod(seconds, 86400)
-    (hours, remainder) = divmod(remainder, 3600)
-    (minutes, seconds) = divmod(remainder, 60)
-    if days > 0:
-        result += f'{days}d'
-    if hours > 0:
-        result += f'{hours}h'
-    if minutes > 0:
-        result += f'{minutes}m'
-    if seconds > 0:
-        result += f'{seconds}s'
-    return result
+    count = 0
+    up_time = ""
+    time_list = []
+    time_suffix_list = ["s", "m", "h", "days"]
+    while count < 4:
+        count += 1
+        if count < 3:
+            remainder, result = divmod(seconds, 60)
+        else:
+            remainder, result = divmod(seconds, 24)
+        if seconds == 0 and count > 0:
+            break
+        time_list.append(int(result))
+        seconds = int(remainder)
+    for i in range(len(time_list)):
+        time_list[i] = str(time_list[i]) + time_suffix_list[i]
+    if len(time_list) == 4:
+        up_time += time_list[3] + ", "
+    if len(time_list) >= 3:
+        up_time += time_list[2] + ", "
+    if len(time_list) >= 2:
+        up_time += time_list[1] + ", "
+    up_time += time_list[0]
+    return up_time
 
 def get_readable_file_size(size_in_bytes) -> str:
     if size_in_bytes is None:
