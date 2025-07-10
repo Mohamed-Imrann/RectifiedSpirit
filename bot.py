@@ -143,7 +143,7 @@ class Bot(Client):
         current = offset
         while True:
             new_diff = min(200, limit - current)
-            if new_diff &lt;= 0: # Corrected syntax error here
+            if new_diff <= 0: # Corrected syntax error here
                 return
             messages = await self.get_messages(chat_id, list(range(current, current+new_diff+1)))
             for message in messages:
