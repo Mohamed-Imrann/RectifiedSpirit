@@ -1,5 +1,5 @@
 from pymongo import MongoClient
-from info import DATABASE_URI, DATABASE_NAME, DATABASE_URL
+from info import DATABASE_URI, DATABASE_NAME
 import motor.motor_asyncio
 
 client = MongoClient(DATABASE_URI)
@@ -10,7 +10,7 @@ posters_collection = db['posters']
 
 class CrazyDB:
     def __init__(self):
-        self.client = motor.motor_asyncio.AsyncIOMotorClient(DATABASE_URL)
+        self.client = motor.motor_asyncio.AsyncIOMotorClient(DATABASE_URI)
         self.db = self.client[DATABASE_NAME]
         self.crazy_collection = self.db.crazy_data
 
