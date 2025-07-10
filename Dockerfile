@@ -1,4 +1,4 @@
-FROM python:3.9.17
+FROM python:3.10
 
 WORKDIR /app
 RUN apt update && apt upgrade -y
