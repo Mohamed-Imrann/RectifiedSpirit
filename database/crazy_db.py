@@ -1,11 +1,30 @@
 from pymongo import MongoClient
-from info import DATABASE_URI
+from info import DATABASE_URI, DATABASE_NAME, DATABASE_URL
+import motor.motor_asyncio
 
 client = MongoClient(DATABASE_URI)
 db = client['series_database']
 series_collection = db['series']
 links_collection = db['series_links']
 posters_collection = db['posters']
+
+class CrazyDB:
+    def __init__(self):
+        self.client = motor.motor_asyncio.AsyncIOMotorClient(DATABASE_URL)
+        self.db = self.client[DATABASE_NAME]
+        self.crazy_collection = self.db.crazy_data
+
+    async def add_crazy_data(self, user_id, data):
+        await self.crazy_collection.update_one(
+            {"_id": user_id},
+            {"$set": data},
+            upsert=True
+        )
+
+    async def get_crazy_data(self, user_id):
+        return await self.crazy_collection.find_one({"_id": user_id})
+
+crazy_db = CrazyDB()
 
 def add_poster_to_db(series_key, poster_url):
     result = posters_collection.update_one(

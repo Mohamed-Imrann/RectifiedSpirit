@@ -7,7 +7,7 @@ from pymongo.errors import DuplicateKeyError
 from umongo import Instance, Document, fields
 from motor.motor_asyncio import AsyncIOMotorClient
 from marshmallow.exceptions import ValidationError
-from info import DATABASE_URI, DATABASE_NAME, COLLECTION_NAME, USE_CAPTION_FILTER
+from info import DATABASE_URI, DATABASE_NAME, COLLECTION_NAME, USE_CAPTION_FILTER, DATABASE_URL
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -30,6 +30,25 @@ class Media(Document):
     class Meta:
         indexes = ('$file_name', )
         collection_name = COLLECTION_NAME
+
+class IAFilterDB:
+    def __init__(self):
+        self.client = motor.motor_asyncio.AsyncIOMotorClient(DATABASE_URL)
+        self.db = self.client[DATABASE_NAME]
+        self.ia_filters_collection = self.db.ia_filters
+
+    async def add_ia_filter(self, chat_id, keyword, file_id):
+        await self.ia_filters_collection.update_one(
+            {"_id": chat_id},
+            {"$set": {f"filters.{keyword}": file_id}},
+            upsert=True
+        )
+
+    async def get_ia_filter(self, chat_id, keyword):
+        data = await self.ia_filters_collection.find_one({"_id": chat_id})
+        return data.get("filters", {}).get(keyword) if data else None
+
+ia_filter_db = IAFilterDB()
 
 async def save_file(media):
     """Save file in database"""
