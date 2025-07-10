@@ -11,7 +11,7 @@ from utils import temp
 
 @Client.on_message(filters.command("setfsub1") & filters.user(ADMINS))
 async def set_fsub_channel_one(client, message: Message):
-    if len(message.command) &lt; 2:
+    if len(message.command) < 2:
         return await message.reply_text("Usage: /setfsub1 [channel_id]")
     
     channel_id = int(message.command[1])
@@ -30,7 +30,7 @@ async def set_fsub_channel_one(client, message: Message):
 
 @Client.on_message(filters.command("setfsub2") & filters.user(ADMINS))
 async def set_fsub_channel_two(client, message: Message):
-    if len(message.command) &lt; 2:
+    if len(message.command) < 2:
         return await message.reply_text("Usage: /setfsub2 [channel_id]")
     
     channel_id = int(message.command[1])
@@ -74,3 +74,53 @@ async def clear_reqs_one(client, message: Message):
 async def clear_reqs_two(client, message: Message):
     await delete_all_two()
     await message.reply_text("All join requests for channel 2 cleared.")
+
+@Client.on_message(filters.private & filters.incoming)
+async def force_subscribe_check(client: Client, message: Message):
+    if not REQ_CHANNEL_ONE and not REQ_CHANNEL_TWO:
+        return # No force subscribe channels configured
+
+    user_id = message.from_user.id
+    
+    # Check channel one
+    if REQ_CHANNEL_ONE:
+        try:
+            member = await client.get_chat_member(REQ_CHANNEL_ONE, user_id)
+            if member.status in ["member", "creator", "administrator"]:
+                pass # User is subscribed
+            else:
+                await message.reply_text(
+                    "You must join our channel to use this bot!",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("Join Channel 1", url=temp.LINK_ONE)]
+                    ])
+                )
+                return
+        except Exception as e:
+            print(f"Error checking channel one: {e}")
+            # Handle cases where bot is not admin or channel ID is wrong
+            pass
+
+    # Check channel two
+    if REQ_CHANNEL_TWO:
+        try:
+            member = await client.get_chat_member(REQ_CHANNEL_TWO, user_id)
+            if member.status in ["member", "creator", "administrator"]:
+                pass # User is subscribed
+            else:
+                await message.reply_text(
+                    "You must join our second channel to use this bot!",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("Join Channel 2", url=temp.LINK_TWO)]
+                    ])
+                )
+                return
+        except Exception as e:
+            print(f"Error checking channel two: {e}")
+            pass
+    
+    # If user is subscribed to all required channels, proceed
+    # This is where you'd typically call the next handler or allow the message to pass
+    # For now, just a placeholder
+    # await message.continue_propagation() # This would be the actual way to pass control
+    pass

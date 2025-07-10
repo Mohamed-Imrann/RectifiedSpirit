@@ -219,3 +219,7 @@ async def auto_delete_message(client, message):
             await delete_msg.delete()
         except Exception as e:
             logger.error(f"Error during auto-delete: {e}")
+
+@Client.on_message(filters.command("ptti"))
+async def ptti_show_command(client: Client, message: Message):
+    await message.reply_text("This is a placeholder for the p_ttishow feature.")

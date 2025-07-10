@@ -1,14 +1,21 @@
-import logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-@Client.on_message(filters.private & filters.command("get_file_id"))
-async def get_file_id_command(client, message: Message):
-    if not message.reply_to_message or not message.reply_to_message.media:
-        return await message.reply_text("Reply to a media file to get its file ID.")
-    
-    file_id = message.reply_to_message.media.file_id
-    await message.reply_text(f"**File ID:**\n`{file_id}`")
+@Client.on_message(filters.media & filters.private)
+async def get_file_id(client: Client, message: Message):
+    if message.document:
+        file_id = message.document.file_id
+        file_name = message.document.file_name
+    elif message.video:
+        file_id = message.video.file_id
+        file_name = message.video.file_name
+    elif message.audio:
+        file_id = message.audio.file_id
+        file_name = message.audio.file_name
+    elif message.photo:
+        file_id = message.photo.file_id
+        file_name = "photo"
+    else:
+        return
+
+    await message.reply_text(f"File Name: `{file_name}`\nFile ID: `{file_id}`")

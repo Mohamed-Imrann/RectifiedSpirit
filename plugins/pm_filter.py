@@ -350,6 +350,16 @@ async def cb_handler(client, query: CallbackQuery):
 
 from Script import script
 
+@Client.on_message(filters.private & filters.text & filters.incoming)
+async def pm_filter_handler(client: Client, message: Message):
+    # This is a placeholder for private message filtering logic.
+    # You can implement keyword-based replies, anti-spam, etc.
+    text = message.text.lower()
+    if "hello" in text:
+        await message.reply_text("Hello to you too!")
+    elif "series" in text:
+        await message.reply_text("Looking for a series? Use the search commands!")
+
 @Client.on_message(filters.text & filters.private & ~filters.edited & ~filters.command(["start", "help", "about", "stats", "restart", "totalusers", "viewall", "deleteseries", "deleteallseries", "gfilters", "gdel", "gdelall", "genlink", "get_file_id", "admin_ui"]))
 async def pm_filter(client, message: Message):
     if not await is_subscribed(client, message):

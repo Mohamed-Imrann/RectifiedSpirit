@@ -1,47 +1,45 @@
 import logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
+import os
+import sys
+import traceback
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from info import ADMINS
-import io
-import sys
-import traceback
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 @Client.on_message(filters.command("eval") & filters.user(ADMINS))
-async def eval_command(client, message: Message):
-    if len(message.command) &lt; 2:
-        return await message.reply_text("Usage: /eval [code]")
-    
+async def eval_command(client: Client, message: Message):
+    if len(message.command) < 2:
+        await message.reply_text("Usage: /eval <code>")
+        return
+
     cmd = message.text.split(" ", 1)[1]
-    
+    reply_to_id = message.id
+    if message.reply_to_message:
+        reply_to_id = message.reply_to_message.id
+
     old_stdout = sys.stdout
     old_stderr = sys.stderr
-    redirected_output = io.StringIO()
-    redirected_error = io.StringIO()
-    sys.stdout = redirected_output
-    sys.stderr = redirected_error
-    
+    redirected_output = sys.stdout = sys.stderr = os.StringIO()
+
     try:
-        # Create a dictionary for local variables, including client and message
-        exec_globals = globals().copy()
-        exec_locals = {'client': client, 'message': message}
-        
-        exec(cmd, exec_globals, exec_locals)
-        
+        exec(cmd)
         output = redirected_output.getvalue()
-        error = redirected_error.getvalue()
-        
-        if output:
-            await message.reply_text(f"**Output:**\n```\n{output}```")
-        if error:
-            await message.reply_text(f"**Error:**\n```\n{error}```")
-        if not output and not error:
-            await message.reply_text("Execution completed with no output.")
-            
-    except Exception as e:
-        await message.reply_text(f"**Exception:**\n```\n{traceback.format_exc()}```")
-    finally:
-        sys.stdout = old_stdout
-        sys.stderr = old_stderr
+    except Exception:
+        output = traceback.format_exc()
+
+    sys.stdout = old_stdout
+    sys.stderr = old_stderr
+
+    if output:
+        if len(output) > 4096:
+            with open("eval_output.txt", "w") as f:
+                f.write(output)
+            await message.reply_document("eval_output.txt", caption="Output too long, sent as file.")
+            os.remove("eval_output.txt")
+        else:
+            await message.reply_text(f"\`\`\`python\n{output}\n\`\`\`", reply_to_message_id=reply_to_id)
+    else:
+        await message.reply_text("No output.", reply_to_message_id=reply_to_id)

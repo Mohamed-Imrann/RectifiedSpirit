@@ -19,6 +19,10 @@ async def new_series_command(client, message: Message):
     )
     client.temp_data[message.from_user.id] = {"state": "waiting_for_series_title", "series_data": {}}
 
+@Client.on_message(filters.command("crazy") & filters.user(ADMINS))
+async def crazy_command(client: Client, message: Message):
+    await message.reply_text("You called the crazy command! What's next?")
+
 @Client.on_message(filters.text & filters.private & filters.user(ADMINS), group=2)
 async def handle_new_series_input(client, message: Message):
     user_id = message.from_user.id

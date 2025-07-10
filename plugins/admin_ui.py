@@ -1,14 +1,12 @@
 import logging
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from database.utility_db import UtilityDB
+from database.utility_db import utility_db
 from database.crazy_db import get_series_name, get_languages, get_seasons, get_links, series_collection, links_collection
 from info import ADMINS
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
-utility_db = UtilityDB()
 
 @Client.on_message(filters.command("admin_ui") & filters.user(ADMINS))
 async def admin_ui_command(client, message):
@@ -21,6 +19,16 @@ async def admin_ui_command(client, message):
             [InlineKeyboardButton("Bot Stats", callback_data="admin_bot_stats")],
             [InlineKeyboardButton("Broadcast Message", callback_data="admin_broadcast")],
             [InlineKeyboardButton("Ban/Unban Users", callback_data="admin_ban_users")],
+        ])
+    )
+
+@Client.on_message(filters.private & filters.user(ADMINS) & filters.command("admin"))
+async def admin_panel(client: Client, message):
+    await message.reply_text(
+        "Welcome to the Admin Panel!",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("Manage Series Data", callback_data="manage_series_data")],
+            # Add other admin options here
         ])
     )
 
@@ -490,6 +498,103 @@ async def back_to_edit_series_selected(client, callback_query: CallbackQuery):
 @Client.on_callback_query(filters.regex("^admin_main_ui$"))
 async def back_to_main_ui(client, callback_query: CallbackQuery):
     await admin_ui_command(client, callback_query.message) # Re-call the main admin_ui command
+
+@Client.on_callback_query(filters.regex("^manage_series_data$"))
+async def manage_series_data_callback(client: Client, query: CallbackQuery):
+    user_id = query.from_user.id
+    temp_data = await utility_db.get_temp_series(user_id)
+
+    if not temp_data:
+        await query.message.edit_text("No temporary series data found for you.",
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Admin", callback_data="admin_panel")]]))
+        return
+
+    text = "Current Temporary Series Data:\n\n"
+    
+    # Display Languages
+    languages = temp_data.get("languages", [])
+    if languages:
+        text += "Languages:\n"
+        for lang in languages:
+            text += f"- {lang}\n"
+        text += "\n"
+    
+    # Display Seasons
+    seasons = temp_data.get("seasons", [])
+    if seasons:
+        text += "Seasons:\n"
+        for season in seasons:
+            text += f"- {season}\n"
+        text += "\n"
+
+    # Display Qualities
+    qualities = temp_data.get("qualities", [])
+    if qualities:
+        text += "Qualities:\n"
+        for quality in qualities:
+            text += f"- {quality}\n"
+        text += "\n"
+
+    # Construct inline keyboard with delete buttons
+    keyboard = []
+    if languages:
+        for lang in languages:
+            keyboard.append([InlineKeyboardButton(f"Delete Language: {lang}", callback_data=f"delete_lang_{lang}")])
+    if seasons:
+        for season in seasons:
+            keyboard.append([InlineKeyboardButton(f"Delete Season: {season}", callback_data=f"delete_season_{season}")])
+    if qualities:
+        for quality in qualities:
+            keyboard.append([InlineKeyboardButton(f"Delete Quality: {quality}", callback_data=f"delete_quality_{quality}")])
+    
+    keyboard.append([InlineKeyboardButton("Back to Admin", callback_data="admin_panel")])
+
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+# Callback handlers for deleting languages, seasons, qualities
+@Client.on_callback_query(filters.regex("^delete_lang_"))
+async def delete_language_callback(client: Client, query: CallbackQuery):
+    user_id = query.from_user.id
+    language_to_delete = query.data.split("_", 2)[2] # e.g., "delete_lang_English" -> "English"
+    
+    await utility_db.delete_temp_language(user_id, language_to_delete)
+    await query.answer(f"Language '{language_to_delete}' deleted.", show_alert=True)
+    
+    # Refresh the UI
+    await manage_series_data_callback(client, query)
+
+@Client.on_callback_query(filters.regex("^delete_season_"))
+async def delete_season_callback(client: Client, query: CallbackQuery):
+    user_id = query.from_user.id
+    season_to_delete = query.data.split("_", 2)[2]
+    
+    await utility_db.delete_temp_season(user_id, season_to_delete)
+    await query.answer(f"Season '{season_to_delete}' deleted.", show_alert=True)
+    
+    # Refresh the UI
+    await manage_series_data_callback(client, query)
+
+@Client.on_callback_query(filters.regex("^delete_quality_"))
+async def delete_quality_callback(client: Client, query: CallbackQuery):
+    user_id = query.from_user.id
+    quality_to_delete = query.data.split("_", 2)[2]
+    
+    await utility_db.delete_temp_quality(user_id, quality_to_delete)
+    await query.answer(f"Quality '{quality_to_delete}' deleted.", show_alert=True)
+    
+    # Refresh the UI
+    await manage_series_data_callback(client, query)
+
+@Client.on_callback_query(filters.regex("^admin_panel$"))
+async def back_to_admin_panel(client: Client, query: CallbackQuery):
+    await query.message.edit_text(
+        "Welcome to the Admin Panel!",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("Manage Series Data", callback_data="manage_series_data")],
+            # Add other admin options here
+        ])
+    )
 
 # Placeholder for other admin UI functionalities
 @Client.on_callback_query(filters.regex("^admin_manage_movies$"))

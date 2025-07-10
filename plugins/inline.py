@@ -12,47 +12,60 @@ import re
 @Client.on_inline_query()
 async def inline_search(client, inline_query: InlineQuery):
     query = inline_query.query.strip().lower()
-    if not query:
+    results = []
+
+    if "hello" in query:
+        results.append(
+            InlineQueryResultArticle(
+                title="Say Hello",
+                input_message_content=InputTextMessageContent("Hello there!")
+            )
+        )
+    if "bot" in query:
+        results.append(
+            InlineQueryResultArticle(
+                title="About Bot",
+                input_message_content=InputTextMessageContent("I am a SeriesBot!")
+            )
+        )
+
+    if not query or results:
+        await inline_query.answer(results, cache_time=5)
         return
     
     # Check if user is authorized
     if AUTH_USERS and inline_query.from_user.id not in AUTH_USERS:
-        await inline_query.answer(
-            results=[
-                InlineQueryResultArticle(
-                    title="Not Authorized",
-                    input_message_content=InputTextMessageContent("You are not authorized to use this bot's inline search."),
-                    description="Please contact the bot owner for access."
-                )
-            ],
-            cache_time=0
+        results.append(
+            InlineQueryResultArticle(
+                title="Not Authorized",
+                input_message_content=InputTextMessageContent("You are not authorized to use this bot's inline search."),
+                description="Please contact the bot owner for access."
+            )
         )
+        await inline_query.answer(results, cache_time=0)
         return
 
     # Check force subscribe if enabled
     if client.force_subscribe_channels and not await is_subscribed(client, inline_query):
-        await inline_query.answer(
-            results=[
-                InlineQueryResultArticle(
-                    title="Please Subscribe",
-                    input_message_content=InputTextMessageContent("You must subscribe to our channels to use this bot."),
-                    description="Click here to subscribe.",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("Join Channel", url=client.force_subscribe_channels[0])] # Assuming first channel for simplicity
-                    ])
-                )
-            ],
-            cache_time=0
+        results.append(
+            InlineQueryResultArticle(
+                title="Please Subscribe",
+                input_message_content=InputTextMessageContent("You must subscribe to our channels to use this bot."),
+                description="Click here to subscribe.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Join Channel", url=client.force_subscribe_channels[0])] # Assuming first channel for simplicity
+                ])
+            )
         )
+        await inline_query.answer(results, cache_time=0)
         return
 
     files, offset, total_results = await get_search_results(query, file_type="document", max_results=50)
     
-    articles = []
     if files:
         for file in files:
             caption = CUSTOM_FILE_CAPTION.format(previouscaption=file.caption) if CUSTOM_FILE_CAPTION else file.caption
-            articles.append(
+            results.append(
                 InlineQueryResultArticle(
                     title=file.file_name,
                     input_message_content=InputTextMessageContent(
@@ -66,7 +79,7 @@ async def inline_search(client, inline_query: InlineQuery):
                 )
             )
     else:
-        articles.append(
+        results.append(
             InlineQueryResultArticle(
                 title="No results found",
                 input_message_content=InputTextMessageContent("No files found matching your query."),
@@ -75,7 +88,7 @@ async def inline_search(client, inline_query: InlineQuery):
         )
         
     await inline_query.answer(
-        results=articles,
+        results=results,
         cache_time=0, # No caching for dynamic results
         is_personal=True # Results are personal to the user
     )

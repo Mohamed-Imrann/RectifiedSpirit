@@ -157,26 +157,41 @@ async def junk_clear_group(bot, message):
         os.remove("junk.txt")
 
 @Client.on_message(filters.command("broadcast") & filters.user(ADMINS))
-async def broadcast_message(client, message: Message):
+async def broadcast_message(client: Client, message: Message):
     if not message.reply_to_message:
-        return await message.reply_text("Reply to a message to broadcast it.")
+        await message.reply_text("Reply to a message to broadcast it.")
+        return
+
+    all_users = await db.get_all_users()  # Fetch all user IDs from the database
     
     sent_count = 0
     failed_count = 0
-    
-    all_users = await db.get_all_users()
-    
+
     status_message = await message.reply_text("Starting broadcast...")
-    
+
     async for user in all_users:
         try:
             await message.reply_to_message.copy(user['id'])
             sent_count += 1
-            await asyncio.sleep(0.1) # Small delay to avoid flood limits
-        except Exception as e:
-            logger.error(f"Failed to send broadcast to user {user['id']}: {e}")
+        except FloodWait as e:
+            await asyncio.sleep(e.x)
+            await message.reply_to_message.copy(user['id'])
+        except InputUserDeactivated:
+            await db.delete_user(user['id'])
+            logging.info(f"{user['id']}-Removed from Database, since deleted account.")
             failed_count += 1
+        except UserIsBlocked:
+            logging.info(f"{user['id']} -Blocked the bot.")
+            failed_count += 1
+        except PeerIdInvalid:
+            await db.delete_user(user['id'])
+            logging.info(f"{user['id']} - PeerIdInvalid")
+            failed_count += 1
+        except Exception as e:
+            failed_count += 1
+            print(f"Failed to send to {user['id']}: {e}")
         
+        # Update status periodically
         if (sent_count + failed_count) % 100 == 0:
             try:
                 await status_message.edit_text(f"Broadcasting... Sent: {sent_count}, Failed: {failed_count}")

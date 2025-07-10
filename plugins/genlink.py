@@ -128,32 +128,15 @@ async def list_series(client, message):
     
     await message.reply(response)
 
-@Client.on_message(filters.private & filters.command("genlink"))
-async def gen_link_command(client, message: Message):
+@Client.on_message(filters.private & filters.command("genlink") & filters.user(ADMINS) & filters.reply)
+async def generate_link(client: Client, message: Message):
     if not message.reply_to_message or not message.reply_to_message.media:
-        return await message.reply_text("Reply to a media file to generate its direct link.")
+        await message.reply_text("Reply to a media file to generate a link.")
+        return
     
+    # This is a simplified placeholder.
+    # In a real bot, you'd store file_id and generate a unique link
+    # that the bot can later use to send the file.
     file_id = message.reply_to_message.media.file_id
-    file_details = await get_file_details(file_id)
-    
-    if not file_details:
-        return await message.reply_text("Could not find file details in database.")
-    
-    file_details = file_details[0]
-    
-    # Construct the direct link (this is a simplified example, actual implementation depends on your web server)
-    # Assuming your web server serves files from /dl/<file_id>
-    direct_link = f"{client.base_url}/dl/{file_details.file_id}"
-    
-    text = f"**File Name:** `{file_details.file_name}`\n"
-    text += f"**File Size:** `{get_readable_file_size(file_details.file_size)}`\n"
-    text += f"**Direct Link:** [Click Here]({direct_link})\n\n"
-    text += "Note: This link might expire or require bot to be online."
-    
-    await message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("Open Link", url=direct_link)]
-        ]),
-        disable_web_page_preview=True
-    )
+    await message.reply_text(f"Generated link for file: `tg://file?id={file_id}`\n"
+                             "Note: This is a direct Telegram file ID, not a public URL.")

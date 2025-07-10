@@ -16,6 +16,8 @@ import datetime
 import time
 import os
 import asyncio
+import sys
+import random
 
 @Client.on_message(filters.command("start") & filters.private)
 async def start_command(client, message: Message):
@@ -141,11 +143,11 @@ async def view_all_series_command(client, message: Message):
 
 @Client.on_message(filters.command("deleteseries") & filters.user(ADMINS))
 async def delete_series_command(client, message: Message):
-    if len(message.command) &lt; 2:
+    if len(message.command) < 2:
         return await message.reply_text("Usage: /deleteseries [series_key]")
     
     series_key = message.command[1].lower().replace(" ", "")
-    series_data = get_series_name(series_key)
+    series_data = get_series(series_key)
     
     if not series_data:
         return await message.reply_text(f"Series with key `{series_key}` not found.")
@@ -188,7 +190,7 @@ async def view_gfilters_command(client, message: Message):
 
 @Client.on_message(filters.command("gdel") & filters.user(ADMINS))
 async def delete_gfilter_command(client, message: Message):
-    if len(message.command) &lt; 2:
+    if len(message.command) < 2:
         return await message.reply_text("Usage: /gdel [filter_text]")
     
     filter_text = " ".join(message.command[1:])

@@ -4,7 +4,7 @@ logger.setLevel(logging.INFO)
 
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait, UserNotParticipant, MessageNotModified
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
 from Script import script
 from info import CHANNELS, ADMINS, AUTH_CHANNEL, PICS, CUSTOM_FILE_CAPTION, BATCH_FILE_CAPTION, PROTECT_CONTENT, PUBLIC_FILE_STORE
 from database.ia_filterdb import Media, get_file_details, get_search_results
@@ -84,6 +84,11 @@ async def give_filter(client, message):
             else:
                 await message.reply_text("No results found.")
 
+@Client.on_message(filters.text & filters.private & filters.incoming)
+async def auto_reply(client: Client, message: Message):
+    # This is a placeholder for auto-reply logic.
+    # You can implement logic to automatically respond to certain keywords or patterns.
+    pass
 
 @Client.on_callback_query(filters.regex("^next"))
 async def next_page(client, callback_query: CallbackQuery):

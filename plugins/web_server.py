@@ -9,8 +9,7 @@ import os
 
 routes = web.RouteTableDef()
 
-@routes.get("/")
-async def root_route(request):
+async def root_handler(request):
     return web.Response(text="Bot is running!")
 
 @routes.get("/dl/{file_id}")
@@ -38,5 +37,6 @@ async def download_file(request):
 
 async def web_server():
     app = web.Application()
+    app.router.add_get("/", root_handler)
     app.add_routes(routes)
     return app
