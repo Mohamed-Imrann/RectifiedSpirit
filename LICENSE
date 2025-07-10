@@ -1,4 +1,4 @@
-                    GNU GENERAL PUBLIC LICENSE
+GNU GENERAL PUBLIC LICENSE
                        Version 2, June 1991
 
  Copyright (C) 1989, 1991 Free Software Foundation, Inc.,
@@ -80,7 +80,7 @@ Whether that is true depends on what the Program does.
 source code as you receive it, in any medium, provided that you
 conspicuously and appropriately publish on each copy an appropriate
 copyright notice and disclaimer of warranty; keep intact all the
-notices that refer to this License and to the absence of any warranty;
+notes that refer to this License and to the absence of any warranty;
 and give any other recipients of the Program a copy of this License
 along with the Program.
 
@@ -96,7 +96,7 @@ above, provided that you also meet all of these conditions:
     stating that you changed the files and the date of any change.
 
     b) You must cause any work that you distribute or publish, that in
-    whole or in part contains or is derived from the Program or any
+    whole or in part contains or is derived from the Program, or any
     part thereof, to be licensed as a whole at no charge to all third
     parties under the terms of this License.
 
@@ -172,7 +172,7 @@ compelled to copy the source along with the object code.
   4. You may not copy, modify, sublicense, or distribute the Program
 except as expressly provided under this License.  Any attempt
 otherwise to copy, modify, sublicense or distribute the Program is
-void, and will automatically terminate your rights under this License.
+void, and will automatically terminate your rights in this License.
 However, parties who have received copies, or rights, from you under
 this License will not have their licenses terminated so long as such
 parties remain in full compliance.
@@ -230,7 +230,7 @@ be a consequence of the rest of this License.
 certain countries either by patents or by copyrighted interfaces, the
 original copyright holder who places the Program under this License
 may add an explicit geographical distribution limitation excluding
-those countries, so that distribution is permitted only in or among
+those countries, so that distribution is not permitted only in or among
 countries not thus excluded.  In such case, this License incorporates
 the limitation as if written in the body of this License.
 

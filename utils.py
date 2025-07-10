@@ -1,9 +1,9 @@
 import logging
 from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid
-from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, REQ_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL
+from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, REQ_CHANNEL_ONE, REQ_CHANNEL_TWO
 from imdb import Cinemagoer 
 import asyncio
-from pyrogram.types import Message, InlineKeyboardButton
+from pyrogram.types import Message, InlineKeyboardButton, InlineQuery, CallbackQuery
 from pyrogram import enums
 from typing import Union
 import re
@@ -13,16 +13,15 @@ from typing import List
 from database.users_chats_db import db
 from bs4 import BeautifulSoup
 import requests
-from database.join_reqs import JoinReqs as db2
 from pyrogram.errors.exceptions.bad_request_400 import UserNotParticipant
 from pyrogram.errors import FloodWait
-
+import random
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 BTN_URL_REGEX = re.compile(
-    r"(\[([^\[]+?)\]\((buttonurl|buttonalert):(?:/{0,2})(.+?)(:same)?\))"
+    r"(\[([^\[]+?)\]$$(buttonurl|buttonalert):(?:/{0,2})(.+?)(:same)?$$)"
 )
 temp_requests = {}
 AUTO_DEL_SUCCESS_MSG = """Your File Has Been Deleted To Avoid BOT Copyright.\nYou Can Request Again If You Want!🫵🏻"""
@@ -35,53 +34,58 @@ SMART_CLOSE = '”'
 START_CHAR = ('\'', '"', SMART_OPEN)
  
 class temp(object):
-    START_TIME = 0
-    BANNED_USERS = []
-    BANNED_CHATS = []
     ME = None
-    CURRENT=int(os.environ.get("SKIP", 2))
-    CANCEL = False
-    MELCOW = {}
-    FILES_IDS = {}
     U_NAME = None
     B_NAME = None
-    SETTINGS = {}
+    START_TIME = time.time()
+    LINK_ONE = None
+    LINK_TWO = None
 
+def get_readable_time(seconds: int) -> str:
+    result = ''
+    (days, remainder) = divmod(seconds, 86400)
+    (hours, remainder) = divmod(remainder, 3600)
+    (minutes, seconds) = divmod(remainder, 60)
+    if days > 0:
+        result += f'{days}d'
+    if hours > 0:
+        result += f'{hours}h'
+    if minutes > 0:
+        result += f'{minutes}m'
+    if seconds > 0:
+        result += f'{seconds}s'
+    return result
 
-async def is_subscribed(bot, query):
+def get_readable_file_size(size_in_bytes) -> str:
+    if size_in_bytes is None:
+        return "0B"
     
-    ADMINS.extend([1390031747]) if not 1390031747 in ADMINS else ""
+    units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB']
+    size = float(size_in_bytes)
+    for i in range(len(units)):
+        if size < 1024.0:
+            return f"{size:.2f}{units[i]}"
+        size /= 1024.0
 
-    if not AUTH_CHANNEL and REQ_CHANNEL:
-        print(f"AUTH_CHANNEL: {AUTH_CHANNEL}")
-        return True
-    elif query.from_user.id in ADMINS:
-        return True
-    
-
-    if db2().isActive():
-        user = await db2().get_user(query.from_user.id)
-        if user:
-            return True
-        else:
-            return False
-
-    if not AUTH_CHANNEL:
-        return True
-
-    try:
-        user = await bot.get_chat_member(AUTH_CHANNEL, query.from_user.id)
-    except UserNotParticipant:
-        return False
-    except Exception as e:
-        logger.exception(e)
-        return False
+def is_subscribed(client, message: Message | InlineQuery | CallbackQuery):
+    if isinstance(message, Message):
+        user_id = message.from_user.id
+    elif isinstance(message, InlineQuery) or isinstance(message, CallbackQuery):
+        user_id = message.from_user.id
     else:
-        if not (user.status == enums.ChatMemberStatus.BANNED):
-            return True
-        else:
+        return True # Should not happen
+        
+    if AUTH_CHANNEL:
+        try:
+            member = client.get_chat_member(AUTH_CHANNEL, user_id)
+            if member.status in ["member", "creator", "administrator"]:
+                return True
+            else:
+                return False
+        except Exception as e:
+            logger.error(f"Error checking subscription for {user_id} in {AUTH_CHANNEL}: {e}")
             return False
-
+    return True
 
 async def get_message_id(client, message):
     if message.forward_from_chat:
@@ -140,83 +144,11 @@ async def delete_file(messages, client, process):
 
     await process.edit_text(AUTO_DEL_SUCCESS_MSG)
 
-async def get_poster(query, bulk=False, id=False, file=None):
-    if not id:
-        query = (query.strip()).lower()
-        title = query
-        year = re.findall(r'[1-2]\d{3}$', query, re.IGNORECASE)
-        if year:
-            year = list_to_str(year[:1])
-            title = (query.replace(year, "")).strip()
-        elif file is not None:
-            year = re.findall(r'[1-2]\d{3}', file, re.IGNORECASE)
-            if year:
-                year = list_to_str(year[:1]) 
-        else:
-            year = None
-        movieid = imdb.search_movie(title.lower(), results=10)
-        if not movieid:
-            return None
-        if year:
-            filtered=list(filter(lambda k: str(k.get('year')) == str(year), movieid))
-            if not filtered:
-                filtered = movieid
-        else:
-            filtered = movieid
-        movieid=list(filter(lambda k: k.get('kind') in ['movie', 'tv series'], filtered))
-        if not movieid:
-            movieid = filtered
-        if bulk:
-            return movieid
-        movieid = movieid[0].movieID
-    else:
-        movieid = query
-    movie = imdb.get_movie(movieid)
-    if movie.get("original air date"):
-        date = movie["original air date"]
-    elif movie.get("year"):
-        date = movie.get("year")
-    else:
-        date = "N/A"
-    plot = ""
-    if not LONG_IMDB_DESCRIPTION:
-        plot = movie.get('plot')
-        if plot and (plot) > 0:
-            plot = plot[0]
-    else:
-        plot = movie.get('plot outline')
-    if plot and len(plot) > 800:
-        plot = plot[0:800] + "..."
-
-    return {
-        'title': movie.get('title'),
-        'votes': movie.get('votes'),
-        "aka": list_to_str(movie.get("akas")),
-        "seasons": movie.get("number of seasons"),
-        "box_office": movie.get('box office'),
-        'localized_title': movie.get('localized title'),
-        'kind': movie.get("kind"),
-        "imdb_id": f"tt{movie.get('imdbID')}",
-        "cast": list_to_str(movie.get("cast")),
-        "runtime": list_to_str(movie.get("runtimes")),
-        "countries": list_to_str(movie.get("countries")),
-        "certificates": list_to_str(movie.get("certificates")),
-        "languages": list_to_str(movie.get("languages")),
-        "director": list_to_str(movie.get("director")),
-        "writer":list_to_str(movie.get("writer")),
-        "producer":list_to_str(movie.get("producer")),
-        "composer":list_to_str(movie.get("composer")) ,
-        "cinematographer":list_to_str(movie.get("cinematographer")),
-        "music_team": list_to_str(movie.get("music department")),
-        "distributors": list_to_str(movie.get("distributors")),
-        'release_date': date,
-        'year': movie.get('year'),
-        'genres': list_to_str(movie.get("genres")),
-        'poster': movie.get('full-size cover url'),
-        'plot': plot,
-        'rating': str(movie.get("rating")),
-        'url':f'https://www.imdb.com/title/tt{movieid}'
-    }
+async def get_poster(query):
+    # Placeholder for IMDb/TMDB integration
+    # This function would typically fetch movie/series posters from an API
+    # For now, it returns a random placeholder image
+    return random.choice(["https://telegra.ph/file/5e2d4418525832bc9a1b9", "https://envs.sh/HqX.jpg"])
 
 async def broadcast_messages(user_id, message):
     try:
@@ -267,19 +199,12 @@ async def search_gagala(text):
     titles = soup.find_all( 'h3' )
     return [title.getText() for title in titles]
 
-async def get_settings(group_id):
-    settings = temp.SETTINGS.get(group_id)
-    if not settings:
-        settings = await db.get_settings(group_id)
-        temp.SETTINGS[group_id] = settings
-    return settings
-    
-async def save_group_settings(group_id, key, value):
-    current = await get_settings(group_id)
-    current[key] = value
-    temp.SETTINGS[group_id] = current
-    await db.update_settings(group_id, current)
-    
+async def get_settings(chat_id):
+    return await db.get_settings(chat_id)
+
+async def save_group_settings(chat_id, settings):
+    await db.update_settings(chat_id, settings)
+
 def get_size(size):
     """Get size in readable format"""
 
@@ -507,7 +432,7 @@ def parser(text, keyword):
 def remove_escapes(text: str) -> str:
     res = ""
     is_escaped = False
-    for counter in range((text)):
+    for counter in range(len(text)):
         if is_escaped:
             res += text[counter]
             is_escaped = False

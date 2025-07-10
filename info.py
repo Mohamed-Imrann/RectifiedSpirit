@@ -15,22 +15,25 @@ def is_enabled(value, default):
 # Required API Credentials and Bot Settings
 API_ID = 19680279
 API_HASH = "a32f974ade51b2dc74e8db4bb049ad01"
-BOT_TOKEN = "7338279657:AAGKuJTxHIujwmT05n3CMDV5GLkm2-i8za8"
+BOT_TOKEN = "5883096902:AAF-tI_T-F_zVI4oIANJPuZxDsvskqmAw6A"
 BOT_USERNAME = "MC_MovieBetaBot"
 #API_ID2 = environ['API_ID2']
 #API_HASH2 = environ['API_HASH2']
 #SESSION_STRING = environ['SESSION_STRING']
 
 # Required Database and Channel Settings
-DATABASE_URI="mongodb+srv://gaziloous78hu:fewr03oy8osLcEsA@cluster0.xzpo6.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+DATABASE_URI = "mongodb+srv://seriesx:seriesx@cluster0.w8lzf.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 DATABASE_NAME = "cluster0"
 COLLECTION_NAME = "thernello_unda"
 ADMINS = [int(admin) if id_pattern.search(admin) else admin for admin in environ.get('ADMINS', '1129673243 5394954571 7188908429').split()]
 CHANNELS = [int(ch) if id_pattern.search(ch) else ch for ch in environ.get('CHANNELS', '-1001306691782').split()]
-
+auth_channel = environ.get('AUTH_CHANNEL', '')
+AUTH_CHANNEL = int(auth_channel) if auth_channel and id_pattern.search(auth_channel) else None
 # Your request to join channel Ids
-AUTH_CHANNEL = None
-REQ_CHANNEL = None
+REQ_CHANNEL_ONE =environ.get("REQ_CHANNEL_ONE", None)
+REQ_CHANNEL_ONE = (int(REQ_CHANNEL_ONE) if REQ_CHANNEL_ONE and id_pattern.search(REQ_CHANNEL_ONE) else False) if REQ_CHANNEL_ONE is not None else None
+REQ_CHANNEL_TWO =environ.get("REQ_CHANNEL_TWO", None)
+REQ_CHANNEL_TWO = (int(REQ_CHANNEL_TWO) if REQ_CHANNEL_TWO and id_pattern.search(REQ_CHANNEL_TWO) else False) if REQ_CHANNEL_TWO is not None else None
 
 LOG_CHANNEL = "-1001593500302"
 DB_CHANNEL = [-1001306691782, -1002193376815]

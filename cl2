@@ -16,4 +16,3 @@ def is_enabled(value, default):
         return False
     else:
         return default
-        
