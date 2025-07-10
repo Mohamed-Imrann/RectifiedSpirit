@@ -1,9 +1,9 @@
 import motor.motor_asyncio
-from info import DATABASE_NAME, DATABASE_URL
+from info import DATABASE_NAME, DATABASE_URI
 
 class UtilityDB:
     def __init__(self):
-        self.client = motor.motor_asyncio.AsyncIOMotorClient(DATABASE_URL)
+        self.client = motor.motor_asyncio.AsyncIOMotorClient(DATABASE_URI)
         self.db = self.client[DATABASE_NAME]
         self.temp_series_collection = self.db.temp_series
 
