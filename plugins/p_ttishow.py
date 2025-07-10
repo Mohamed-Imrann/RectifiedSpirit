@@ -2,12 +2,16 @@ from pyrogram import Client, filters, enums
 import os, pytz, re, datetime, logging, asyncio, math, time, sys, psutil, shutil
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.errors.exceptions.bad_request_400 import MessageTooLong, PeerIdInvalid
-from info import ADMINS, LOG_CHANNEL
+from info import ADMINS, LOG_CHANNEL, PICS, AUTO_DELETE_MSG, AUTO_DELETE_TIME
 from database.users_chats_db import db
 from utils import get_size, temp, get_settings
 from Script import script
 from pyrogram.errors import ChatAdminRequired
 from utils import humanbytes
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 @Client.on_message(filters.command('leave') & filters.user(ADMINS))
@@ -199,3 +203,19 @@ async def list_chats(bot, message):
         with open('chats.txt', 'w+') as outfile:
             outfile.write(out)
         await message.reply_document('chats.txt', caption="List Of Chats")
+
+@Client.on_message(filters.private & filters.media)
+async def auto_delete_message(client, message):
+    if AUTO_DELETE_MSG and AUTO_DELETE_TIME > 0:
+        try:
+            # Send the auto-delete message
+            delete_msg = await message.reply_text(AUTO_DELETE_MSG)
+            
+            # Wait for the specified time
+            await asyncio.sleep(AUTO_DELETE_TIME)
+            
+            # Delete the original message and the auto-delete message
+            await message.delete()
+            await delete_msg.delete()
+        except Exception as e:
+            logger.error(f"Error during auto-delete: {e}")

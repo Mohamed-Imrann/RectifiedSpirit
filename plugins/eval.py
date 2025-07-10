@@ -1,53 +1,47 @@
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 from pyrogram import Client, filters
-from pyrogram.errors import MessageTooLong
-import sys, os
-import re
-import traceback
-from io import StringIO
+from pyrogram.types import Message
 from info import ADMINS
+import io
+import sys
+import traceback
 
-@Client.on_message(filters.command('eval') & filters.incoming)
-async def executor(client, message):
-    try:
-        code = message.text.split(" ", 1)[1]
-    except:
-        return await message.reply('Command Incomplete!\nUsage: /eval your_python_code')
-    old_stderr = sys.stderr
+@Client.on_message(filters.command("eval") & filters.user(ADMINS))
+async def eval_command(client, message: Message):
+    if len(message.command) &lt; 2:
+        return await message.reply_text("Usage: /eval [code]")
+    
+    cmd = message.text.split(" ", 1)[1]
+    
     old_stdout = sys.stdout
-    redirected_output = sys.stdout = StringIO()
-    redirected_error = sys.stderr = StringIO()
-    stdout, stderr, exc = None, None, None
+    old_stderr = sys.stderr
+    redirected_output = io.StringIO()
+    redirected_error = io.StringIO()
+    sys.stdout = redirected_output
+    sys.stderr = redirected_error
+    
     try:
-        await aexec(code, client, message)
-    except:
-        exc = traceback.format_exc()
-    stdout = redirected_output.getvalue()
-    stderr = redirected_error.getvalue()
-    sys.stdout = old_stdout
-    sys.stderr = old_stderr
-    evaluation = ""
-    if exc:
-        evaluation = exc
-    elif stderr:
-        evaluation = stderr
-    elif stdout:
-        evaluation = stdout
-    else:
-        evaluation = "Success!"
-    final_output = f"**Output:**\n\n{evaluation}"
-    try:
-        await message.reply(final_output)
-    except MessageTooLong:
-        with open('eval.txt', 'w+') as outfile:
-            outfile.write(final_output)
-        await message.reply_document('eval.txt')
-        os.remove('eval.txt')
-
-
-async def aexec(code, client, message):
-    exec(
-        "async def __aexec(client, message): "
-        + "".join(f"\n {a}" for a in code.split("\n"))
-    )
-    return await locals()["__aexec"](client, message)
-
+        # Create a dictionary for local variables, including client and message
+        exec_globals = globals().copy()
+        exec_locals = {'client': client, 'message': message}
+        
+        exec(cmd, exec_globals, exec_locals)
+        
+        output = redirected_output.getvalue()
+        error = redirected_error.getvalue()
+        
+        if output:
+            await message.reply_text(f"**Output:**\n```\n{output}```")
+        if error:
+            await message.reply_text(f"**Error:**\n```\n{error}```")
+        if not output and not error:
+            await message.reply_text("Execution completed with no output.")
+            
+    except Exception as e:
+        await message.reply_text(f"**Exception:**\n```\n{traceback.format_exc()}```")
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr

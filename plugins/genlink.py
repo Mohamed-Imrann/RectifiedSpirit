@@ -6,8 +6,8 @@ from pyrogram.errors import FloodWait
 from pymongo import MongoClient
 from pyrogram.errors.exceptions.bad_request_400 import ChannelInvalid, UsernameInvalid, UsernameNotModified
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
-from info import ADMINS, AUTH_CHANNEL, DB_CHANNEL, DATABASE_URI
-from database.ia_filterdb import unpack_new_file_id
+from info import ADMINS, AUTH_CHANNEL, DB_CHANNEL, DATABASE_URI, PUBLIC_FILE_STORE, PROTECT_CONTENT
+from database.ia_filterdb import unpack_new_file_id, get_file_details
 from utils import temp, get_message_id
 import re
 import os
@@ -29,12 +29,6 @@ async def allowed(_, __, message):
     if message.from_user and message.from_user.id in ADMINS:
         return True
     return False
-
-
-import logging
-import asyncio
-
-logger = logging.getLogger(__name__)
 
 @Client.on_message(filters.private & filters.command('batch') & filters.create(allowed))
 async def batch(client, message):
@@ -81,14 +75,11 @@ async def batch(client, message):
     result_string = f"get_{raw_channel_id}_{f_msg_id}_{s_msg_id}"
     await message.reply_text(f"{result_string}")
 
-
-
 def unpack_new_file_id(new_file_id):
     decoded = FileId.decode(new_file_id)
     file_id = new_file_id  # Store full file_id
     file_ref = decoded.file_reference
     return file_id, file_ref
-
 
 @Client.on_message(filters.command("eadd") & filters.reply & filters.create(allowed))
 async def add_file(client, message):
@@ -111,7 +102,6 @@ async def add_file(client, message):
         collection.insert_one({"series": series_name, "files": [new_entry]})
     
     await message.reply(f"✅ File added to `{series_name}`")
-
 
 @Client.on_message(filters.command("edell") & filters.create(allowed))
 async def delete_series(client, message):
@@ -137,3 +127,33 @@ async def list_series(client, message):
         response += f"**{series['series']}** → {len(series['files'])} files\n"
     
     await message.reply(response)
+
+@Client.on_message(filters.private & filters.command("genlink"))
+async def gen_link_command(client, message: Message):
+    if not message.reply_to_message or not message.reply_to_message.media:
+        return await message.reply_text("Reply to a media file to generate its direct link.")
+    
+    file_id = message.reply_to_message.media.file_id
+    file_details = await get_file_details(file_id)
+    
+    if not file_details:
+        return await message.reply_text("Could not find file details in database.")
+    
+    file_details = file_details[0]
+    
+    # Construct the direct link (this is a simplified example, actual implementation depends on your web server)
+    # Assuming your web server serves files from /dl/<file_id>
+    direct_link = f"{client.base_url}/dl/{file_details.file_id}"
+    
+    text = f"**File Name:** `{file_details.file_name}`\n"
+    text += f"**File Size:** `{get_readable_file_size(file_details.file_size)}`\n"
+    text += f"**Direct Link:** [Click Here]({direct_link})\n\n"
+    text += "Note: This link might expire or require bot to be online."
+    
+    await message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("Open Link", url=direct_link)]
+        ]),
+        disable_web_page_preview=True
+    )

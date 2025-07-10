@@ -6,6 +6,9 @@ from pyrogram import Client, filters, enums
 from database.users_chats_db import db
 from info import ADMINS
         
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 @Client.on_message(filters.command(["bb", "broadcast"]) & filters.user(ADMINS) & filters.reply)
 async def speed_verupikkals(bot, message):
     if len(message.command) == 1:
@@ -50,7 +53,7 @@ async def speed_verupikkals(bot, message):
 
         if process % 500 == 1:
             elapsed_time = datetime.timedelta(seconds=int(time.time() - start_time))
-            await sts.edit(f"𝖨𝗇 𝖯𝗋𝗈𝗀𝗋𝖾𝗌𝗌: {process+matrix} / {total_users}\n𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽: {success}\n𝖣𝖾𝗅𝖾𝗍𝖾𝖽: {failed}\n𝖤𝗅𝖺𝗉𝗌𝖾𝖽 𝖳𝗂𝗆𝖾: {elapsed_time}")
+            await sts.edit(f"𝖨𝗇 𝖯𝗋𝗈𝗀𝗋𝖾𝗌𝗌𝗌: {process+matrix} / {total_users}\n𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽: {success}\n𝖣𝖾𝗅𝖾𝗍𝖾𝖽: {failed}\n𝖤𝗅𝖺𝗉𝗌𝖾𝖽 𝖳𝗂𝗆𝖾: {elapsed_time}")
 
     # No need for separate start_time variable as loop starts here
     time_taken = datetime.timedelta(seconds=int(time.time()-start_time))
@@ -146,12 +149,41 @@ async def junk_clear_group(bot, message):
     time_taken = datetime.timedelta(seconds=int(time.time()-start_time))
     await sts.delete()
     try:
-        await bot.send_message(message.chat.id, f"𝖯𝗋𝗈𝗀𝗋𝖾𝗌𝗌 𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽.\n𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽 𝖨𝗇: {time_taken} 𝖲𝖾𝖼𝗈𝗇𝖽𝗌.\n𝖳𝗈𝗍𝖺𝗅 𝖦𝗋𝗈𝗎𝗉𝗌: {total_groups}\n𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽: {done} / {total_groups}\n𝖣𝖾𝗅𝖾𝗍𝖾𝖽: {deleted}\n\n𝖱𝖾𝖺𝗌𝗈𝗇:- {failed}")
+        await bot.send_message(message.chat.id, f"𝖯𝗋𝗈𝗀𝗋𝖾𝗌𝗌 𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽.\n𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽 𝖨𝗇 {time_taken} 𝖲𝖾𝖼𝗈𝗇𝖽𝗌.\n𝖳𝗈𝗍𝖺𝗅 𝖦𝗋𝗈𝗎𝗉𝗌 {total_groups}\n𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽: {done} / {total_groups}\n𝖣𝖾𝗅𝖾𝗍𝖾𝖽: {deleted}\n\n𝖱𝖾𝖺𝗌𝗈𝗇:- {failed}")
     except MessageTooLong:
         with open('junk.txt', 'w+') as outfile:
             outfile.write(failed)
         await message.reply_document('junk.txt', caption=f"𝖯𝗋𝗈𝗀𝗋𝖾𝗌𝗌 𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽.\n𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽 𝖨𝗇 {time_taken} 𝖲𝖾𝖼𝗈𝗇𝖽𝗌.\n𝖳𝗈𝗍𝖺𝗅 𝖦𝗋𝗈𝗎𝗉𝗌 {total_groups}\n𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽: {done} / {total_groups}\n𝖣𝖾𝗅𝖾𝗍𝖾𝖽: {deleted}")
         os.remove("junk.txt")
+
+@Client.on_message(filters.command("broadcast") & filters.user(ADMINS))
+async def broadcast_message(client, message: Message):
+    if not message.reply_to_message:
+        return await message.reply_text("Reply to a message to broadcast it.")
+    
+    sent_count = 0
+    failed_count = 0
+    
+    all_users = await db.get_all_users()
+    
+    status_message = await message.reply_text("Starting broadcast...")
+    
+    async for user in all_users:
+        try:
+            await message.reply_to_message.copy(user['id'])
+            sent_count += 1
+            await asyncio.sleep(0.1) # Small delay to avoid flood limits
+        except Exception as e:
+            logger.error(f"Failed to send broadcast to user {user['id']}: {e}")
+            failed_count += 1
+        
+        if (sent_count + failed_count) % 100 == 0:
+            try:
+                await status_message.edit_text(f"Broadcasting... Sent: {sent_count}, Failed: {failed_count}")
+            except Exception:
+                pass # Ignore MessageNotModified errors
+                
+    await status_message.edit_text(f"Broadcast finished!\nSent to: {sent_count} users\nFailed for: {failed_count} users")
 
 async def broadcast_messages_group(chat_id, message):
     try:

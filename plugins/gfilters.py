@@ -1,139 +1,83 @@
-import io
-from pyrogram import filters, Client, enums
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from database.gfilters_mdb import(
-   add_gfilter,
-   get_gfilters,
-   delete_gfilter,
-   count_gfilters
-)
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
-from utils import get_file_id, gfilterparser, split_quotes
+from pyrogram import Client, filters
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from database.gfilters_mdb import add_gfilter, find_gfilter, get_gfilters, delete_gfilter, del_allg, count_gfilters
 from info import ADMINS
+import re
 
+@Client.on_message(filters.command("gadd") & filters.user(ADMINS))
+async def gadd_filter_command(client, message: Message):
+    if len(message.command) &lt; 3:
+        return await message.reply_text("Usage: /gadd [filter_text] - [reply_text] (optional: |button_text:button_url|alert_message)")
+    
+    full_text = message.text.split(" ", 1)[1]
+    
+    if " - " not in full_text:
+        return await message.reply_text("Invalid format. Use 'filter_text - reply_text'.")
+    
+    parts = full_text.split(" - ", 1)
+    filter_text = parts[0].strip()
+    reply_content = parts[1].strip()
+    
+    reply_text = reply_content
+    button = None
+    alert = None
+    file_id = None
 
-@Client.on_message(filters.command(['gfilter', 'addg']) & filters.incoming & filters.user(ADMINS))
-async def addgfilter(client, message):
-    args = message.text.html.split(None, 1)
-
-    if len(args) < 2:
-        await message.reply_text("Command Incomplete :(", quote=True)
-        return
-
-    extracted = split_quotes(args[1])
-    text = extracted[0].lower()
-
-    if not message.reply_to_message and len(extracted) < 2:
-        await message.reply_text("Add some content to save your filter!", quote=True)
-        return
-
-    if (len(extracted) >= 2) and not message.reply_to_message:
-        reply_text, btn, alert = gfilterparser(extracted[1], text)
-        fileid = None
-        if not reply_text:
-            await message.reply_text("You cannot have buttons alone, give some text to go with it!", quote=True)
-            return
-
-    elif message.reply_to_message and message.reply_to_message.reply_markup:
-        try:
-            rm = message.reply_to_message.reply_markup
-            btn = rm.inline_keyboard
-            msg = get_file_id(message.reply_to_message)
-            if msg:
-                fileid = msg.file_id
-                reply_text = message.reply_to_message.caption.html
-            else:
-                reply_text = message.reply_to_message.text.html
-                fileid = None
-            alert = None
-        except:
-            reply_text = ""
-            btn = "[]" 
-            fileid = None
-            alert = None
-
-    elif message.reply_to_message and message.reply_to_message.media:
-        try:
-            msg = get_file_id(message.reply_to_message)
-            fileid = msg.file_id if msg else None
-            reply_text, btn, alert = gfilterparser(extracted[1], text) if message.reply_to_message.sticker else gfilterparser(message.reply_to_message.caption.html, text)
-        except:
-            reply_text = ""
-            btn = "[]"
-            alert = None
-    elif message.reply_to_message and message.reply_to_message.text:
-        try:
-            fileid = None
-            reply_text, btn, alert = gfilterparser(message.reply_to_message.text.html, text)
-        except:
-            reply_text = ""
-            btn = "[]"
-            alert = None
-    else:
-        return
-
-    await add_gfilter('gfilters', text, reply_text, btn, fileid, alert)
-
-    await message.reply_text(
-        f"GFilter for  `{text}`  added",
-        quote=True,
-        parse_mode=enums.ParseMode.MARKDOWN
-    )
-
-
-@Client.on_message(filters.command(['viewgfilters', 'gfilters']) & filters.incoming & filters.user(ADMINS))
-async def get_all_gfilters(client, message):
-    texts = await get_gfilters('gfilters')
-    count = await count_gfilters('gfilters')
-    if count:
-        gfilterlist = f"Total number of gfilters : {count}\n\n"
-
-        for text in texts:
-            keywords = " ×  `{}`\n".format(text)
-
-            gfilterlist += keywords
-
-        if len(gfilterlist) > 4096:
-            with io.BytesIO(str.encode(gfilterlist.replace("`", ""))) as keyword_file:
-                keyword_file.name = "keywords.txt"
-                await message.reply_document(
-                    document=keyword_file,
-                    quote=True
-                )
-            return
-    else:
-        gfilterlist = f"There are no active gfilters."
-
-    await message.reply_text(
-        text=gfilterlist,
-        quote=True,
-        parse_mode=enums.ParseMode.MARKDOWN
-    )
+    # Check for button and alert
+    if "|" in reply_content:
+        reply_text_parts = reply_content.split("|", 1)
+        reply_text = reply_text_parts[0].strip()
         
-@Client.on_message(filters.command('delg') & filters.incoming & filters.user(ADMINS))
-async def deletegfilter(client, message):
-    try:
-        cmd, text = message.text.split(" ", 1)
-    except:
-        await message.reply_text(
-            "<i>Mention the gfiltername which you wanna delete!</i>\n\n"
-            "<code>/delg gfiltername</code>\n\n"
-            "Use /viewgfilters to view all available gfilters",
-            quote=True
-        )
-        return
+        button_alert_part = reply_text_parts[1].strip()
+        if ":" in button_alert_part:
+            button_parts = button_alert_part.split(":", 1)
+            button_text = button_parts[0].strip()
+            button_url = button_parts[1].strip()
+            button = f"{button_text}:{button_url}"
+        
+        if len(button_alert_part.split("|")) > 1: # Check if there's an alert after button
+            alert = button_alert_part.split("|", 1)[1].strip()
 
-    query = text.lower()
+    # Check for replied media
+    if message.reply_to_message and message.reply_to_message.media:
+        file_id = message.reply_to_message.media.file_id
 
-    await delete_gfilter(message, query, 'gfilters')
+    await add_gfilter(message.chat.id, filter_text, reply_text, button, file_id, alert)
+    await message.reply_text(f"Global filter `{filter_text}` added successfully!")
 
-@Client.on_message(filters.command('delallg') & filters.user(ADMINS))
-async def delallgfilters(client, message):
-    await message.reply_text(
-            f"Do you want to continue??",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(text="YES",callback_data="gfiltersdeleteallconfirm")],
-                [InlineKeyboardButton(text="CANCEL",callback_data="gfiltersdeleteallcancel")]
-            ]),
-            quote=True
-        )
+@Client.on_message(filters.text & filters.group & filters.incoming & ~filters.edited)
+async def check_gfilter(client, message: Message):
+    if message.text.startswith("/"):
+        return # Ignore commands
+    
+    reply_text, button, alert, file_id = await find_gfilter(message.chat.id, message.text.strip())
+    
+    if reply_text:
+        reply_markup = None
+        if button:
+            button_text, button_url = button.split(":", 1)
+            reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(button_text, url=button_url)]])
+        
+        if file_id:
+            try:
+                await client.send_cached_media(
+                    chat_id=message.chat.id,
+                    file_id=file_id,
+                    caption=reply_text,
+                    reply_markup=reply_markup
+                )
+            except Exception as e:
+                logger.error(f"Error sending cached media for gfilter: {e}")
+                await message.reply_text(reply_text, reply_markup=reply_markup)
+        else:
+            await message.reply_text(reply_text, reply_markup=reply_markup)
+        
+        if alert:
+            try:
+                await message.reply_text(alert)
+            except Exception as e:
+                logger.error(f"Error sending alert for gfilter: {e}")

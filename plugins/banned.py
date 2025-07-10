@@ -1,38 +1,63 @@
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 from pyrogram import Client, filters
-from utils import temp
 from pyrogram.types import Message
 from database.users_chats_db import db
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from info import ADMINS
 
-async def banned_users(_, client, message: Message):
-    return (
-        message.from_user is not None or not message.sender_chat
-    ) and message.from_user.id in temp.BANNED_USERS
+@Client.on_message(filters.command("ban_user") & filters.user(ADMINS))
+async def ban_user(client, message: Message):
+    if len(message.command) &lt; 2:
+        return await message.reply_text("Usage: /ban_user [user_id] [reason]")
+    
+    user_id = int(message.command[1])
+    reason = " ".join(message.command[2:]) if len(message.command) > 2 else "No reason provided."
+    
+    if not await db.is_user_exist(user_id):
+        return await message.reply_text("User not found in database.")
+    
+    await db.ban_user(user_id, reason)
+    await message.reply_text(f"User {user_id} has been banned for: {reason}")
 
-banned_user = filters.create(banned_users)
+@Client.on_message(filters.command("unban_user") & filters.user(ADMINS))
+async def unban_user(client, message: Message):
+    if len(message.command) &lt; 2:
+        return await message.reply_text("Usage: /unban_user [user_id]")
+    
+    user_id = int(message.command[1])
+    
+    if not await db.is_user_exist(user_id):
+        return await message.reply_text("User not found in database.")
+    
+    await db.remove_ban(user_id)
+    await message.reply_text(f"User {user_id} has been unbanned.")
 
-async def disabled_chat(_, client, message: Message):
-    return message.chat.id in temp.BANNED_CHATS
-
-disabled_group=filters.create(disabled_chat)
-
-@Client.on_message(filters.private & banned_user & filters.incoming)
-async def ban_reply(bot, message):
-    ban = await db.get_ban_status(message.from_user.id)
-    await message.reply(f'<b>‼️Sorry Dude, You are Banned to use Me.‼️</b> \n\n<u>Ban Reason:</u> {ban["ban_reason"]}')
-
-@Client.on_message(filters.group & disabled_group & filters.incoming)
-async def grp_bd(bot, message):
-    buttons = [[
-        InlineKeyboardButton('🧬 𝖲𝗎𝗉𝗉𝗈𝗋𝗍', url=f'https://t.me/https://t.me/raixchat')
-    ]]
-    reply_markup=InlineKeyboardMarkup(buttons)
-    vazha = await db.get_chat(message.chat.id)
-    k = await message.reply(
-        text=f"**𝖳𝗁𝗂𝗌 𝖢𝗁𝖺𝗍 𝖨𝗌 𝖭𝗈𝗍 𝖠𝗅𝗅𝗈𝗐𝖾𝖽.!\n𝖢𝗈𝗇𝗍𝖺𝖼𝗍 𝖬𝗒 𝖬𝖺𝗌𝗍𝖾𝗋.**\n<u>Reason:</u> <code>{vazha['reason']}</code>.",
-        reply_markup=reply_markup)
-    try:
-        await k.pin()
-    except:
-        pass
-    await bot.leave_chat(message.chat.id)
+@Client.on_message(filters.command("banned_users") & filters.user(ADMINS))
+async def banned_users(client, message: Message):
+    banned_users_list, banned_chats_list = await db.get_banned()
+    
+    if not banned_users_list and not banned_chats_list:
+        return await message.reply_text("No users or chats are currently banned.")
+    
+    text = "**Banned Users:**\n"
+    if banned_users_list:
+        for user_id in banned_users_list:
+            user = await client.get_users(user_id)
+            text += f"- {user.first_name} (`{user_id}`)\n"
+    else:
+        text += "None\n"
+        
+    text += "\n**Disabled Chats:**\n"
+    if banned_chats_list:
+        for chat_id in banned_chats_list:
+            try:
+                chat = await client.get_chat(chat_id)
+                text += f"- {chat.title} (`{chat_id}`)\n"
+            except Exception:
+                text += f"- Unknown Chat (`{chat_id}`)\n"
+    else:
+        text += "None\n"
+        
+    await message.reply_text(text)
