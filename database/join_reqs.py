@@ -1,46 +1,40 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-# (c) @AlbertEinsteinTG
-
 import motor.motor_asyncio
-from info import REQ_CHANNEL
+from info import REQ_CHANNEL_ONE, REQ_CHANNEL_TWO
 
 class JoinReqs:
-
     def __init__(self):
-        from info import JOIN_REQS_DB
-        if JOIN_REQS_DB:
-            self.client = motor.motor_asyncio.AsyncIOMotorClient(JOIN_REQS_DB)
+        from info import DATABASE_URI
+        if DATABASE_URI:
+            self.client = motor.motor_asyncio.AsyncIOMotorClient(DATABASE_URI)
             self.db = self.client["JoinReqs"]
-            self.col = self.db[str(REQ_CHANNEL)]
+            self.col1 = self.db[str(REQ_CHANNEL_ONE)]
+            self.col2 = self.db[str(REQ_CHANNEL_TWO)]
+            self.chat_col1 = self.db["ChatId1"]
+            self.chat_col2 = self.db["ChatId2"]
         else:
             self.client = None
             self.db = None
             self.col = None
-
-    def isActive(self):
-        if self.client is not None:
-            return True
-        else:
-            return False
-
-    async def add_user(self, user_id, first_name, username, date):
+    ##############################################
+    async def add_fsub_chat1(self, chat_id):
         try:
-            await self.col.insert_one({"_id": int(user_id),"user_id": int(user_id), "first_name": first_name, "username": username, "date": date})
+            await self.chat_col1.delete_many({})
+            await self.chat_col1.insert_one({"chat_id": chat_id})
         except:
             pass
-
-    async def get_user(self, user_id):
-        return await self.col.find_one({"user_id": int(user_id)})
-
-    async def get_all_users(self):
-        return await self.col.find().to_list(None)
-
-    async def delete_user(self, user_id):
-        await self.col.delete_one({"user_id": int(user_id)})
-
-    async def delete_all_users(self):
-        await self.col.delete_many({})
-
-    async def get_all_users_count(self):
-        return await self.col.count_documents({})
+    async def get_fsub_chat1(self):
+        return await self.chat_col1.find_one({})
+    async def delete_fsub_chat1(self, chat_id):
+        await self.chat_col1.delete_one({"chat_id": chat_id})
+    ##############################################
+    async def add_fsub_chat2(self, chat_id):
+        try:
+            await self.chat_col2.delete_many({})
+            await self.chat_col2.insert_one({"chat_id": chat_id})
+        except:
+            pass
+    async def get_fsub_chat2(self):
+        return await self.chat_col2.find_one({})
+    async def delete_fsub_chat2(self, chat_id):
+        await self.chat_col2.delete_one({"chat_id": chat_id})
+    ##############################################
