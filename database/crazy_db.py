@@ -1,25 +1,32 @@
 from pymongo import MongoClient
-from info import DATABASE_URI
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+DATABASE_URI = os.environ.get("DATABASE_URI", "mongodb://localhost:27017/")
+DATABASE_NAME = os.environ.get("DATABASE_NAME", "CrazyDB")
+
 client = MongoClient(DATABASE_URI)
-db = client['series_database']
-series_collection = db['series']
+db = client[DATABASE_NAME]
+series_collection = db.series
 
 def add_series(series_data):
     """Adds or updates a series document."""
-    series_collection.update_one({"_id": series_data['_id']}, {"$set": series_data}, upsert=True)
+    series_collection.insert_one(series_data)
 
 def get_series():
     """Returns a list of all series documents."""
-    return list(series_collection.find())
+    return list(series_collection.find({}))
 
 def get_series_by_key(series_key):
     """Retrieves a single series document by its key (which is _id)."""
     return series_collection.find_one({"_id": series_key})
+
+def update_series(series_key, update_data):
+    """Updates a series document."""
+    series_collection.update_one({"_id": series_key}, {"$set": update_data})
 
 def delete_series(series_key):
     """Deletes a series document."""
@@ -59,10 +66,8 @@ def add_or_update_language(series_key, language_name, poster_file_id=None):
 
 def get_languages(series_key):
     """Returns a list of language names for a series."""
-    series = get_series_by_key(series_key)
-    if series:
-        return [lang["name"] for lang in series.get("languages", [])]
-    return []
+    series = series_collection.find_one({"_id": series_key})
+    return series.get("languages", []) if series else []
 
 def delete_language(series_key, language_name):
     """Deletes a language and all its nested data from a series."""
@@ -106,11 +111,11 @@ def add_or_update_season(series_key, language_name, season_name, poster_file_id=
 
 def get_seasons(series_key, language_name):
     """Returns a list of season names for a specific language."""
-    series = get_series_by_key(series_key)
+    series = series_collection.find_one({"_id": series_key})
     if series:
         for lang in series.get("languages", []):
             if lang["name"].lower() == language_name.lower():
-                return [season["name"] for season in lang.get("seasons", [])]
+                return lang.get("seasons", [])
     return []
 
 def delete_season(series_key, language_name, season_name):
@@ -165,18 +170,18 @@ def add_or_update_quality(series_key, language_name, season_name, quality_name, 
 
 def get_qualities(series_key, language_name, season_name):
     """Returns a list of quality names for a specific season."""
-    series = get_series_by_key(series_key)
+    series = series_collection.find_one({"_id": series_key})
     if series:
         for lang in series.get("languages", []):
             if lang["name"].lower() == language_name.lower():
                 for season in lang.get("seasons", []):
                     if season["name"].lower() == season_name.lower():
-                        return [quality["name"] for quality in season.get("qualities", [])]
+                        return season.get("qualities", [])
     return []
 
 def get_quality_link(series_key, language_name, season_name, quality_name):
     """Returns the link_key for a specific quality."""
-    series = get_series_by_key(series_key)
+    series = series_collection.find_one({"_id": series_key})
     if series:
         for lang in series.get("languages", []):
             if lang["name"].lower() == language_name.lower():
@@ -208,51 +213,18 @@ def delete_quality(series_key, language_name, season_name, quality_name):
             break
     return False
 
-def get_poster_file_id(series_key, language_name=None, season_name=None):
-    """Retrieves the poster file_id for a series, language, or season."""
-    series = get_series_by_key(series_key)
-    if not series:
-        return None
-    
-    if language_name is None and season_name is None:
-        return series.get("poster_file_id")
-    
-    if language_name:
-        for lang in series.get("languages", []):
-            if lang["name"].lower() == language_name.lower():
-                if season_name is None:
-                    return lang.get("poster_file_id")
-                else:
-                    for season in lang.get("seasons", []):
-                        if season["name"].lower() == season_name.lower():
-                            return season.get("poster_file_id")
-    return None
+def get_poster_file_id(series_key):
+    """
+    Retrieves the poster file ID or URL for a given series key.
+    Assumes the 'poster_file_id' field in the series document can store either.
+    """
+    series = series_collection.find_one({"_id": series_key})
+    return series.get("poster_file_id") if series else None
 
-def update_poster_file_id(series_key, file_id, language_name=None, season_name=None):
-    """Updates the poster file_id for a series, language, or season."""
-    series = get_series_by_key(series_key)
-    if not series:
-        return False
-    
-    if language_name is None and season_name is None:
-        series_collection.update_one({"_id": series_key}, {"$set": {"poster_file_id": file_id}})
-        return True
-    
-    languages = series.get("languages", [])
-    for lang in languages:
-        if lang["name"].lower() == language_name.lower():
-            if season_name is None:
-                lang["poster_file_id"] = file_id
-                series_collection.update_one({"_id": series_key}, {"$set": {"languages": languages}})
-                return True
-            else:
-                seasons = lang.get("seasons", [])
-                for season in seasons:
-                    if season["name"].lower() == season_name.lower():
-                        season["poster_file_id"] = file_id
-                        series_collection.update_one({"_id": series_key}, {"$set": {"languages": languages}})
-                        return True
-    return False
+def update_poster_file_id(series_key, file_id):
+    """Updates the poster file_id for a series."""
+    series_collection.update_one({"_id": series_key}, {"$set": {"poster_file_id": file_id}})
+    return True
 
 def publish_series(series_key):
     """Sets the series as published and removes empty groups."""
