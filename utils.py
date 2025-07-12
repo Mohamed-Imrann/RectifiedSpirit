@@ -75,32 +75,37 @@ async def is_subscribed(bot, query=None, userid=None):
 
 async def get_message_id(client, message):
     if message.forward_from_chat:
-        # Forwarded message case
-        channel_id = str(message.forward_from_chat.id) 
-        # Check against RAW_DB_CHANNEL for the actual ID, then return Pyrogram ID
-        if abs(int(channel_id)) in RAW_DB_CHANNEL: 
+        # Forwarded message from channel
+        channel_id = str(message.forward_from_chat.id)
+        raw_id = abs(int(channel_id.replace("-100", "")))
+        if raw_id in RAW_DB_CHANNEL:
             return channel_id, message.forward_from_message_id
-        else:
-            return 0, 0
+        return 0, 0
 
     elif message.text:
+        # Direct link
         pattern = r"https://t.me/(?:c/)?(\d+)/(\d+)"
         matches = re.match(pattern, message.text)
         if not matches:
             return 0, 0
 
-        extracted_raw_channel_id = int(matches.group(1)) # This is the raw ID, e.g., 1306691782
+        extracted_raw_channel_id = int(matches.group(1))
         msg_id = int(matches.group(2))
         
-        if extracted_raw_channel_id in RAW_DB_CHANNEL: # Check against RAW_DB_CHANNEL
-            # Reconstruct the Pyrogram-style channel ID
+        if extracted_raw_channel_id in RAW_DB_CHANNEL:
             pyrogram_channel_id = f"-100{extracted_raw_channel_id}"
             return pyrogram_channel_id, msg_id
-        else:
-            return 0, 0
-
-    else:
         return 0, 0
+
+    elif message.chat and str(message.chat.id).startswith("-100"):
+        # Directly sent message from a channel (e.g., via bot API, not forwarded)
+        channel_id = str(message.chat.id)
+        raw_id = abs(int(channel_id.replace("-100", "")))
+        if raw_id in RAW_DB_CHANNEL:
+            return channel_id, message.id
+        return 0, 0
+
+    return 0, 0
 
 async def get_messages_in_range(client, source_channel_id, start_msg_id, end_msg_id, target_channel_id):
     """
