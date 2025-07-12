@@ -2,7 +2,7 @@ import uuid
 import logging
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery, InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from info import ADMINS, DB_CHANNEL, RAW_DB_CHANNEL, LOG_CHANNEL, PICS, IMDB_TEMPLATE, SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG
+from info import ADMINS, DB_CHANNEL, RAW_DB_CHANNEL, LOG_CHANNEL, PICS, SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG
 from database.crazy_db import (
     add_series, get_series, get_series_by_key, update_series, delete_series,
     get_languages, get_seasons, get_qualities, get_quality_link, get_poster_file_id
