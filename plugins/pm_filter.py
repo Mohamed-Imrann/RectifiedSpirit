@@ -18,7 +18,7 @@ import logging
 import random
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.ERROR)
+logger.setLevel(logging.INFO) # Changed to INFO for more detailed logging during development
 
 requestor = {}
 imdb = Cinemagoer()
@@ -33,10 +33,23 @@ def find_close_matches(query, possibilities, n=3, cutoff=0.6):
 def chunk_buttons(buttons, chunk_size=3):
     return [buttons[i:i + chunk_size] for i in range(0, len(buttons), chunk_size)]
 
-# This function is now simplified as poster_file_id is directly in DB
+# This function is now updated to handle both file IDs and URLs
 def get_series_poster_for_user(series_key):
-    poster_file_id = get_poster_file_id(series_key)
-    return poster_file_id if poster_file_id else NO_POSTER_FOUND_IMG
+    poster_source = get_poster_file_id(series_key) # This can be a file ID or a URL
+    if poster_source:
+        if poster_source.startswith(('http://', 'https://')):
+            logger.info(f"Poster for series {series_key} is a URL: {poster_source}")
+            return poster_source
+        elif len(poster_source) > 20 and poster_source.replace('_', '').replace('-', '').isalnum():
+            # This is a heuristic for a Telegram file ID.
+            logger.info(f"Poster for series {series_key} is a File ID: {poster_source}")
+            return poster_source
+        else:
+            logger.warning(f"Poster for series {series_key} is an unrecognized format: {poster_source}. Falling back to default.")
+            return NO_POSTER_FOUND_IMG
+    else:
+        logger.info(f"No poster found for series {series_key}. Using default.")
+        return NO_POSTER_FOUND_IMG
 
 @Client.on_message(filters.text & (filters.private | filters.group))
 async def handle_message(client, message):
@@ -158,7 +171,7 @@ async def series_filter(client, message):
             "Select the language you need...!"
         )
         
-        poster_file_id = get_series_poster_for_user(series_data['_id'])
+        poster_to_use = get_series_poster_for_user(series_data['_id']) # Use the updated function
         
         buttons = []
         for lang in languages:
@@ -168,12 +181,13 @@ async def series_filter(client, message):
         reply_markup = InlineKeyboardMarkup(buttons_chunked)
         
         try:
-            etho = await message.reply_photo(photo=poster_file_id, caption=reply_text, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
+            etho = await message.reply_photo(photo=poster_to_use, caption=reply_text, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
             reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
             requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
             asyncio.create_task(DeleteMessage(etho))
         except pyrogram.errors.MediaEmpty:
-            # Fallback if poster_file_id is invalid
+            # Fallback if poster_to_use is invalid (e.g., a broken URL or invalid file ID)
+            logger.error(f"MediaEmpty error for poster: {poster_to_use}. Falling back to NO_POSTER_FOUND_IMG.")
             etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG, caption=reply_text, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
             reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
             requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
@@ -233,7 +247,7 @@ async def cb_handler(client, query: CallbackQuery):
                 "Select the language you need...!"
             )
             
-            poster_file_id = get_series_poster_for_user(series_data['_id'])
+            poster_to_use = get_series_poster_for_user(series_data['_id']) # Use the updated function
             
             buttons = []
             for lang in languages:
@@ -243,7 +257,7 @@ async def cb_handler(client, query: CallbackQuery):
             reply_markup = InlineKeyboardMarkup(buttons_chunked)
 
             try:
-                media = InputMediaPhoto(media=poster_file_id, caption=reply_text, parse_mode=enums.ParseMode.HTML)
+                media = InputMediaPhoto(media=poster_to_use, caption=reply_text, parse_mode=enums.ParseMode.HTML)
                 await client.edit_message_media(
                     chat_id=query.message.chat.id,
                     message_id=query.message.id,
@@ -251,6 +265,7 @@ async def cb_handler(client, query: CallbackQuery):
                     reply_markup=reply_markup
                 )
             except pyrogram.errors.MediaEmpty:
+                logger.error(f"MediaEmpty error for poster: {poster_to_use} during edit. Falling back to NO_POSTER_FOUND_IMG.")
                 media = InputMediaPhoto(
                     media=NO_POSTER_FOUND_IMG,
                     caption=reply_text,
@@ -262,6 +277,9 @@ async def cb_handler(client, query: CallbackQuery):
                     media=media,
                     reply_markup=reply_markup
                 )
+            except Exception as e:
+                logger.error(f"Error editing message media for series details: {e}")
+                await query.message.edit_text("An error occurred while fetching series details.")
         else:
             await query.message.edit_text(
                 "Series not found or not published.",
