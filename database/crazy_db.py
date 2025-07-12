@@ -1,7 +1,7 @@
 from pymongo import MongoClient
 import logging
 import os
-from info import DATABASE_URL, DATABASE_NAME
+from info import DATABASE_URI, DATABASE_NAME
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
