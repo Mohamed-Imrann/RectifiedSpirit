@@ -1,12 +1,10 @@
 from pymongo import MongoClient
 import logging
 import os
+from info import DATABASE_URL, DATABASE_NAME
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
-DATABASE_URI = os.environ.get("DATABASE_URI", "mongodb://localhost:27017/")
-DATABASE_NAME = os.environ.get("DATABASE_NAME", "CrazyDB")
 
 client = MongoClient(DATABASE_URI)
 db = client[DATABASE_NAME]
