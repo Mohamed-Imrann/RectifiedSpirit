@@ -18,7 +18,7 @@ from database.crazy_db import (
 )
 from utils import get_message_id, get_messages_in_range, delete_messages_from_user_chat, get_poster, find_most_similar_title
 from fuzzywuzzy import fuzz # Import fuzzywuzzy
-from pyrogram.errors import MessageIdInvalid, FloodWait, MessageNotFound # Import specific errors
+from pyrogram.errors import MessageIdInvalid, FloodWait # Removed MessageNotFound
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -205,7 +205,7 @@ async def send_main_series_message(client: Client, user_id: int, series_data: di
                 parse_mode=enums.ParseMode.HTML
             )
             return msg.id
-    except (MessageIdInvalid, MessageNotFound, FloodWait) as e:
+    except (MessageIdInvalid, FloodWait) as e: # Removed MessageNotFound
         logger.warning(f"Failed to edit main series message (ID: {message_id}): {e}. Attempting to send a new message.")
         # If editing fails, send a new message and update the stored message_id
         try:
@@ -255,7 +255,7 @@ async def send_main_series_message(client: Client, user_id: int, series_data: di
                 )
                 temp_admin_data[user_id]["main_message_id"] = msg.id
                 return msg.id
-        except (MessageIdInvalid, MessageNotFound) as e_fallback:
+        except (MessageIdInvalid) as e_fallback: # Removed MessageNotFound
             logger.warning(f"Fallback text edit/send also failed: {e_fallback}. Message ID was {message_id}. Attempting to send new.")
             try:
                 msg = await client.send_message(
@@ -305,7 +305,7 @@ async def send_language_management_message(client: Client, user_id: int, series_
             reply_markup=reply_markup,
             parse_mode=enums.ParseMode.HTML
         )
-    except (MessageIdInvalid, MessageNotFound, FloodWait) as e:
+    except (MessageIdInvalid, FloodWait) as e: # Removed MessageNotFound
         logger.warning(f"Failed to edit language management message (ID: {message_id}): {e}. Attempting to send a new message.")
         new_msg = await client.send_message(
             chat_id=user_id,
@@ -360,7 +360,7 @@ async def send_season_management_message(client: Client, user_id: int, series_ke
             reply_markup=reply_markup,
             parse_mode=enums.ParseMode.HTML
         )
-    except (MessageIdInvalid, MessageNotFound, FloodWait) as e:
+    except (MessageIdInvalid, FloodWait) as e: # Removed MessageNotFound
         logger.warning(f"Failed to edit season management message (ID: {message_id}): {e}. Attempting to send a new message.")
         new_msg = await client.send_message(
             chat_id=user_id,
@@ -417,7 +417,7 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
             reply_markup=reply_markup,
             parse_mode=enums.ParseMode.HTML
         )
-    except (MessageIdInvalid, MessageNotFound, FloodWait) as e:
+    except (MessageIdInvalid, FloodWait) as e: # Removed MessageNotFound
         logger.warning(f"Failed to edit quality management message (ID: {message_id}): {e}. Attempting to send a new message.")
         new_msg = await client.send_message(
             chat_id=user_id,
@@ -1357,7 +1357,7 @@ async def edit_series_details_callback(client: Client, callback_query: CallbackQ
             text=text,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"back_to_series:{series_key}")]])
         )
-    except (MessageIdInvalid, MessageNotFound, FloodWait) as e:
+    except (MessageIdInvalid, FloodWait) as e: # Removed MessageNotFound
         logger.warning(f"Failed to edit series details prompt (ID: {main_message_id}): {e}. Sending a new one.")
         new_msg = await client.send_message(
             chat_id=user_id,
@@ -1470,7 +1470,7 @@ async def publish_series_callback(client: Client, callback_query: CallbackQuery)
                 [InlineKeyboardButton("No, Cancel", callback_data=f"back_to_series:{series_key}")]
             ])
         )
-    except (MessageIdInvalid, MessageNotFound, FloodWait) as e:
+    except (MessageIdInvalid, FloodWait) as e: # Removed MessageNotFound
         logger.warning(f"Failed to edit publish confirmation message (ID: {main_message_id}): {e}. Sending a new one.")
         new_msg = await client.send_message(
             chat_id=user_id,
