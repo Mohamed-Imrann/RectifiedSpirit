@@ -22,8 +22,8 @@ BOT_USERNAME = "MC_MovieBetaBot"
 #SESSION_STRING = environ['SESSION_STRING']
 
 # Required Database and Channel Settings
-DATABASE_URI="mongodb+srv://rai:rai@cluster0.4in2i.mongodb.net/?retryWrites=true&w=majority"
-DATABASE_URL="mongodb+srv://rai:rai@cluster0.4in2i.mongodb.net/?retryWrites=true&w=majority"
+DATABASE_URI="mongodb+srv://user:pass@cluster0.chedxq6.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+DATABASE_URL="mongodb+srv://user:pass@cluster0.chedxq6.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 DATABASE_NAME = "cluster0"
 COLLECTION_NAME = "thernello_unda"
 ADMINS = [int(admin) if id_pattern.search(admin) else admin for admin in environ.get('ADMINS', '1129673243 5394954571 7188908429').split()]
