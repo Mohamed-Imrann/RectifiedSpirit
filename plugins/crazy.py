@@ -352,8 +352,8 @@ async def new_series_command(client: Client, message: Message):
         caption="Searching TMDB and IMDb, please wait..."
     )
     
-    tmdb_results = await get_tmdb_info(query, bulk=True)
-    imdb_results = await get_poster(query, bulk=True) # Use get_poster for IMDb search
+    tmdb_results = get_tmdb_info(query, bulk=True)
+    imdb_results = get_poster(query, bulk=True) # Use get_poster for IMDb search
 
     all_results = []
     if tmdb_results:
