@@ -1,4 +1,4 @@
-from pymongo import MongoClient
+from pymongo import MongoClient, errors
 import logging
 import os
 from info import DATABASE_URI, DATABASE_NAME
@@ -11,8 +11,17 @@ db = client[DATABASE_NAME]
 series_collection = db.series
 
 def add_series(series_data):
-    """Adds or updates a series document."""
-    series_collection.insert_one(series_data)
+    """Adds a new series document. Returns True on success, False on duplicate key error."""
+    try:
+        series_collection.insert_one(series_data)
+        logger.info(f"Series '{series_data.get('title', 'N/A')}' added successfully.")
+        return True
+    except errors.DuplicateKeyError:
+        logger.warning(f"Series with _id '{series_data.get('_id', 'N/A')}' already exists. Skipping insertion.")
+        return False
+    except Exception as e:
+        logger.error(f"Error adding series '{series_data.get('title', 'N/A')}': {e}")
+        return False
 
 def get_series():
     """Returns a list of all series documents."""
@@ -24,19 +33,39 @@ def get_series_by_key(series_key):
 
 def update_series(series_key, update_data):
     """Updates a series document."""
-    series_collection.update_one({"_id": series_key}, {"$set": update_data})
+    try:
+        result = series_collection.update_one({"_id": series_key}, {"$set": update_data})
+        return result.modified_count > 0
+    except Exception as e:
+        logger.error(f"Error updating series '{series_key}': {e}")
+        return False
 
 def delete_series(series_key):
     """Deletes a series document."""
-    series_collection.delete_one({"_id": series_key})
+    try:
+        result = series_collection.delete_one({"_id": series_key})
+        return result.deleted_count > 0
+    except Exception as e:
+        logger.error(f"Error deleting series '{series_key}': {e}")
+        return False
 
 def delete_all_series():
     """Deletes all series documents."""
-    series_collection.delete_many({})
+    try:
+        result = series_collection.delete_many({})
+        return result.deleted_count > 0
+    except Exception as e:
+        logger.error(f"Error deleting all series: {e}")
+        return False
 
 def update_series_field(series_key, field, value):
     """Updates a top-level field in a series document."""
-    series_collection.update_one({"_id": series_key}, {"$set": {field: value}})
+    try:
+        result = series_collection.update_one({"_id": series_key}, {"$set": {field: value}})
+        return result.modified_count > 0
+    except Exception as e:
+        logger.error(f"Error updating series field '{field}' for '{series_key}': {e}")
+        return False
 
 def add_or_update_language(series_key, language_name, poster_file_id=None):
     """Adds a new language or updates its poster for a series."""
@@ -59,8 +88,7 @@ def add_or_update_language(series_key, language_name, poster_file_id=None):
             new_language["poster_file_id"] = poster_file_id
         languages.append(new_language)
     
-    series_collection.update_one({"_id": series_key}, {"$set": {"languages": languages}})
-    return True
+    return update_series(series_key, {"languages": languages})
 
 def get_languages(series_key):
     """Returns a list of language names for a series."""
@@ -76,8 +104,7 @@ def delete_language(series_key, language_name):
     languages = series.get("languages", [])
     updated_languages = [lang for lang in languages if lang["name"].lower() != language_name.lower()]
     
-    series_collection.update_one({"_id": series_key}, {"$set": {"languages": updated_languages}})
-    return len(languages) != len(updated_languages) # True if something was deleted
+    return update_series(series_key, {"languages": updated_languages})
 
 def add_or_update_season(series_key, language_name, season_name, poster_file_id=None):
     """Adds a new season or updates its poster for a specific language."""
@@ -104,8 +131,7 @@ def add_or_update_season(series_key, language_name, season_name, poster_file_id=
             lang["seasons"] = seasons
             break
     
-    series_collection.update_one({"_id": series_key}, {"$set": {"languages": languages}})
-    return True
+    return update_series(series_key, {"languages": languages})
 
 def get_seasons(series_key, language_name):
     """Returns a list of season names for a specific language."""
@@ -128,8 +154,7 @@ def delete_season(series_key, language_name, season_name):
             seasons = lang.get("seasons", [])
             updated_seasons = [season for season in seasons if season["name"].lower() != season_name.lower()]
             lang["seasons"] = updated_seasons
-            series_collection.update_one({"_id": series_key}, {"$set": {"languages": languages}})
-            return len(seasons) != len(updated_seasons) # True if something was deleted
+            return update_series(series_key, {"languages": languages})
     return False
 
 def add_or_update_quality(series_key, language_name, season_name, quality_name, link_key, codec=None):
@@ -163,8 +188,7 @@ def add_or_update_quality(series_key, language_name, season_name, quality_name, 
             lang["seasons"] = seasons
             break
     
-    series_collection.update_one({"_id": series_key}, {"$set": {"languages": languages}})
-    return True
+    return update_series(series_key, {"languages": languages})
 
 def get_qualities(series_key, language_name, season_name):
     """Returns a list of quality names for a specific season."""
@@ -205,8 +229,7 @@ def delete_quality(series_key, language_name, season_name, quality_name):
                     qualities = season.get("qualities", [])
                     updated_qualities = [quality for quality in qualities if quality["name"].lower() != quality_name.lower()]
                     season["qualities"] = updated_qualities
-                    series_collection.update_one({"_id": series_key}, {"$set": {"languages": languages}})
-                    return len(qualities) != len(updated_qualities) # True if something was deleted
+                    return update_series(series_key, {"languages": languages})
             lang["seasons"] = seasons
             break
     return False
@@ -221,8 +244,7 @@ def get_poster_file_id(series_key):
 
 def update_poster_file_id(series_key, file_id):
     """Updates the poster file_id for a series."""
-    series_collection.update_one({"_id": series_key}, {"$set": {"poster_file_id": file_id}})
-    return True
+    return update_series_field(series_key, "poster_file_id", file_id)
 
 def publish_series(series_key):
     """Sets the series as published and removes empty groups."""
@@ -246,5 +268,4 @@ def publish_series(series_key):
     series["languages"] = cleaned_languages
     series["published"] = True
     
-    series_collection.update_one({"_id": series_key}, {"$set": series})
-    return True
+    return update_series(series_key, series)
