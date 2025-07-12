@@ -28,7 +28,7 @@ temp_admin_data = {}
 
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
-NO_POSTER_FOUND_IMG = "https://telegra.ph/file/5e2d4418525832bc9a1b9" # Placeholder image
+NO_POSTER_FOUND_IMG = "https://envs.sh/esA.jpg" # Placeholder image
 
 # Helper to chunk buttons for inline keyboard
 def chunk_buttons(buttons, chunk_size=2):
