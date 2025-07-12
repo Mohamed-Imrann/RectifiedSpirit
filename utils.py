@@ -1,5 +1,5 @@
 import logging
-from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid, ChatWriteForbidden, MessageNotModified, ChannelPrivate, ChannelInvalid
+from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid, ChatWriteForbidden, MessageNotModified, ChannelPrivate, ChannelInvalid, MessageIdInvalid, MessageNotFound
 from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, NO_POSTER_FOUND_IMG
 from imdb import Cinemagoer 
 import asyncio
@@ -77,7 +77,8 @@ async def get_message_id(client, message):
     if message.forward_from_chat:
         # Forwarded message case
         channel_id = str(message.forward_from_chat.id) 
-        if abs(int(channel_id)) in RAW_DB_CHANNEL: # Use abs() for comparison
+        # Check against RAW_DB_CHANNEL for the actual ID, then return Pyrogram ID
+        if abs(int(channel_id)) in RAW_DB_CHANNEL: 
             return channel_id, message.forward_from_message_id
         else:
             return 0, 0
@@ -88,11 +89,13 @@ async def get_message_id(client, message):
         if not matches:
             return 0, 0
 
-        extracted_channel_id = matches.group(1)
+        extracted_raw_channel_id = int(matches.group(1)) # This is the raw ID, e.g., 1306691782
         msg_id = int(matches.group(2))
         
-        if abs(int(extracted_channel_id)) in RAW_DB_CHANNEL: # Use abs() for comparison
-            return extracted_channel_id, msg_id
+        if extracted_raw_channel_id in RAW_DB_CHANNEL: # Check against RAW_DB_CHANNEL
+            # Reconstruct the Pyrogram-style channel ID
+            pyrogram_channel_id = f"-100{extracted_raw_channel_id}"
+            return pyrogram_channel_id, msg_id
         else:
             return 0, 0
 
@@ -558,7 +561,7 @@ def parser(text, keyword):
 def remove_escapes(text: str) -> str:
     res = ""
     is_escaped = False
-    for counter in range((text)):
+    for counter in range(len(text)): # Corrected range function usage
         if is_escaped:
             res += text[counter]
             is_escaped = False
