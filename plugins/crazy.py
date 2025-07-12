@@ -18,7 +18,7 @@ from database.crazy_db import (
 )
 from utils import get_message_id, get_messages_in_range, delete_messages_from_user_chat, get_poster, find_most_similar_title
 from fuzzywuzzy import fuzz # Import fuzzywuzzy
-from pyrogram.errors import MessageIdInvalid, FloodWait # Import specific errors
+from pyrogram.errors import MessageIdInvalid, FloodWait, MessageNotFound # Import specific errors
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -139,13 +139,14 @@ async def download_and_upload_poster(client: Client, poster_url: str = None, mes
             with open(download_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
-        elif message and message.photo:
+        elif message and message.photo and message.photo.file_id:
             # Use user-provided photo
-            download_path = await client.download_media(file_id=message.photo.file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
-        elif message and message.video and message.video.thumbs:
+            download_path = await client.download_media(message.photo.file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
+        elif message and message.video and message.video.thumbs and message.video.thumbs[0].file_id:
             # Use user-provided video thumbnail
-            download_path = await client.download_media(file_id=message.video.thumbs[0].file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
+            download_path = await client.download_media(message.video.thumbs[0].file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
         else:
+            logger.warning("No valid poster source (URL, photo, or video thumbnail) provided.")
             return None
 
         if download_path:
@@ -252,8 +253,9 @@ async def send_main_series_message(client: Client, user_id: int, series_data: di
                     reply_markup=reply_markup,
                     parse_mode=enums.ParseMode.HTML
                 )
+                temp_admin_data[user_id]["main_message_id"] = msg.id
                 return msg.id
-        except (MessageIdInvalid) as e_fallback:
+        except (MessageIdInvalid, MessageNotFound) as e_fallback:
             logger.warning(f"Fallback text edit/send also failed: {e_fallback}. Message ID was {message_id}. Attempting to send new.")
             try:
                 msg = await client.send_message(
@@ -303,7 +305,7 @@ async def send_language_management_message(client: Client, user_id: int, series_
             reply_markup=reply_markup,
             parse_mode=enums.ParseMode.HTML
         )
-    except (MessageIdInvalid, FloodWait) as e:
+    except (MessageIdInvalid, MessageNotFound, FloodWait) as e:
         logger.warning(f"Failed to edit language management message (ID: {message_id}): {e}. Attempting to send a new message.")
         new_msg = await client.send_message(
             chat_id=user_id,
@@ -358,7 +360,7 @@ async def send_season_management_message(client: Client, user_id: int, series_ke
             reply_markup=reply_markup,
             parse_mode=enums.ParseMode.HTML
         )
-    except (MessageIdInvalid, FloodWait) as e:
+    except (MessageIdInvalid, MessageNotFound, FloodWait) as e:
         logger.warning(f"Failed to edit season management message (ID: {message_id}): {e}. Attempting to send a new message.")
         new_msg = await client.send_message(
             chat_id=user_id,
@@ -415,7 +417,7 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
             reply_markup=reply_markup,
             parse_mode=enums.ParseMode.HTML
         )
-    except (MessageIdInvalid, FloodWait) as e:
+    except (MessageIdInvalid, MessageNotFound, FloodWait) as e:
         logger.warning(f"Failed to edit quality management message (ID: {message_id}): {e}. Attempting to send a new message.")
         new_msg = await client.send_message(
             chat_id=user_id,
@@ -537,10 +539,12 @@ async def clone_series_command(client: Client, message: Message):
     cloned_series_data['published'] = False # New series is not published by default
 
     # Add the cloned series to the database
-    add_series(cloned_series_data)
+    if add_series(cloned_series_data):
+        await message.reply(f"Series '{original_series_data.get('title', 'N/A')}' successfully cloned to '{new_series_title}' (key: `{new_series_key}`).\n\n"
+                            f"The new series is currently **unpublished**. You can now edit it using the UI via `/editseries {new_series_title}` and then publish it.")
+    else:
+        await message.reply(f"Failed to clone series '{original_series_data.get('title', 'N/A')}' to '{new_series_title}'. It might already exist.")
 
-    await message.reply(f"Series '{original_series_data.get('title', 'N/A')}' successfully cloned to '{new_series_title}' (key: `{new_series_key}`).\n\n"
-                        f"The new series is currently **unpublished**. You can now edit it using the UI via `/newseries {new_series_title}` and then publish it.")
 
 @Client.on_message(filters.command('editseries') & filters.user(ADMINS))
 async def edit_series_command(client: Client, message: Message):
@@ -680,7 +684,26 @@ async def media_selection_callback(client: Client, callback_query: CallbackQuery
             'languages': [],
             'published': False
         }
-        add_series(series_data) # Save initial series data
+        if not add_series(series_data): # Attempt to add, check if successful
+            await callback_query.answer("Failed to add new series (might already exist). Loading existing series.", show_alert=True)
+            series_data = get_series_by_key(series_key) # Re-fetch if insertion failed due to duplicate
+            if not series_data: # If still not found, something is wrong
+                await client.edit_message_caption(
+                    chat_id=user_id,
+                    message_id=main_message_id,
+                    caption="Failed to create or load series. Please try again."
+                )
+                return
+
+    # Re-fetch series_data to ensure it's the latest from DB, especially after add_series
+    series_data = get_series_by_key(series_key)
+    if not series_data: # Should not happen if add_series was successful or existing_series was found
+        await client.edit_message_caption(
+            chat_id=user_id,
+            message_id=main_message_id,
+            caption="Failed to retrieve series data after initial setup. Please try again."
+        )
+        return
 
     # Download and upload poster to LOG_CHANNEL, then update DB
     poster_file_id = await download_and_upload_poster(client, poster_url=movie_details.get('poster_url') or movie_details.get('poster'))
@@ -1334,7 +1357,7 @@ async def edit_series_details_callback(client: Client, callback_query: CallbackQ
             text=text,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"back_to_series:{series_key}")]])
         )
-    except (MessageIdInvalid, FloodWait) as e:
+    except (MessageIdInvalid, MessageNotFound, FloodWait) as e:
         logger.warning(f"Failed to edit series details prompt (ID: {main_message_id}): {e}. Sending a new one.")
         new_msg = await client.send_message(
             chat_id=user_id,
@@ -1443,17 +1466,17 @@ async def publish_series_callback(client: Client, callback_query: CallbackQuery)
             message_id=main_message_id,
             text="Do you want to publish this series? NOTE: Once you publish this series, you can't edit it anymore. All the empty groups will be removed automatically.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Yes, Publish", callback_data=f"confirm_publish:{series_key})")],
+                [InlineKeyboardButton("Yes, Publish", callback_data=f"confirm_publish:{series_key}")],
                 [InlineKeyboardButton("No, Cancel", callback_data=f"back_to_series:{series_key}")]
             ])
         )
-    except (MessageIdInvalid, FloodWait) as e:
+    except (MessageIdInvalid, MessageNotFound, FloodWait) as e:
         logger.warning(f"Failed to edit publish confirmation message (ID: {main_message_id}): {e}. Sending a new one.")
         new_msg = await client.send_message(
             chat_id=user_id,
             text="Do you want to publish this series? NOTE: Once you publish this series, you can't edit it anymore. All the empty groups will be removed automatically.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Yes, Publish", callback_data=f"confirm_publish:{series_key})")],
+                [InlineKeyboardButton("Yes, Publish", callback_data=f"confirm_publish:{series_key}")],
                 [InlineKeyboardButton("No, Cancel", callback_data=f"back_to_series:{series_key}")]
             ])
         )
@@ -1484,6 +1507,11 @@ async def confirm_publish_callback(client: Client, callback_query: CallbackQuery
             text="Failed to publish series. Please try again."
         )
         # Re-send the main series message if publishing failed
-        new_main_msg_id = await send_main_series_message(client, user_id, get_series_by_key(series_key), main_message_id)
-        if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
-        temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
+        series_data = get_series_by_key(series_key)
+        if series_data: # Ensure series_data is not None before passing
+            new_main_msg_id = await send_main_series_message(client, user_id, series_data, main_message_id)
+            if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
+            temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
+        else:
+            await client.send_message(user_id, "Series data not found after failed publish attempt. Please check logs.")
+            temp_admin_data.pop(user_id, None) # Clear session if series data is completely lost
