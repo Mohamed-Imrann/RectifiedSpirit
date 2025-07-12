@@ -1,6 +1,6 @@
 import logging
-from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid
-from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL
+from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid, ChatWriteForbidden, MessageNotModified, ChannelPrivate, ChannelInvalid
+from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, NO_POSTER_FOUND_IMG
 from imdb import Cinemagoer 
 import asyncio
 from pyrogram.types import Message, InlineKeyboardButton
@@ -14,7 +14,7 @@ from database.users_chats_db import db
 from bs4 import BeautifulSoup
 import requests
 from pyrogram.errors.exceptions.bad_request_400 import UserNotParticipant
-
+import difflib # Import difflib for find_most_similar_title
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -47,6 +47,15 @@ class temp(object):
     LINK_TWO = None
     SETTINGS = {}
 
+def find_most_similar_title(query, search_results):
+    """Finds the most similar title from IMDb search results."""
+    titles = [movie.get('title', '').lower() for movie in search_results]
+    matches = difflib.get_close_matches(query.lower(), titles, n=1, cutoff=0.6)
+    if matches:
+        for movie in search_results:
+            if movie.get('title', '').lower() == matches[0]:
+                return movie
+    return None
 
 async def is_subscribed(bot, query=None, userid=None):
     try:
@@ -98,30 +107,52 @@ async def get_messages_in_range(client, source_channel_id, start_msg_id, end_msg
     copied_messages = []
     current_msg_id = start_msg_id
     
+    logger.info(f"Attempting to copy messages from source_channel_id: {source_channel_id} (type: {type(source_channel_id)}) "
+                f"from msg_id: {start_msg_id} to {end_msg_id} "
+                f"to target_channel_id: {target_channel_id} (type: {type(target_channel_id)})")
+
     while current_msg_id <= end_msg_id:
         try:
             msg = await client.get_messages(chat_id=source_channel_id, message_ids=current_msg_id)
-            if msg:
+            if not msg:
+                logger.warning(f"Message {current_msg_id} not found in source channel {source_channel_id}. Skipping.")
+                current_msg_id += 1
+                continue
+
+            try:
                 copied_msg = await msg.copy(chat_id=target_channel_id)
                 copied_messages.append(copied_msg)
+                logger.info(f"Successfully copied message {current_msg_id} to {target_channel_id} as {copied_msg.id}")
                 await asyncio.sleep(0.5) # Small delay to avoid flood limits
+            except ChatWriteForbidden:
+                logger.error(f"Bot cannot write to target channel {target_channel_id}. Check permissions.")
+                return [] # Critical error, stop copying
+            except MessageNotModified:
+                logger.warning(f"Message {current_msg_id} was not modified when copying to {target_channel_id}. Skipping.")
+            except FloodWait as e:
+                logger.warning(f"FloodWait: Sleeping for {e.value} seconds before retrying message {current_msg_id}")
+                await asyncio.sleep(e.value)
+                continue # Retry current message after delay
+            except Exception as e:
+                logger.error(f"Error copying message {current_msg_id} from {source_channel_id} to {target_channel_id}: {e}")
+                # Decide whether to continue or break on error. For now, continue.
+                pass
+        except ChannelPrivate:
+            logger.error(f"Source channel {source_channel_id} is private and bot is not a member or admin.")
+            return []
+        except ChannelInvalid:
+            logger.error(f"Source channel ID {source_channel_id} is invalid.")
+            return []
         except FloodWait as e:
-            logger.warning(f"FloodWait: Sleeping for {e.value} seconds")
+            logger.warning(f"FloodWait on get_messages: Sleeping for {e.value} seconds before retrying message {current_msg_id}")
             await asyncio.sleep(e.value)
             continue # Retry current message after delay
         except Exception as e:
-            logger.error(f"Error copying message {current_msg_id}: {e}")
-            # Decide whether to continue or break on error
+            logger.error(f"Error getting message {current_msg_id} from {source_channel_id}: {e}")
+            # Decide whether to continue or break on error. For now, continue.
             pass
         current_msg_id += 1
     return copied_messages
-
-async def delete_messages_from_user_chat(client, chat_id, message_ids: List[int]):
-    """Deletes a list of messages from a specific chat."""
-    try:
-        await client.delete_messages(chat_id=chat_id, message_ids=message_ids)
-    except Exception as e:
-        logger.error(f"Error deleting messages from user chat {chat_id}: {e}")
 
 async def get_messages(client, channel_id, message_ids):
     messages = []
@@ -151,9 +182,16 @@ async def delete_file(messages, client, process):
             await asyncio.sleep(e.x)
             print(f"The attempt to delete the media {msg.id} was unsuccessful: {e}")
 
-    await process.edit_text(AUTO_DEL_SUCCESS_MSG)
+async def delete_messages_from_user_chat(client, user_id, message_ids):
+    """Deletes a list of messages from a user's private chat."""
+    try:
+        await client.delete_messages(chat_id=user_id, message_ids=message_ids)
+        logger.info(f"Successfully deleted messages {message_ids} from user {user_id} chat.")
+    except Exception as e:
+        logger.error(f"Failed to delete messages {message_ids} from user {user_id} chat: {e}")
 
-async def get_poster(query, bulk=False, id=False, file=None):
+
+def get_poster(query, bulk=False, id=False, file=None):
     if not id:
         query = (query.strip()).lower()
         title = query
@@ -217,7 +255,7 @@ async def get_poster(query, bulk=False, id=False, file=None):
         "languages": list_to_str(movie.get("languages")),
         "director": list_to_str(movie.get("director")),
         "writer":list_to_str(movie.get("writer")),
-        "producer":list_to_str(movie.get("producer")),
+        "producer":list_to_str(movie.get("producer")) ,
         "composer":list_to_str(movie.get("composer")) ,
         "cinematographer":list_to_str(movie.get("cinematographer")),
         "music_team": list_to_str(movie.get("music department")),
@@ -225,7 +263,7 @@ async def get_poster(query, bulk=False, id=False, file=None):
         'release_date': date,
         'year': movie.get('year'),
         'genres': list_to_str(movie.get("genres")),
-        'poster': movie.get('full-size cover url'),
+        'poster': movie.get('full-size cover url') or NO_POSTER_FOUND_IMG, # Ensure a fallback poster
         'plot': plot,
         'rating': str(movie.get("rating")),
         'url':f'https://www.imdb.com/title/tt{movieid}'
