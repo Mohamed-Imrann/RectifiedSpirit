@@ -737,17 +737,28 @@ async def process_language_input(client: Client, message: Message, language_name
         await message.reply("Error: Series key not found in session.")
         return
 
+    # Delete the bot's prompt message and the user's reply
+    try:
+        if ask_message_id:
+            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        await message.delete() # Delete user's input message
+    except Exception as e:
+        logger.warning(f"Could not delete prompt/user message: {e}")
+
     if add_or_update_language(series_key, language_name):
-        await client.edit_message_text(
+        confirmation_msg = await client.send_message(
             chat_id=user_id,
-            message_id=ask_message_id,
             text=f"Language '{language_name}' added/updated successfully.",
-            reply_markup=ReplyKeyboardRemove() # Remove keyboard
+            reply_markup=ReplyKeyboardRemove() # Remove keyboard from this new message
         )
+        asyncio.create_task(asyncio.sleep(5, confirmation_msg.delete())) # Delete confirmation after 5 seconds
+
         await send_language_management_message(client, user_id, series_key, main_message_id)
         temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
     else:
         await message.reply("Failed to add/update language.")
+
+    temp_admin_data[user_id].pop("ask_message_id", None) # Clear ask_message_id from temp_admin_data
 
 @Client.on_callback_query(filters.regex(r"^manage_seasons:") & filters.user(ADMINS))
 async def manage_seasons_callback(client: Client, callback_query: CallbackQuery):
@@ -797,17 +808,28 @@ async def process_season_input(client: Client, message: Message, season_name: st
         await message.reply("Error: Series or language not found in session.")
         return
 
+    # Delete the bot's prompt message and the user's reply
+    try:
+        if ask_message_id:
+            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        await message.delete() # Delete user's input message
+    except Exception as e:
+        logger.warning(f"Could not delete prompt/user message: {e}")
+
     if add_or_update_season(series_key, language_name, season_name):
-        await client.edit_message_text(
+        confirmation_msg = await client.send_message(
             chat_id=user_id,
-            message_id=ask_message_id,
             text=f"Season '{season_name}' added/updated successfully.",
-            reply_markup=ReplyKeyboardRemove() # Remove keyboard
+            reply_markup=ReplyKeyboardRemove() # Remove keyboard from this new message
         )
+        asyncio.create_task(asyncio.sleep(5, confirmation_msg.delete())) # Delete confirmation after 5 seconds
+
         await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
         temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
     else:
         await message.reply("Failed to add/update season.")
+
+    temp_admin_data[user_id].pop("ask_message_id", None) # Clear ask_message_id from temp_admin_data
 
 @Client.on_callback_query(filters.regex(r"^manage_qualities:") & filters.user(ADMINS))
 async def manage_qualities_callback(client: Client, callback_query: CallbackQuery):
@@ -859,18 +881,29 @@ async def process_quality_input(client: Client, message: Message, quality_name: 
         await message.reply("Error: Series, language, or season not found in session.")
         return
 
+    # Delete the bot's prompt message and the user's reply
+    try:
+        if ask_message_id:
+            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        await message.delete() # Delete user's input message
+    except Exception as e:
+        logger.warning(f"Could not delete prompt/user message: {e}")
+
     # For now, we'll add with a placeholder link_key. Actual link will be added later.
     if add_or_update_quality(series_key, language_name, season_name, quality_name, "PENDING_LINK"):
-        await client.edit_message_text(
+        confirmation_msg = await client.send_message(
             chat_id=user_id,
-            message_id=ask_message_id,
             text=f"Quality '{quality_name}' added/updated successfully. Now add files.",
-            reply_markup=ReplyKeyboardRemove() # Remove keyboard
+            reply_markup=ReplyKeyboardRemove() # Remove keyboard from this new message
         )
+        asyncio.create_task(asyncio.sleep(5, confirmation_msg.delete())) # Delete confirmation after 5 seconds
+
         await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
         temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
     else:
         await message.reply("Failed to add/update quality.")
+
+    temp_admin_data[user_id].pop("ask_message_id", None) # Clear ask_message_id from temp_admin_data
 
 @Client.on_callback_query(filters.regex(r"^add_files:") & filters.user(ADMINS))
 async def add_files_callback(client: Client, callback_query: CallbackQuery):
@@ -907,9 +940,17 @@ async def process_first_file_input(client: Client, message: Message):
     temp_admin_data[user_id]["first_file_msg_id"] = msg_id
     temp_admin_data[user_id]["files_to_delete"].append(message.id) # Add user's forwarded message to delete list
 
-    await client.edit_message_text(
+    # Delete the bot's prompt message and the user's reply
+    try:
+        if ask_message_id:
+            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        # Do not delete message.id here, it's the user's input for the first file.
+        # It's added to files_to_delete and will be deleted later.
+    except Exception as e:
+        logger.warning(f"Could not delete prompt message: {e}")
+
+    next_prompt_msg = await client.send_message(
         chat_id=user_id,
-        message_id=ask_message_id,
         text=f"Forward me the **last file** (with tag) for "
              f"<code>{temp_admin_data[user_id]['current_language'].title()} - "
              f"{temp_admin_data[user_id]['current_season'].title()} - "
@@ -919,6 +960,7 @@ async def process_first_file_input(client: Client, message: Message):
         disable_web_page_preview=True
     )
     temp_admin_data[user_id]["state"] = "AWAITING_LAST_FILE"
+    temp_admin_data[user_id]["ask_message_id"] = next_prompt_msg.id # Update ask_message_id for the next step
 
 async def process_last_file_input(client: Client, message: Message):
     user_id = message.from_user.id
@@ -934,7 +976,16 @@ async def process_last_file_input(client: Client, message: Message):
         return
 
     temp_admin_data[user_id]["last_file_msg_id"] = msg_id
-    temp_admin_data[user_id]["files_to_delete"].append(message.id)
+    temp_admin_data[user_id]["files_to_delete"].append(message.id) # Add user's forwarded message to delete list
+
+    # Delete the bot's prompt message and the user's reply
+    try:
+        if ask_message_id:
+            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        # Do not delete message.id here, it's the user's input for the last file.
+        # It's added to files_to_delete and will be deleted later.
+    except Exception as e:
+        logger.warning(f"Could not delete prompt message: {e}")
 
     reply_keyboard = ReplyKeyboardMarkup(
         [
@@ -945,9 +996,8 @@ async def process_last_file_input(client: Client, message: Message):
         one_time_keyboard=True
     )
 
-    await client.edit_message_text(
+    next_prompt_msg = await client.send_message(
         chat_id=user_id,
-        message_id=ask_message_id,
         text=f"Send me the **codec field** for "
              f"<code>{temp_admin_data[user_id]['current_language'].title()} - "
              f"{temp_admin_data[user_id]['current_season'].title()} - "
@@ -956,6 +1006,7 @@ async def process_last_file_input(client: Client, message: Message):
         reply_markup=reply_keyboard
     )
     temp_admin_data[user_id]["state"] = "AWAITING_CODEC_INPUT"
+    temp_admin_data[user_id]["ask_message_id"] = next_prompt_msg.id # Update ask_message_id for the next step
 
 async def process_codec_input(client: Client, message: Message, codec: str):
     user_id = message.from_user.id
@@ -970,11 +1021,18 @@ async def process_codec_input(client: Client, message: Message, codec: str):
     last_file_msg_id = temp_admin_data[user_id]["last_file_msg_id"]
     files_to_delete = temp_admin_data[user_id]["files_to_delete"]
 
-    processing_msg = await client.edit_message_text(
+    # Delete the bot's prompt message and the user's reply
+    try:
+        if ask_message_id:
+            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        await message.delete() # Delete user's input message
+    except Exception as e:
+        logger.warning(f"Could not delete prompt/user message: {e}")
+
+    processing_msg = await client.send_message(
         chat_id=user_id,
-        message_id=ask_message_id,
         text="Processing files... Please wait. This might take a while.",
-        reply_markup=ReplyKeyboardRemove() # Remove keyboard
+        reply_markup=ReplyKeyboardRemove() # Remove keyboard from this new message
     )
 
     # Copy messages to DB_CHANNEL
@@ -1015,6 +1073,8 @@ async def process_codec_input(client: Client, message: Message, codec: str):
         temp_admin_data[user_id].pop("files_to_delete", None)
     else:
         await processing_msg.edit_text("Failed to add files to database.")
+
+    temp_admin_data[user_id].pop("ask_message_id", None) # Clear ask_message_id from temp_admin_data
 
 @Client.on_callback_query(filters.regex(r"^change_series_poster:") & filters.user(ADMINS))
 async def change_series_poster_callback(client: Client, callback_query: CallbackQuery):
@@ -1061,9 +1121,16 @@ async def process_poster_input(client: Client, message: Message, level: str):
         await message.reply("Please send a photo or video.")
         return
 
-    processing_msg = await client.edit_message_text(
+    # Delete the bot's prompt message and the user's reply
+    try:
+        if ask_message_id:
+            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        await message.delete() # Delete user's input message
+    except Exception as e:
+        logger.warning(f"Could not delete prompt/user message: {e}")
+
+    processing_msg = await client.send_message(
         chat_id=user_id,
-        message_id=ask_message_id,
         text="Uploading poster... Please wait."
     )
 
@@ -1133,6 +1200,12 @@ async def process_edit_series_text(client: Client, message: Message, input_text:
         await message.reply("Error: Series key not found in session.")
         return
 
+    # Delete the user's input message
+    try:
+        await message.delete()
+    except Exception as e:
+        logger.warning(f"Could not delete user's input message: {e}")
+
     updates = {}
     lines = input_text.split('\n')
     for line in lines:
@@ -1146,9 +1219,11 @@ async def process_edit_series_text(client: Client, message: Message, input_text:
     if updates:
         for field, value in updates.items():
             update_series_field(series_key, field, value)
-        await message.reply("Series details updated successfully.")
+        confirmation_msg = await message.reply("Series details updated successfully.")
+        asyncio.create_task(asyncio.sleep(5, confirmation_msg.delete())) # Delete confirmation after 5 seconds
     else:
-        await message.reply("No valid fields to update found in your message.")
+        confirmation_msg = await message.reply("No valid fields to update found in your message.")
+        asyncio.create_task(asyncio.sleep(5, confirmation_msg.delete())) # Delete confirmation after 5 seconds
 
     series_data = get_series_by_key(series_key)
     await send_main_series_message(client, user_id, series_data, main_message_id)
