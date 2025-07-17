@@ -9,15 +9,14 @@ import copy # Import copy module for deepcopy
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery, InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from imdb import Cinemagoer
-from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, TMDB_API_KEY, LOG_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL, IMGBB_API_KEY, NO_POSTER_FOUND_IMG
+from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, TMDB_API_KEY, LOG_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL
 from database.crazy_db import (
     add_series, get_series_by_key, update_series_field, add_or_update_language,
     get_languages, delete_language, add_or_update_season, get_seasons, delete_season,
     add_or_update_quality, get_qualities, get_quality_link, delete_quality,
-    get_poster_file_id, update_poster_file_id, publish_series, get_series, get_specific_poster, # Import get_specific_poster
-    update_series, delete_series, get_all_series_keys, get_all_series_titles
+    get_poster_file_id, update_poster_file_id, publish_series, get_series, get_specific_poster # Import get_specific_poster
 )
-from utils import get_message_id, get_messages_in_range, delete_messages_from_user_chat, get_poster, find_most_similar_title, get_movie_info, upload_image_to_imgbb, get_poster_from_tmdb
+from utils import get_message_id, get_messages_in_range, delete_messages_from_user_chat, get_poster, find_most_similar_title
 from fuzzywuzzy import fuzz # Import fuzzywuzzy
 from pyrogram.errors import MessageIdInvalid, FloodWait # Removed MessageNotFound
 
@@ -27,10 +26,6 @@ logger.setLevel(logging.INFO)
 # Temporary storage for multi-step UI interactions
 # Key: user_id, Value: dictionary of current state
 temp_admin_data = {}
-
-# Temporary storage for series creation/editing process
-# {user_id: {"step": "...", "data": {...}}}
-user_series_data = {}
 
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
@@ -488,723 +483,1145 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
 @Client.on_message(filters.command('newseries') & filters.user(ADMINS))
 async def new_series_command(client: Client, message: Message):
     user_id = message.from_user.id
-    user_series_data[user_id] = {"step": "ask_title", "data": {"key": None, "title": None, "overview": None, "poster_path": None, "languages": {}}}
-    await message.reply_text("Okay, let's create a new series. Please send me the **title** of the series.")
+    query = message.text.split(None, 1)[1] if len(message.text.split(None, 1)) > 1 else None
 
-@Client.on_message(filters.command("editseries") & filters.user(ADMINS))
-async def edit_series_command(client: Client, message: Message):
-    user_id = message.from_user.id
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.reply_text("Please provide the series key to edit. Example: `/editseries S001`")
+    if not query:
+        await message.reply("Usage: `/newseries <series_title>`")
         return
 
-    series_key = args[1].upper()
-    series_data = await get_series_by_key(series_key)
-    if not series_data:
-        await message.reply_text(f"No series found with key `{series_key}`.")
+    temp_msg = await message.reply_photo(
+        photo=NO_POSTER_FOUND_IMG, # Temporary placeholder
+        caption="Searching TMDB and IMDb, please wait..."
+    )
+    
+    tmdb_results = await get_tmdb_info(query, bulk=True)
+    imdb_results = get_poster(query, bulk=True) # Use get_poster for IMDb search
+
+    all_results = []
+    if tmdb_results:
+        for item in tmdb_results:
+            item['source'] = 'tmdb'
+            all_results.append(item)
+    if imdb_results:
+        for item in imdb_results:
+            # Ensure IMDb results have consistent keys
+            all_results.append({
+                'title': item.get('title'),
+                'year': item.get('year'),
+                'imdb_id': item.get('imdb_id'),
+                'media_type': item.get('kind'), # 'movie' or 'tv series'
+                'source': 'imdb',
+                'poster_url': item.get('poster')
+            })
+
+    if not all_results:
+        await temp_msg.edit_caption("No results found on TMDB or IMDb for the provided series name.")
         return
 
-    user_series_data[user_id] = {"step": "edit_menu", "data": series_data}
-    await send_edit_menu(message, series_data)
+    buttons = []
+    for item in all_results:
+        unique_id = str(uuid.uuid4())
+        temp_admin_data[user_id] = temp_admin_data.get(user_id, {})
+        temp_admin_data[user_id][unique_id] = {
+            'id': item.get('tmdb_id') if item.get('source') == 'tmdb' else item.get('imdb_id'),
+            'media_type': item.get('media_type'),
+            'source': item.get('source'),
+            'query': query # Store original query for 'Back' button
+        }
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{item.get('title', 'N/A')} ({item.get('year', 'N/A')}) - {item.get('source').upper()}",
+                callback_data=f"{item.get('source')}_select:{unique_id}"
+            )
+        ])
+    
+    reply_markup = InlineKeyboardMarkup(buttons)
+    await temp_msg.edit_caption(
+        "Select a series from below:\n\n"
+        "**Choose Your Series:**",
+        reply_markup=reply_markup
+    )
+    
+    temp_admin_data[user_id]["state"] = "SELECTING_SERIES"
+    temp_admin_data[user_id]["main_message_id"] = temp_msg.id
 
-@Client.on_message(filters.command("cloneseries") & filters.user(ADMINS))
+@Client.on_message(filters.command('cloneseries') & filters.user(ADMINS))
 async def clone_series_command(client: Client, message: Message):
     user_id = message.from_user.id
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.reply_text("Please provide the series key to clone. Example: `/cloneseries S001`")
+    args = message.text.split(None, 2) # Split into command, original_name, new_name
+
+    if len(args) < 3:
+        await message.reply("Usage: `/cloneseries <original_series_name_or_key> <new_series_title>`")
         return
 
-    original_key = args[1].upper()
-    original_series_data = await get_series_by_key(original_key)
+    original_query = args[1].strip()
+    new_series_title = args[2].strip()
+    new_series_key = new_series_title.lower().replace(" ", "").replace("-", "")
+
+    # Check if new series title already exists
+    existing_series_by_new_key = get_series_by_key(new_series_key)
+    if existing_series_by_new_key:
+        await message.reply(f"A series with the title '{new_series_title}' (key: `{new_series_key}`) already exists. Please choose a different title.")
+        return
+
+    # Find the original series by key or title
+    original_series_data = get_series_by_key(original_query)
     if not original_series_data:
-        await message.reply_text(f"No series found with key `{original_key}` to clone.")
+        # Try searching by title if not found by key
+        all_series = get_series()
+        for s in all_series:
+            if s.get('title', '').lower() == original_query.lower():
+                original_series_data = s
+                break
+    
+    if not original_series_data:
+        await message.reply(f"Original series '{original_query}' not found in the database.")
         return
 
-    # Create a copy and mark it as unpublished
-    cloned_data = original_series_data.copy()
-    cloned_data.pop("_id", None) # Remove MongoDB _id
-    cloned_data["key"] = None # Will be set by user
-    cloned_data["title"] = f"CLONE - {cloned_data.get('title', 'Untitled')}"
-    cloned_data["published"] = False # Mark as unpublished
+    # Create a deep copy of the original series data
+    cloned_series_data = copy.deepcopy(original_series_data)
 
-    user_series_data[user_id] = {"step": "ask_clone_key", "data": cloned_data}
-    await message.reply_text(f"Cloning series `{original_key}`. Please provide a **new unique key** for the cloned series (e.g., `S002`).")
+    # Update the _id and title for the new series
+    cloned_series_data['_id'] = new_series_key
+    cloned_series_data['title'] = new_series_title
+    cloned_series_data['published'] = False # New series is not published by default
 
-@Client.on_message(filters.command("seriview") & filters.user(ADMINS))
-async def view_series_command(client: Client, message: Message):
-    all_keys = await get_all_series_keys()
-    if not all_keys:
-        await message.reply_text("No series found in the database.")
-        return
-
-    text = "**All Series Keys:**\n\n"
-    buttons = []
-    for key in all_keys:
-        text += f"`{key}`\n"
-        buttons.append(InlineKeyboardButton(f"Edit {key}", callback_data=f"edit_series_{key}"))
-    
-    # Arrange buttons in rows of 3
-    keyboard_rows = [buttons[i:i + 3] for i in range(0, len(buttons), 3)]
-    
-    await message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard_rows))
+    # Add the cloned series to the database
+    if add_series(cloned_series_data):
+        await message.reply(f"Series '{original_series_data.get('title', 'N/A')}' successfully cloned to '{new_series_title}' (key: `{new_series_key}`).\n\n"
+                            f"The new series is currently **unpublished**. You can now edit it using the UI via `/editseries {new_series_title}` and then publish it.")
+    else:
+        await message.reply(f"Failed to clone series '{original_series_data.get('title', 'N/A')}' to '{new_series_title}'. It might already exist.")
 
 
-@Client.on_message(filters.text & filters.private & filters.user(ADMINS) & ~filters.command(["newseries", "editseries", "cloneseries", "seriview"]))
-async def handle_series_input(client: Client, message: Message):
+@Client.on_message(filters.command('editseries') & filters.user(ADMINS))
+async def edit_series_command(client: Client, message: Message):
     user_id = message.from_user.id
-    if user_id not in user_series_data:
-        return # Not in a series creation/edit flow
+    query = message.text.split(None, 1)[1] if len(message.text.split(None, 1)) > 1 else None
 
-    current_step = user_series_data[user_id]["step"]
-    series_data = user_series_data[user_id]["data"]
+    if not query:
+        await message.reply("Usage: `/editseries <series_title_or_key>`")
+        return
 
-    if current_step == "ask_title":
-        title = message.text
-        movie_info = await get_movie_info(title, TMDB_API_KEY)
-        if movie_info:
-            series_data["title"] = movie_info["title"]
-            series_data["overview"] = movie_info["overview"]
-            series_data["poster_path"] = movie_info["poster_path"]
-            user_series_data[user_id]["step"] = "ask_key"
-            await message.reply_text(
-                f"Found details for **{movie_info['title']}**.\n\n"
-                f"Overview: {movie_info['overview']}\n"
-                f"Poster: {movie_info['poster_url'] if movie_info['poster_url'] else 'N/A'}\n\n"
-                "Please provide a **unique key** for this series (e.g., `S001`)."
-            )
+    # Try direct lookup by key (lower and replace spaces/hyphens for consistency)
+    series_key_lookup = query.lower().replace(" ", "").replace("-", "")
+    series_data = get_series_by_key(series_key_lookup)
+
+    if not series_data:
+        # If not found by key, try fuzzy searching by title
+        all_series = get_series()
+        fuzzy_matches = []
+        for s in all_series:
+            title = s.get('title', '')
+            key = s.get('_id', '')
+            
+            # Calculate fuzzy ratio for title and key
+            title_ratio = fuzz.ratio(query.lower(), title.lower())
+            key_ratio = fuzz.ratio(query.lower(), key.lower())
+            
+            # Use a threshold (e.g., 70 for good matches)
+            if title_ratio >= 70 or key_ratio >= 70:
+                fuzzy_matches.append((s, max(title_ratio, key_ratio)))
+        
+        # Sort by highest match ratio
+        fuzzy_matches.sort(key=lambda x: x[1], reverse=True)
+        
+        if not fuzzy_matches:
+            await message.reply(f"Series '{query}' not found in the database. Please check the title or key.")
+            return
+        elif len(fuzzy_matches) == 1:
+            # Only one fuzzy match, load it directly
+            series_data = fuzzy_matches[0][0]
         else:
-            await message.reply_text("Could not find series details. Please try a different title or provide it manually.")
-            # Optionally, allow manual input for title/overview/poster
-            # For now, let's just ask for title again
-            await message.reply_text("Please send me the **title** of the series again.")
-
-    elif current_step == "ask_key":
-        key = message.text.upper()
-        if not key.startswith("S") or not key[1:].isdigit() or len(key) != 4:
-            await message.reply_text("Invalid key format. Please use `S` followed by three digits (e.g., `S001`).")
-            return
-        
-        existing_series = await get_series_by_key(key)
-        if existing_series:
-            await message.reply_text(f"Series with key `{key}` already exists. Please choose a different unique key.")
-            return
-        
-        series_data["key"] = key
-        user_series_data[user_id]["step"] = "add_language"
-        await message.reply_text(f"Series key set to `{key}`. Now, let's add a language. Please send the **language name** (e.g., `English`).")
-
-    elif current_step == "ask_clone_key":
-        key = message.text.upper()
-        if not key.startswith("S") or not key[1:].isdigit() or len(key) != 4:
-            await message.reply_text("Invalid key format. Please use `S` followed by three digits (e.g., `S001`).")
-            return
-        
-        existing_series = await get_series_by_key(key)
-        if existing_series:
-            await message.reply_text(f"Series with key `{key}` already exists. Please choose a different unique key for the cloned series.")
-            return
-        
-        series_data["key"] = key
-        # Add the cloned series to DB
-        success = await add_series(series_data)
-        if success:
-            await message.reply_text(f"Series `{series_data['title']}` cloned successfully with new key `{key}`. It is currently **unpublished**.")
-            del user_series_data[user_id]
-        else:
-            await message.reply_text("Failed to clone series. Please try again.")
-            del user_series_data[user_id]
-
-    elif current_step == "add_language":
-        lang_name = message.text
-        lang_code = lang_name.lower().replace(" ", "_") # Simple code generation
-        series_data["languages"][lang_code] = {"name": lang_name, "seasons": {}}
-        user_series_data[user_id]["step"] = "add_season"
-        user_series_data[user_id]["current_lang_code"] = lang_code
-        await message.reply_text(f"Language '{lang_name}' added. Now, send the **season number** (e.g., `1`).")
-
-    elif current_step == "add_season":
-        season_num = message.text
-        current_lang_code = user_series_data[user_id]["current_lang_code"]
-        if not season_num.isdigit():
-            await message.reply_text("Invalid season number. Please send a digit (e.g., `1`).")
-            return
-        
-        season_name = f"Season {season_num}" # Default season name
-        series_data["languages"][current_lang_code]["seasons"][season_num] = {"name": season_name, "files": []}
-        user_series_data[user_id]["step"] = "add_file"
-        user_series_data[user_id]["current_season_num"] = season_num
-        await message.reply_text(f"Season {season_num} added. Now, forward me a **file** or send a **link** for this season. Send `/done` when finished with files for this season.")
-
-    elif current_step == "add_file":
-        current_lang_code = user_series_data[user_id]["current_lang_code"]
-        current_season_num = user_series_data[user_id]["current_season_num"]
-
-        if message.text == "/done":
-            user_series_data[user_id]["step"] = "season_options"
-            await message.reply_text(
-                "Finished adding files for this season. What's next?",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Add another season", callback_data="add_another_season")],
-                    [InlineKeyboardButton("Add another language", callback_data="add_another_language")],
-                    [InlineKeyboardButton("Save & Publish Series", callback_data="save_publish_series")]
+            # Multiple fuzzy matches, present options
+            buttons = []
+            for item, score in fuzzy_matches[:5]: # Limit to top 5 fuzzy matches
+                unique_id = str(uuid.uuid4())
+                temp_admin_data[user_id] = temp_admin_data.get(user_id, {})
+                temp_admin_data[user_id][unique_id] = {
+                    'series_key': item['_id']
+                }
+                buttons.append([
+                    InlineKeyboardButton(
+                        text=f"{item.get('title', 'N/A')} (Score: {score}%)",
+                        callback_data=f"local_series_select:{unique_id}"
+                    )
                 ])
+            
+            reply_markup = InlineKeyboardMarkup(buttons)
+            temp_msg = await message.reply(
+                "Multiple series found. Please select one to edit:",
+                reply_markup=reply_markup
             )
-            return
+            temp_admin_data[user_id]["state"] = "SELECTING_LOCAL_SERIES"
+            temp_admin_data[user_id]["main_message_id"] = temp_msg.id
+            return # Exit, wait for callback
 
-        file_info = {}
-        if message.document:
-            file_info = {
-                "type": "document",
-                "file_id": message.document.file_id,
-                "file_name": message.document.file_name,
-                "caption": message.caption,
-                "link": None # No direct link for forwarded files, will be generated on demand
-            }
-        elif message.video:
-            file_info = {
-                "type": "video",
-                "file_id": message.video.file_id,
-                "file_name": message.video.file_name,
-                "caption": message.caption,
-                "link": None
-            }
-        elif message.text and (message.text.startswith("http://") or message.text.startswith("https://")):
-            file_info = {
-                "type": "link",
-                "file_name": f"Link: {message.text[:30]}...",
-                "link": message.text,
-                "caption": None
-            }
-        else:
-            await message.reply_text("Please forward a file or send a direct link.")
-            return
-        
-        series_data["languages"][current_lang_code]["seasons"][current_season_num]["files"].append(file_info)
-        await message.reply_text("File/Link added. Send another file/link or `/done`.")
+    # Removed the check for 'published' status here to allow editing published series.
+    # A warning will be shown in send_main_series_message if it's published.
 
-async def send_edit_menu(message: Message, series_data: dict):
-    key = series_data["key"]
-    title = series_data["title"]
-    published_status = "Published" if series_data.get("published", False) else "Unpublished"
+    # Proceed to load the series for editing
+    temp_msg = await message.reply_photo(
+        photo=get_poster_file_id(series_data['_id']) or NO_POSTER_FOUND_IMG,
+        caption=f"Loading series details for <code>{series_data.get('title', 'N/A')}</code>...",
+        parse_mode=enums.ParseMode.HTML
+    )
+
+    temp_admin_data[user_id]["main_message_id"] = temp_msg.id
+    temp_admin_data[user_id]["current_series_key"] = series_data['_id']
+    temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
     
-    text = f"**Editing Series:** `{key}` - **{title}**\n"
-    text += f"Status: {published_status}\n\n"
-    text += "What would you like to edit?"
+    await send_main_series_message(client, user_id, series_data, temp_msg.id)
 
-    buttons = [
-        [InlineKeyboardButton("Edit Title/Overview/Poster", callback_data=f"edit_series_details_{key}")],
-        [InlineKeyboardButton("Manage Languages", callback_data=f"manage_languages_{key}")],
-        [InlineKeyboardButton("Delete Series", callback_data=f"delete_series_confirm_{key}")],
-        [InlineKeyboardButton("Toggle Publish Status", callback_data=f"toggle_publish_{key}")],
-        [InlineKeyboardButton("Done Editing", callback_data=f"done_editing_{key}")]
-    ]
-    await message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    if series_data.get('published'):
+        await client.send_message(
+            user_id,
+            "⚠️ **Warning:** This series is currently **published**. Any changes you make will **not** be live until you click 'Publish Series' again."
+        )
 
-@Client.on_callback_query(filters.regex(r"^(edit_series_|manage_languages_|delete_series_confirm_|toggle_publish_|done_editing_|add_another_season|add_another_language|save_publish_series|confirm_delete_series_|cancel_delete_series_|edit_lang_|delete_lang_confirm_|add_season_to_lang_|manage_season_|edit_season_details_|manage_season_files_|delete_season_confirm_|add_file_to_season_|edit_file_|delete_file_confirm_|confirm_delete_file_|cancel_delete_file_|confirm_delete_season_|cancel_delete_season_|confirm_delete_lang_|cancel_delete_lang_)"))
-async def series_callback_handler(client: Client, query):
-    user_id = query.from_user.id
-    data = query.data
-    parts = data.split("_")
-    action = parts[0]
-    series_key = parts[2] if len(parts) > 2 else None # For actions like edit_series_S001
+@Client.on_message(filters.command('seriview') & filters.user(ADMINS))
+async def seriview_command(client: Client, message: Message):
+    user_id = message.from_user.id
+    all_series = get_series()
 
-    if action == "edit": # From /seriview
-        series_key = parts[2]
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            user_series_data[user_id] = {"step": "edit_menu", "data": series_data}
-            await send_edit_menu(query.message, series_data)
-        else:
-            await query.answer("Series not found.", show_alert=True)
-        await query.answer()
+    if not all_series:
+        await message.reply("No series found in the database.")
         return
 
-    if action == "edit_series_details":
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            user_series_data[user_id] = {"step": "edit_details", "data": series_data}
-            await query.message.edit_text(
-                f"**Editing details for {series_data['title']}**\n\n"
-                "Send the **new title** for the series. Or send `/skip` to keep current title."
-            )
-        await query.answer()
+    text = "<b>All Series in Database:</b>\n\n"
+    buttons = []
+    for s in all_series:
+        title = s.get('title', 'N/A')
+        series_key = s.get('_id', 'N/A')
+        published_status = "✅ Published" if s.get('published', False) else "❌ Unpublished"
+        
+        text += f"• <code>{title}</code> (Key: <code>{series_key}</code>) - {published_status}\n"
+        buttons.append([
+            InlineKeyboardButton(f"Edit {title}", callback_data=f"local_series_select:{series_key}")
+        ])
+    
+    reply_markup = InlineKeyboardMarkup(chunk_buttons(buttons, chunk_size=1)) # One button per row for readability
+
+    await message.reply_text(
+        text=text,
+        reply_markup=reply_markup,
+        parse_mode=enums.ParseMode.HTML,
+        disable_web_page_preview=True
+    )
+
+
+# --- Callback Query Handlers ---
+
+@Client.on_callback_query(filters.regex(r"^(tmdb|imdb)_select:") & filters.user(ADMINS))
+async def media_selection_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    data_parts = callback_query.data.split(":")
+    source = data_parts[0].split('_')[0] # 'tmdb' or 'imdb'
+    unique_id = data_parts[1]
+
+    if user_id not in temp_admin_data or unique_id not in temp_admin_data[user_id]:
+        await callback_query.answer("Session expired or invalid data.", show_alert=True)
+        await callback_query.message.delete()
         return
 
-    if action == "manage_languages":
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            user_series_data[user_id] = {"step": "manage_languages_menu", "data": series_data}
-            await send_language_menu(query.message, series_data)
-        await query.answer()
+    stored_data = temp_admin_data[user_id].pop(unique_id)
+    media_id = stored_data['id']
+    media_type = stored_data['media_type']
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+
+    await callback_query.answer(f"Fetching details from {source.upper()}...")
+
+    movie_details = None
+    if source == 'tmdb':
+        movie_details = await get_tmdb_info(query=None, tmdb_id=media_id, media_type=media_type)
+    elif source == 'imdb':
+        movie_details = await get_poster(media_id, id=True) # Use get_poster for IMDb details
+
+    if not movie_details:
+        await client.edit_message_caption(
+            chat_id=user_id,
+            message_id=main_message_id,
+            caption=f"Failed to retrieve {source.upper()} data. Please try again."
+        )
         return
 
-    if action == "delete_series_confirm":
-        await query.message.edit_text(
-            f"Are you sure you want to delete series `{series_key}`? This action cannot be undone.",
+    series_key = movie_details.get('title', 'N/A').lower().replace(" ", "").replace("-", "")
+    
+    # Check if series already exists, if so, load it
+    existing_series = get_series_by_key(series_key)
+    if existing_series:
+        series_data = existing_series
+        await callback_query.answer("Series already exists. Loading for editing.", show_alert=True)
+    else:
+        # Create new series data
+        series_data = {
+            '_id': series_key, # Use series_key as _id for easy lookup
+            'title': movie_details.get('title', 'N/A'),
+            'released_on': movie_details.get('year', 'N/A'),
+            'genre': movie_details.get('genres', 'N/A'),
+            'rating': movie_details.get('rating', 'N/A'),
+            'tmdb_id': movie_details.get('tmdb_id') if source == 'tmdb' else None, # Store TMDB ID if from TMDB
+            'imdb_id': movie_details.get('imdb_id') if source == 'imdb' else None, # Store IMDb ID if from IMDb
+            'media_type': media_type,
+            'poster_file_id': None, # Will be updated after download/upload
+            'languages': [],
+            'published': False
+        }
+        if not add_series(series_data): # Attempt to add, check if successful
+            await callback_query.answer("Failed to add new series (might already exist). Loading existing series.", show_alert=True)
+            series_data = get_series_by_key(series_key) # Re-fetch if insertion failed due to duplicate
+            if not series_data: # If still not found, something is wrong
+                await client.edit_message_caption(
+                    chat_id=user_id,
+                    message_id=main_message_id,
+                    caption="Failed to create or load series. Please try again."
+                )
+                return
+
+    # Re-fetch series_data to ensure it's the latest from DB, especially after add_series
+    series_data = get_series_by_key(series_key)
+    if not series_data: # Should not happen if add_series was successful or existing_series was found
+        await client.edit_message_caption(
+            chat_id=user_id,
+            message_id=main_message_id,
+            caption="Failed to retrieve series data after initial setup. Please try again."
+        )
+        return
+
+    # Download and upload poster to LOG_CHANNEL, then update DB
+    poster_file_id = await download_and_upload_poster(client, poster_url=movie_details.get('poster_url') or movie_details.get('poster'))
+    if poster_file_id:
+        update_series_field(series_key, "poster_file_id", poster_file_id)
+        series_data["poster_file_id"] = poster_file_id # Update in memory for immediate use
+    else:
+        await client.send_message(user_id, "Failed to download/upload poster. Using placeholder.")
+        update_series_field(series_key, "poster_file_id", NO_POSTER_FOUND_IMG)
+        series_data["poster_file_id"] = NO_POSTER_FOUND_IMG
+
+    # Update main message with series details and management buttons
+    new_main_msg_id = await send_main_series_message(client, user_id, series_data, main_message_id)
+    if new_main_msg_id: # Only update if sending/editing was successful
+        temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
+        temp_admin_data[user_id]["current_series_key"] = series_key
+        temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
+
+@Client.on_callback_query(filters.regex(r"^local_series_select:") & filters.user(ADMINS))
+async def local_series_selection_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    data_parts = callback_query.data.split(":")
+    # Check if data_parts has enough elements for the old UUID logic, if not, assume it's a direct key
+    if len(data_parts) > 1 and len(data_parts[1]) == 36 and '-' in data_parts[1]: # Basic UUID check
+        unique_id = data_parts[1]
+        if user_id not in temp_admin_data or unique_id not in temp_admin_data[user_id]:
+            await callback_query.answer("Session expired or invalid data.", show_alert=True)
+            await callback_query.message.delete()
+            return
+        stored_data = temp_admin_data[user_id].pop(unique_id)
+        series_key = stored_data['series_key']
+    else:
+        # Assume it's the direct series_key from /seriview
+        series_key = data_parts[1]
+        await callback_query.answer(f"Loading series: {series_key}...", show_alert=False)
+
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+
+    series_data = get_series_by_key(series_key)
+    if not series_data:
+        await client.edit_message_text(
+            chat_id=user_id,
+            message_id=main_message_id,
+            text="Selected series not found in database. It might have been deleted."
+        )
+        return
+
+    # Removed the check for 'published' status here to allow editing published series.
+    
+    await callback_query.answer("Loading series for editing...")
+    
+    # Send/edit the main series message
+    new_main_msg_id = await send_main_series_message(client, user_id, series_data, main_message_id)
+    if new_main_msg_id: # Only update if sending/editing was successful
+        temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
+        temp_admin_data[user_id]["current_series_key"] = series_key
+        temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
+    
+    if series_data.get('published'):
+        await client.send_message(
+            user_id,
+            "⚠️ **Warning:** This series is currently **published**. Any changes you make will **not** be live until you click 'Publish Series' again."
+        )
+
+
+@Client.on_callback_query(filters.regex(r"^back_to_series:") & filters.user(ADMINS))
+async def back_to_series_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    series_key = callback_query.data.split(":")[1]
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+
+    series_data = get_series_by_key(series_key)
+    if not series_data:
+        await callback_query.answer("Series not found.", show_alert=True)
+        return
+
+    new_main_msg_id = await send_main_series_message(client, user_id, series_data, main_message_id)
+    if new_main_msg_id:
+        temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
+        temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
+        temp_admin_data[user_id].pop("current_language", None)
+        temp_admin_data[user_id].pop("current_season", None)
+        temp_admin_data[user_id].pop("current_quality", None)
+
+@Client.on_callback_query(filters.regex(r"^manage_languages:") & filters.user(ADMINS))
+async def manage_languages_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    series_key = callback_query.data.split(":")[1]
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+
+    temp_admin_data[user_id]["current_series_key"] = series_key
+    temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
+    await send_language_management_message(client, user_id, series_key, main_message_id)
+
+@Client.on_callback_query(filters.regex(r"^add_language:") & filters.user(ADMINS))
+async def add_language_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    series_key = callback_query.data.split(":")[1]
+    
+    await callback_query.answer("Enter language name...")
+    
+    # Use ReplyKeyboardMarkup for quick suggestions
+    reply_keyboard = ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("English"), KeyboardButton("Spanish")],
+            [KeyboardButton("Japanese"), KeyboardButton("Korean")],
+            [KeyboardButton("French"), KeyboardButton("German")],
+            [KeyboardButton("Multi Audio")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+    
+    ask_msg = await client.send_message(
+        user_id,
+        "Enter language name (e.g., 'English', 'Multi Audio (Ger + Eng)'):",
+        reply_markup=reply_keyboard
+    )
+    temp_admin_data[user_id]["state"] = "AWAITING_LANGUAGE_INPUT"
+    temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+
+@Client.on_message(filters.text & filters.private & filters.user(ADMINS))
+async def handle_admin_text_input(client: Client, message: Message):
+    user_id = message.from_user.id
+    current_state = temp_admin_data.get(user_id, {}).get("state")
+    
+    if current_state == "AWAITING_LANGUAGE_INPUT":
+        await process_language_input(client, message, message.text.strip())
+    elif current_state == "AWAITING_SEASON_INPUT":
+        await process_season_input(client, message, message.text.strip())
+    elif current_state == "AWAITING_QUALITY_INPUT":
+        await process_quality_input(client, message, message.text.strip())
+    elif current_state == "AWAITING_CODEC_INPUT":
+        await process_codec_input(client, message, message.text.strip())
+    elif current_state == "EDITING_SERIES_TEXT":
+        await process_edit_series_text(client, message, message.text.strip())
+    # Note: AWAITING_FIRST_FILE and AWAITING_LAST_FILE are handled in handle_admin_media_and_link_input
+    # Poster inputs are handled in handle_admin_media_input
+
+@Client.on_message((filters.photo | filters.video | filters.document) & filters.private & filters.user(ADMINS))
+async def handle_admin_media_input(client: Client, message: Message):
+    user_id = message.from_user.id
+    current_state = temp_admin_data.get(user_id, {}).get("state")
+
+    if current_state == "AWAITING_SERIES_POSTER":
+        await process_poster_input(client, message, "series")
+    elif current_state == "AWAITING_LANGUAGE_POSTER":
+        await process_poster_input(client, message, "language")
+    elif current_state == "AWAITING_SEASON_POSTER":
+        await process_poster_input(client, message, "season")
+    elif current_state == "AWAITING_FIRST_FILE":
+        await process_first_file_input(client, message)
+    elif current_state == "AWAITING_LAST_FILE":
+        await process_last_file_input(client, message)
+    else:
+        # If media is sent in an unexpected state, just ignore or give a generic response
+        # await message.reply("I'm not expecting a media file right now.") # Optional: for debugging
+        pass # Do nothing, let the main message flow continue
+
+
+async def process_language_input(client: Client, message: Message, language_name: str):
+    user_id = message.from_user.id
+    series_key = temp_admin_data[user_id].get("current_series_key")
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+    ask_message_id = temp_admin_data[user_id].get("ask_message_id")
+
+    if not series_key:
+        await message.reply("Error: Series key not found in session.")
+        return
+
+    # Delete the bot's prompt message and the user's reply
+    try:
+        if ask_message_id:
+            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        await message.delete() # Delete user's input message
+    except Exception as e:
+        logger.warning(f"Could not delete prompt/user message: {e}")
+
+    if add_or_update_language(series_key, language_name):
+        confirmation_msg = await client.send_message(
+            chat_id=user_id,
+            text=f"Language '{language_name}' added/updated successfully.",
+            reply_markup=ReplyKeyboardRemove() # Remove keyboard from this new message
+        )
+        asyncio.create_task(confirmation_msg.delete()) # Delete confirmation after 5 seconds
+
+        await send_language_management_message(client, user_id, series_key, main_message_id)
+        temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
+    else:
+        await message.reply("Failed to add/update language.")
+
+    temp_admin_data[user_id].pop("ask_message_id", None) # Clear ask_message_id from temp_admin_data
+
+@Client.on_callback_query(filters.regex(r"^manage_seasons:") & filters.user(ADMINS))
+async def manage_seasons_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    _, series_key, language_name = callback_query.data.split(":")
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+
+    temp_admin_data[user_id]["current_series_key"] = series_key
+    temp_admin_data[user_id]["current_language"] = language_name
+    temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
+    await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+
+@Client.on_callback_query(filters.regex(r"^add_season:") & filters.user(ADMINS))
+async def add_season_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    _, series_key, language_name = callback_query.data.split(":")
+    
+    await callback_query.answer("Enter season name...")
+
+    reply_keyboard = ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("Season 1"), KeyboardButton("Season 2")],
+            [KeyboardButton("Season 3"), KeyboardButton("Season 4")],
+            [KeyboardButton("Season 5"), KeyboardButton("Season 6")],
+            [KeyboardButton("Part 1"), KeyboardButton("Part 2")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+    ask_msg = await client.send_message(
+        user_id,
+        "Enter season name (e.g., 'Season 1', 'Part 2'):",
+        reply_markup=reply_keyboard
+    )
+    temp_admin_data[user_id]["state"] = "AWAITING_SEASON_INPUT"
+    temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+
+async def process_season_input(client: Client, message: Message, season_name: str):
+    user_id = message.from_user.id
+    series_key = temp_admin_data[user_id].get("current_series_key")
+    language_name = temp_admin_data[user_id].get("current_language")
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+    ask_message_id = temp_admin_data[user_id].get("ask_message_id")
+
+    if not all([series_key, language_name]):
+        await message.reply("Error: Series or language not found in session.")
+        return
+
+    # Delete the bot's prompt message and the user's reply
+    try:
+        if ask_message_id:
+            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        await message.delete() # Delete user's input message
+    except Exception as e:
+        logger.warning(f"Could not delete prompt/user message: {e}")
+
+    if add_or_update_season(series_key, language_name, season_name):
+        confirmation_msg = await client.send_message(
+            chat_id=user_id,
+            text=f"Season '{season_name}' added/updated successfully.",
+            reply_markup=ReplyKeyboardRemove() # Remove keyboard from this new message
+        )
+        asyncio.create_task(confirmation_msg.delete()) # Delete confirmation after 5 seconds
+
+        await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+        temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
+    else:
+        await message.reply("Failed to add/update season.")
+
+    temp_admin_data[user_id].pop("ask_message_id", None) # Clear ask_message_id from temp_admin_data
+
+@Client.on_callback_query(filters.regex(r"^manage_qualities:") & filters.user(ADMINS))
+async def manage_qualities_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    _, series_key, language_name, season_name = callback_query.data.split(":")
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+
+    temp_admin_data[user_id]["current_series_key"] = series_key
+    temp_admin_data[user_id]["current_language"] = language_name
+    temp_admin_data[user_id]["current_season"] = season_name
+    temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
+    await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+
+@Client.on_callback_query(filters.regex(r"^add_quality:") & filters.user(ADMINS))
+async def add_quality_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    _, series_key, language_name, season_name = callback_query.data.split(":")
+    
+    await callback_query.answer("Enter quality name...")
+
+    reply_keyboard = ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("360p"), KeyboardButton("480p")],
+            [KeyboardButton("720p"), KeyboardButton("1080p")],
+            [KeyboardButton("2160p"), KeyboardButton("4K")],
+            [KeyboardButton("H.264"), KeyboardButton("H.265"), KeyboardButton("H.265 10bit")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+    ask_msg = await client.send_message(
+        user_id,
+        "Enter quality name (e.g., '720p', '1080p H.265'):",
+        reply_markup=reply_keyboard
+    )
+    temp_admin_data[user_id]["state"] = "AWAITING_QUALITY_INPUT"
+    temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+
+async def process_quality_input(client: Client, message: Message, quality_name: str):
+    user_id = message.from_user.id
+    series_key = temp_admin_data[user_id].get("current_series_key")
+    language_name = temp_admin_data[user_id].get("current_language")
+    season_name = temp_admin_data[user_id].get("current_season")
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+    ask_message_id = temp_admin_data[user_id].get("ask_message_id")
+
+    if not all([series_key, language_name, season_name]):
+        await message.reply("Error: Series, language, or season not found in session.")
+        return
+
+    # Delete the bot's prompt message and the user's reply
+    try:
+        if ask_message_id:
+            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        await message.delete() # Delete user's input message
+    except Exception as e:
+        logger.warning(f"Could not delete prompt/user message: {e}")
+
+    # For now, we'll add with a placeholder link_key. Actual link will be added later.
+    if add_or_update_quality(series_key, language_name, season_name, quality_name, "PENDING_LINK"):
+        confirmation_msg = await client.send_message(
+            chat_id=user_id,
+            text=f"Quality '{quality_name}' added/updated successfully. Now add files.",
+            reply_markup=ReplyKeyboardRemove() # Remove keyboard from this new message
+        )
+        asyncio.create_task(confirmation_msg.delete()) # Delete confirmation after 5 seconds
+
+        await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+        temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
+    else:
+        await message.reply("Failed to add/update quality.")
+
+    temp_admin_data[user_id].pop("ask_message_id", None) # Clear ask_message_id from temp_admin_data
+
+@Client.on_callback_query(filters.regex(r"^add_files:") & filters.user(ADMINS))
+async def add_files_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    _, series_key, language_name, season_name, quality_name = callback_query.data.split(":")
+    # main_message_id = temp_admin_data[user_id].get("main_message_id") # Not directly used here, but for context
+
+    temp_admin_data[user_id]["current_series_key"] = series_key
+    temp_admin_data[user_id]["current_language"] = language_name
+    temp_admin_data[user_id]["current_season"] = season_name
+    temp_admin_data[user_id]["current_quality"] = quality_name
+    temp_admin_data[user_id]["files_to_delete"] = [] # To store messages sent by user for deletion
+
+    await callback_query.answer("Forward first file...")
+    ask_msg = await client.send_message(
+        user_id,
+        f"Add me to the channel as admin and forward me the **first file** (with tag) for "
+        f"<code>{language_name.title()} - {season_name.title()} - {quality_name}</code>",
+        parse_mode=enums.ParseMode.HTML
+    )
+    temp_admin_data[user_id]["state"] = "AWAITING_FIRST_FILE"
+    temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+
+async def process_first_file_input(client: Client, message: Message):
+    user_id = message.from_user.id
+    ask_message_id = temp_admin_data[user_id].get("ask_message_id")
+    
+    channel_id, msg_id = await get_message_id(client, message)
+    if not channel_id or not msg_id:
+        # Delete user's invalid input immediately
+        try:
+            await message.delete()
+            if ask_message_id:
+                await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        except Exception as e:
+            logger.warning(f"Could not delete invalid input/prompt: {e}")
+
+        await client.send_message(user_id, "Invalid message. Please forward a message from a **DB Channel** or send a valid **post link from a DB Channel**.")
+        temp_admin_data[user_id]["state"] = "IDLE" # Reset state
+        temp_admin_data[user_id].pop("ask_message_id", None)
+        return
+
+    temp_admin_data[user_id]["first_file_channel_id"] = channel_id
+    temp_admin_data[user_id]["first_file_msg_id"] = msg_id
+    temp_admin_data[user_id]["files_to_delete"].append(message.id) # Add user's forwarded message to delete list
+
+    # Delete the bot's prompt message
+    try:
+        if ask_message_id:
+            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+    except Exception as e:
+        logger.warning(f"Could not delete prompt message: {e}")
+
+    next_prompt_msg = await client.send_message(
+        chat_id=user_id,
+        text=f"Forward me the **last file** (with tag) for "
+             f"<code>{temp_admin_data[user_id]['current_language'].title()} - "
+             f"{temp_admin_data[user_id]['current_season'].title()} - "
+             f"{temp_admin_data[user_id]['current_quality']}</code>\n\n"
+             f"Go to first file: [Link](https://t.me/c/{abs(int(str(channel_id).replace('-100','')))}/{msg_id})", # Convert Pyrogram ID to raw for link
+        parse_mode=enums.ParseMode.MARKDOWN,
+        disable_web_page_preview=True
+    )
+    temp_admin_data[user_id]["state"] = "AWAITING_LAST_FILE"
+    temp_admin_data[user_id]["ask_message_id"] = next_prompt_msg.id # Update ask_message_id for the next step
+
+async def process_last_file_input(client: Client, message: Message):
+    user_id = message.from_user.id
+    ask_message_id = temp_admin_data[user_id].get("ask_message_id")
+
+    channel_id, msg_id = await get_message_id(client, message)
+    if not channel_id or not msg_id:
+        # Delete user's invalid input immediately
+        try:
+            await message.delete()
+            if ask_message_id:
+                await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        except Exception as e:
+            logger.warning(f"Could not delete invalid input/prompt: {e}")
+        await client.send_message(user_id, "Invalid message. Please forward a message from a **DB Channel** or send a valid **post link from a DB Channel**.")
+        temp_admin_data[user_id]["state"] = "IDLE" # Reset state
+        temp_admin_data[user_id].pop("ask_message_id", None)
+        return
+    
+    if channel_id != temp_admin_data[user_id]["first_file_channel_id"]:
+        # Delete user's invalid input immediately
+        try:
+            await message.delete()
+            if ask_message_id:
+                await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        except Exception as e:
+            logger.warning(f"Could not delete invalid input/prompt: {e}")
+        await client.send_message(user_id, "Last file must be from the same channel as the first file.")
+        temp_admin_data[user_id]["state"] = "IDLE" # Reset state
+        temp_admin_data[user_id].pop("ask_message_id", None)
+        return
+
+    temp_admin_data[user_id]["last_file_msg_id"] = msg_id
+    temp_admin_data[user_id]["files_to_delete"].append(message.id) # Add user's forwarded message to delete list
+
+    # Delete the bot's prompt message
+    try:
+        if ask_message_id:
+            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+    except Exception as e:
+        logger.warning(f"Could not delete prompt message: {e}")
+
+    reply_keyboard = ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("H.264"), KeyboardButton("H.265")],
+            [KeyboardButton("H.265 10bit")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+    next_prompt_msg = await client.send_message(
+        chat_id=user_id,
+        text=f"Send me the **codec field** for "
+             f"<code>{temp_admin_data[user_id]['current_language'].title()} - "
+             f"{temp_admin_data[user_id]['current_season'].title()} - "
+             f"{temp_admin_data[user_id]['current_quality']}</code>",
+        parse_mode=enums.ParseMode.HTML,
+        reply_markup=reply_keyboard
+    )
+    temp_admin_data[user_id]["state"] = "AWAITING_CODEC_INPUT"
+    temp_admin_data[user_id]["ask_message_id"] = next_prompt_msg.id # Update ask_message_id for the next step
+
+async def process_codec_input(client: Client, message: Message, codec: str):
+    user_id = message.from_user.id
+    ask_message_id = temp_admin_data[user_id].get("ask_message_id")
+    
+    series_key = temp_admin_data[user_id]["current_series_key"]
+    language_name = temp_admin_data[user_id]["current_language"]
+    season_name = temp_admin_data[user_id]["current_season"]
+    quality_name = temp_admin_data[user_id]["current_quality"]
+    first_file_channel_id = temp_admin_data[user_id]["first_file_channel_id"]
+    first_file_msg_id = temp_admin_data[user_id]["first_file_msg_id"]
+    last_file_msg_id = temp_admin_data[user_id]["last_file_msg_id"]
+    files_to_delete = temp_admin_data[user_id]["files_to_delete"]
+
+    # Delete the bot's prompt message and the user's reply
+    try:
+        if ask_message_id:
+            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        await message.delete() # Delete user's input message
+    except Exception as e:
+        logger.warning(f"Could not delete prompt/user message: {e}")
+
+    processing_msg = await client.send_message(
+        chat_id=user_id,
+        text="Processing files... Please wait. This might take a while.",
+        reply_markup=ReplyKeyboardRemove() # Remove keyboard from this new message
+    )
+
+    # Copy messages to DB_CHANNEL
+    target_db_channel_id = DB_CHANNEL[0] # Use the first DB channel for storage (Pyrogram format)
+    copied_messages = await get_messages_in_range(
+        client, 
+        first_file_channel_id, 
+        first_file_msg_id, 
+        last_file_msg_id, 
+        target_db_channel_id
+    )
+
+    if not copied_messages:
+        await processing_msg.edit_text("Failed to copy files to DB Channel. Please check bot's admin rights in the source and target channels.")
+        return
+
+    new_first_msg_id = copied_messages[0].id
+    new_last_msg_id = copied_messages[-1].id
+    
+    # Generate the link_key using the RAW_DB_CHANNEL format for the channel ID
+    link_key = f"get_{abs(int(str(target_db_channel_id).replace('-100','')))}_{new_first_msg_id}_{new_last_msg_id}"
+
+    if add_or_update_quality(series_key, language_name, season_name, quality_name, link_key, codec):
+        await processing_msg.edit_text("Files added to Database Successfully!")
+        
+        # Delete user's forwarded messages
+        await delete_messages_from_user_chat(client, user_id, files_to_delete)
+
+        # Go back to quality management view
+        main_message_id = temp_admin_data[user_id].get("main_message_id")
+        await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+        temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
+        
+        # Clear temporary file data
+        temp_admin_data[user_id].pop("first_file_channel_id", None)
+        temp_admin_data[user_id].pop("first_file_msg_id", None)
+        temp_admin_data[user_id].pop("last_file_msg_id", None)
+        temp_admin_data[user_id].pop("files_to_delete", None)
+    else:
+        await processing_msg.edit_text("Failed to add files to database.")
+
+    temp_admin_data[user_id].pop("ask_message_id", None) # Clear ask_message_id from temp_admin_data
+
+@Client.on_callback_query(filters.regex(r"^change_series_poster:") & filters.user(ADMINS))
+async def change_series_poster_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    series_key = callback_query.data.split(":")[1]
+    
+    await callback_query.answer("Send me the new poster image/video.")
+    ask_msg = await client.send_message(user_id, "Please send the new poster image or video (thumbnail will be used).")
+    temp_admin_data[user_id]["state"] = "AWAITING_SERIES_POSTER"
+    temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+
+@Client.on_callback_query(filters.regex(r"^change_language_poster:") & filters.user(ADMINS))
+async def change_language_poster_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    _, series_key, language_name = callback_query.data.split(":")
+    
+    temp_admin_data[user_id]["current_language"] = language_name # Set for poster processing
+    await callback_query.answer("Send me the new poster image/video for this language.")
+    ask_msg = await client.send_message(user_id, f"Please send the new poster image or video for '{language_name}'.")
+    temp_admin_data[user_id]["state"] = "AWAITING_LANGUAGE_POSTER"
+    temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+
+@Client.on_callback_query(filters.regex(r"^change_season_poster:") & filters.user(ADMINS))
+async def change_season_poster_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    _, series_key, language_name, season_name = callback_query.data.split(":")
+    
+    temp_admin_data[user_id]["current_language"] = language_name # Set for poster processing
+    temp_admin_data[user_id]["current_season"] = season_name # Set for poster processing
+    await callback_query.answer("Send me the new poster image/video for this season.")
+    ask_msg = await client.send_message(user_id, f"Please send the new poster image or video for '{season_name}'.")
+    temp_admin_data[user_id]["state"] = "AWAITING_SEASON_POSTER"
+    temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+
+async def process_poster_input(client: Client, message: Message, level: str):
+    user_id = message.from_user.id
+    ask_message_id = temp_admin_data[user_id].get("ask_message_id")
+    series_key = temp_admin_data[user_id].get("current_series_key")
+    language_name = temp_admin_data[user_id].get("current_language")
+    season_name = temp_admin_data[user_id].get("current_season")
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+
+    if not message.photo and not message.video:
+        # Delete user's invalid input immediately
+        try:
+            await message.delete()
+            if ask_message_id:
+                await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        except Exception as e:
+            logger.warning(f"Could not delete invalid input/prompt: {e}")
+        await client.send_message(user_id, "Please send a **photo or video** for the poster.")
+        temp_admin_data[user_id]["state"] = "IDLE" # Reset state
+        temp_admin_data[user_id].pop("ask_message_id", None)
+        temp_admin_data[user_id].pop("current_language", None)
+        temp_admin_data[user_id].pop("current_season", None)
+        return
+
+    # Delete the bot's prompt message and the user's reply
+    try:
+        if ask_message_id:
+            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
+        await message.delete() # Delete user's input message
+    except Exception as e:
+        logger.warning(f"Could not delete prompt/user message: {e}")
+
+    processing_msg = await client.send_message(
+        chat_id=user_id,
+        text="Uploading poster... Please wait."
+    )
+
+    new_poster_file_id = await download_and_upload_poster(client, message=message)
+
+    if new_poster_file_id:
+        if level == "series":
+            update_poster_file_id(series_key, new_poster_file_id)
+            await processing_msg.edit_text("Series poster updated successfully.")
+            new_main_msg_id = await send_main_series_message(client, user_id, get_series_by_key(series_key), main_message_id)
+            if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
+            temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
+        elif level == "language":
+            add_or_update_language(series_key, language_name, new_poster_file_id)
+            await processing_msg.edit_text("Language poster updated successfully.")
+            await send_language_management_message(client, user_id, series_key, main_message_id)
+            temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
+        elif level == "season":
+            add_or_update_season(series_key, language_name, season_name, new_poster_file_id)
+            await processing_msg.edit_text("Season poster updated successfully.")
+            await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+            temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
+    else:
+        await processing_msg.edit_text("Failed to upload new poster.")
+
+    # Clean up temp data for poster
+    temp_admin_data[user_id].pop("current_language", None)
+    temp_admin_data[user_id].pop("current_season", None)
+    temp_admin_data[user_id].pop("ask_message_id", None)
+
+@Client.on_callback_query(filters.regex(r"^edit_series_details:") & filters.user(ADMINS))
+async def edit_series_details_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    series_key = callback_query.data.split(":")[1]
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+    series_data = get_series_by_key(series_key)
+
+    if not series_data:
+        await callback_query.answer("Series not found.", show_alert=True)
+        return
+
+    text = (
+        f"**Editing Series Details for:** <code>{series_data.get('title', 'N/A')}</code>\n\n"
+        "Send the updated details in the format:\n"
+        "Title: <new title>\n"
+        "Released On: <new year>\n"
+        "Genre: <new genre>\n"
+        "Rating: <new rating>\n\n"
+        "You can omit fields you don't want to change. Example:\n"
+        "Title: New Dark Title\nRating: 9.0"
+    )
+    
+    try:
+        await client.edit_message_text(
+            chat_id=user_id,
+            message_id=main_message_id,
+            text=text,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"back_to_series:{series_key}")]])
+        )
+    except (MessageIdInvalid, FloodWait) as e: # Removed MessageNotFound
+        logger.warning(f"Failed to edit series details prompt (ID: {main_message_id}): {e}. Sending a new one.")
+        new_msg = await client.send_message(
+            chat_id=user_id,
+            text=text,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"back_to_series:{series_key}")]])
+        )
+        temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
+    except Exception as e:
+        logger.error(f"An unexpected error occurred editing series details prompt: {e}")
+        await client.send_message(user_id, "Error updating series details display. Please try again.")
+
+    temp_admin_data[user_id]["state"] = "EDITING_SERIES_TEXT"
+    temp_admin_data[user_id]["current_series_key"] = series_key
+
+async def process_edit_series_text(client: Client, message: Message, input_text: str):
+    user_id = message.from_user.id
+    series_key = temp_admin_data[user_id].get("current_series_key")
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+
+    if not series_key:
+        await message.reply("Error: Series key not found in session.")
+        return
+
+    # Delete the user's input message
+    try:
+        await message.delete()
+    except Exception as e:
+        logger.warning(f"Could not delete user's input message: {e}")
+
+    updates = {}
+    lines = input_text.split('\n')
+    for line in lines:
+        if ':' in line:
+            field, value = line.split(':', 1)
+            field = field.strip().lower().replace(' ', '_')
+            value = value.strip()
+            if field in ['title', 'released_on', 'genre', 'rating']:
+                updates[field] = value
+    
+    if updates:
+        for field, value in updates.items():
+            update_series_field(series_key, field, value)
+        confirmation_msg = await message.reply("Series details updated successfully.")
+        asyncio.create_task(confirmation_msg.delete()) # Delete confirmation after 5 seconds
+    else:
+        confirmation_msg = await message.reply("No valid fields to update found in your message.")
+        asyncio.create_task(confirmation_msg.delete()) # Delete confirmation after 5 seconds
+
+    series_data = get_series_by_key(series_key)
+    # Re-send/edit the main series message
+    new_main_msg_id = await send_main_series_message(client, user_id, series_data, main_message_id)
+    if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
+    temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
+
+@Client.on_callback_query(filters.regex(r"^delete_language:") & filters.user(ADMINS))
+async def delete_language_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    _, series_key, language_name = callback_query.data.split(":")
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+
+    if delete_language(series_key, language_name):
+        await callback_query.answer(f"Language '{language_name}' deleted.", show_alert=True)
+    else:
+        await callback_query.answer(f"Failed to delete language '{language_name}'.", show_alert=True)
+    
+    await send_language_management_message(client, user_id, series_key, main_message_id)
+    temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
+
+@Client.on_callback_query(filters.regex(r"^delete_season:") & filters.user(ADMINS))
+async def delete_season_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    _, series_key, language_name, season_name = callback_query.data.split(":")
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+
+    if delete_season(series_key, language_name, season_name):
+        await callback_query.answer(f"Season '{season_name}' deleted.", show_alert=True)
+    else:
+        await callback_query.answer(f"Failed to delete season '{season_name}'.", show_alert=True)
+    
+    await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+    temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
+
+@Client.on_callback_query(filters.regex(r"^delete_quality:") & filters.user(ADMINS))
+async def delete_quality_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    _, series_key, language_name, season_name, quality_name = callback_query.data.split(":")
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+
+    if delete_quality(series_key, language_name, season_name, quality_name):
+        await callback_query.answer(f"Quality '{quality_name}' deleted.", show_alert=True)
+    else:
+        await callback_query.answer(f"Failed to delete quality '{quality_name}'.", show_alert=True)
+    
+    await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+    temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
+
+@Client.on_callback_query(filters.regex(r"^publish_series:") & filters.user(ADMINS))
+async def publish_series_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    series_key = callback_query.data.split(":")[1]
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+
+    try:
+        await client.edit_message_text(
+            chat_id=user_id,
+            message_id=main_message_id,
+            text="Do you want to publish this series? NOTE: Once you publish this series, you can't edit it anymore. All the empty groups will be removed automatically.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Yes, Delete", callback_data=f"confirm_delete_series_{series_key}")],
-                [InlineKeyboardButton("No, Cancel", callback_data=f"cancel_delete_series_{series_key}")]
+                [InlineKeyboardButton("Yes, Publish", callback_data=f"confirm_publish:{series_key}")],
+                [InlineKeyboardButton("No, Cancel", callback_data=f"back_to_series:{series_key}")]
             ])
         )
-        await query.answer()
-        return
+    except (MessageIdInvalid, FloodWait) as e: # Removed MessageNotFound
+        logger.warning(f"Failed to edit publish confirmation message (ID: {main_message_id}): {e}. Sending a new one.")
+        new_msg = await client.send_message(
+            chat_id=user_id,
+            text="Do you want to publish this series? NOTE: Once you publish this series, you can't edit it anymore. All the empty groups will be removed automatically.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Yes, Publish", callback_data=f"confirm_publish:{series_key}")],
+                [InlineKeyboardButton("No, Cancel", callback_data=f"back_to_series:{series_key}")]
+            ])
+        )
+        temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
+    except Exception as e:
+        logger.error(f"An unexpected error occurred editing publish confirmation message: {e}")
+        await client.send_message(user_id, "Error with publish confirmation. Please try again.")
 
-    if action == "confirm_delete_series":
-        await delete_series(series_key)
-        await query.message.edit_text(f"Series `{series_key}` deleted successfully.")
-        if user_id in user_series_data:
-            del user_series_data[user_id]
-        await query.answer()
-        return
+    temp_admin_data[user_id]["state"] = "AWAITING_PUBLISH_CONFIRMATION"
 
-    if action == "cancel_delete_series":
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            user_series_data[user_id] = {"step": "edit_menu", "data": series_data}
-            await send_edit_menu(query.message, series_data)
-        await query.answer()
-        return
+@Client.on_callback_query(filters.regex(r"^confirm_publish:") & filters.user(ADMINS))
+async def confirm_publish_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    series_key = callback_query.data.split(":")[1]
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
 
-    if action == "toggle_publish":
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            current_status = series_data.get("published", False)
-            series_data["published"] = not current_status
-            await update_series(series_key, {"published": series_data["published"]})
-            await query.answer(f"Series `{series_key}` is now {'Published' if series_data['published'] else 'Unpublished'}.", show_alert=True)
-            user_series_data[user_id] = {"step": "edit_menu", "data": series_data} # Refresh menu
-            await send_edit_menu(query.message, series_data)
-        await query.answer()
-        return
-
-    if action == "done_editing":
-        if user_id in user_series_data:
-            del user_series_data[user_id]
-        await query.message.edit_text(f"Finished editing series `{series_key}`.")
-        await query.answer()
-        return
-
-    if action == "add_another_season":
-        series_data = user_series_data[user_id]["data"]
-        current_lang_code = user_series_data[user_id]["current_lang_code"]
-        user_series_data[user_id]["step"] = "add_season"
-        await query.message.edit_text(f"Okay, adding another season for '{series_data['languages'][current_lang_code]['name']}'. Send the **season number** (e.g., `2`).")
-        await query.answer()
-        return
-
-    if action == "add_another_language":
-        series_data = user_series_data[user_id]["data"]
-        user_series_data[user_id]["step"] = "add_language"
-        await query.message.edit_text("Okay, let's add another language. Please send the **language name** (e.g., `Hindi`).")
-        await query.answer()
-        return
-
-    if action == "save_publish_series":
-        series_data = user_series_data[user_id]["data"]
-        series_data["published"] = True # Mark as published on save
-        success = await add_series(series_data) if not await get_series_by_key(series_data["key"]) else await update_series(series_data["key"], series_data)
-        
-        if success:
-            await query.message.edit_text(f"Series `{series_data['title']}` saved and published successfully!")
-            del user_series_data[user_id]
-        else:
-            await query.message.edit_text("Failed to save/publish series. Please try again.")
-        await query.answer()
-        return
-
-    # --- Language Management Callbacks ---
-    if action == "edit_lang":
-        series_key = parts[2]
-        lang_code = parts[3]
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            user_series_data[user_id] = {"step": "manage_lang_details", "data": series_data, "current_lang_code": lang_code}
-            await send_lang_details_menu(query.message, series_data, lang_code)
-        await query.answer()
-        return
-
-    if action == "delete_lang_confirm":
-        series_key = parts[3]
-        lang_code = parts[4]
-        series_data = await get_series_by_key(series_key)
-        if series_data and lang_code in series_data.get("languages", {}):
-            lang_name = series_data["languages"][lang_code]["name"]
-            await query.message.edit_text(
-                f"Are you sure you want to delete language '{lang_name}' from series `{series_key}`? This will delete all its seasons and files.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Yes, Delete Language", callback_data=f"confirm_delete_lang_{series_key}_{lang_code}")],
-                    [InlineKeyboardButton("No, Cancel", callback_data=f"cancel_delete_lang_{series_key}_{lang_code}")]
-                ])
+    if publish_series(series_key):
+        try: # Added try-except for the edit_message_text here
+            await client.edit_message_text(
+                chat_id=user_id,
+                message_id=main_message_id,
+                text="Published Successfully! This series is now live and cannot be edited via this UI."
             )
-        await query.answer()
-        return
-
-    if action == "confirm_delete_lang":
-        series_key = parts[3]
-        lang_code = parts[4]
-        series_data = await get_series_by_key(series_key)
-        if series_data and lang_code in series_data.get("languages", {}):
-            del series_data["languages"][lang_code]
-            await update_series(series_key, {"languages": series_data["languages"]})
-            await query.message.edit_text(f"Language '{lang_code}' deleted from series `{series_key}`.")
-            user_series_data[user_id] = {"step": "manage_languages_menu", "data": series_data} # Refresh menu
-            await send_language_menu(query.message, series_data)
-        await query.answer()
-        return
-
-    if action == "cancel_delete_lang":
-        series_key = parts[3]
-        lang_code = parts[4]
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            user_series_data[user_id] = {"step": "manage_languages_menu", "data": series_data}
-            await send_language_menu(query.message, series_data)
-        await query.answer()
-        return
-
-    if action == "add_season_to_lang":
-        series_key = parts[3]
-        lang_code = parts[4]
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            user_series_data[user_id] = {"step": "add_season_to_existing_lang", "data": series_data, "current_lang_code": lang_code}
-            await query.message.edit_text(f"Adding a new season for '{series_data['languages'][lang_code]['name']}'. Please send the **season number** (e.g., `1`).")
-        await query.answer()
-        return
-
-    # --- Season Management Callbacks ---
-    if action == "manage_season":
-        series_key = parts[2]
-        lang_code = parts[3]
-        season_num = parts[4]
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            user_series_data[user_id] = {"step": "manage_season_menu", "data": series_data, "current_lang_code": lang_code, "current_season_num": season_num}
-            await send_season_menu(query.message, series_data, lang_code, season_num)
-        await query.answer()
-        return
-
-    if action == "delete_season_confirm":
-        series_key = parts[3]
-        lang_code = parts[4]
-        season_num = parts[5]
-        series_data = await get_series_by_key(series_key)
-        if series_data and lang_code in series_data.get("languages", {}) and season_num in series_data["languages"][lang_code].get("seasons", {}):
-            season_name = series_data["languages"][lang_code]["seasons"][season_num]["name"]
-            await query.message.edit_text(
-                f"Are you sure you want to delete season '{season_name}' from language '{lang_code}' in series `{series_key}`? This will delete all its files.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Yes, Delete Season", callback_data=f"confirm_delete_season_{series_key}_{lang_code}_{season_num}")],
-                    [InlineKeyboardButton("No, Cancel", callback_data=f"cancel_delete_season_{series_key}_{lang_code}_{season_num}")]
-                ])
+        except (MessageIdInvalid, FloodWait) as e:
+            logger.warning(f"Failed to edit final publish message (ID: {main_message_id}): {e}. Sending a new one.")
+            await client.send_message(
+                chat_id=user_id,
+                text="Published Successfully! This series is now live and cannot be edited via this UI."
             )
-        await query.answer()
-        return
+        except Exception as e:
+            logger.error(f"An unexpected error occurred editing final publish message: {e}")
+            await client.send_message(user_id, "Published Successfully! (But failed to update message).")
+            
+        temp_admin_data.pop(user_id, None) # Clear session data for this admin
+    else:
+        try: # Added try-except for the edit_message_text here
+            await client.edit_message_text(
+                chat_id=user_id,
+                message_id=main_message_id,
+                text="Failed to publish series. Please try again."
+            )
+        except (MessageIdInvalid, FloodWait) as e:
+            logger.warning(f"Failed to edit failed-publish message (ID: {main_message_id}): {e}. Sending a new one.")
+            await client.send_message(
+                chat_id=user_id,
+                text="Failed to publish series. Please try again."
+            )
+        except Exception as e:
+            logger.error(f"An unexpected error occurred editing failed-publish message: {e}")
+            await client.send_message(user_id, "Failed to publish series. (But failed to update message).")
 
-    if action == "confirm_delete_season":
-        series_key = parts[3]
-        lang_code = parts[4]
-        season_num = parts[5]
-        series_data = await get_series_by_key(series_key)
-        if series_data and lang_code in series_data.get("languages", {}) and season_num in series_data["languages"][lang_code].get("seasons", {}):
-            del series_data["languages"][lang_code]["seasons"][season_num]
-            await update_series(series_key, {"languages": series_data["languages"]})
-            await query.message.edit_text(f"Season '{season_num}' deleted from language '{lang_code}' in series `{series_key}`.")
-            user_series_data[user_id] = {"step": "manage_lang_details", "data": series_data, "current_lang_code": lang_code} # Refresh menu
-            await send_lang_details_menu(query.message, series_data, lang_code)
-        await query.answer()
-        return
-
-    if action == "cancel_delete_season":
-        series_key = parts[3]
-        lang_code = parts[4]
-        season_num = parts[5]
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            user_series_data[user_id] = {"step": "manage_season_menu", "data": series_data, "current_lang_code": lang_code, "current_season_num": season_num}
-            await send_season_menu(query.message, series_data, lang_code, season_num)
-        await query.answer()
-        return
-
-    if action == "add_file_to_season":
-        series_key = parts[3]
-        lang_code = parts[4]
-        season_num = parts[5]
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            user_series_data[user_id] = {"step": "add_file_to_existing_season", "data": series_data, "current_lang_code": lang_code, "current_season_num": season_num}
-            await query.message.edit_text(f"Adding files for Season {season_num} of '{series_data['languages'][lang_code]['name']}'. Forward me a **file** or send a **link**. Send `/done` when finished.")
-        await query.answer()
-        return
-
-    # --- File Management Callbacks ---
-    if action == "manage_season_files":
-        series_key = parts[3]
-        lang_code = parts[4]
-        season_num = parts[5]
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            user_series_data[user_id] = {"step": "manage_files_menu", "data": series_data, "current_lang_code": lang_code, "current_season_num": season_num}
-            await send_files_menu(query.message, series_data, lang_code, season_num)
-        await query.answer()
-        return
-
-    if action == "delete_file_confirm":
-        series_key = parts[3]
-        lang_code = parts[4]
-        season_num = parts[5]
-        file_index = int(parts[6])
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            files = series_data["languages"][lang_code]["seasons"][season_num]["files"]
-            if 0 <= file_index < len(files):
-                file_name = files[file_index].get("file_name", "Unnamed File")
-                await query.message.edit_text(
-                    f"Are you sure you want to delete file '{file_name}' from Season {season_num}?",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("Yes, Delete File", callback_data=f"confirm_delete_file_{series_key}_{lang_code}_{season_num}_{file_index}")],
-                        [InlineKeyboardButton("No, Cancel", callback_data=f"cancel_delete_file_{series_key}_{lang_code}_{season_num}_{file_index}")]
-                    ])
-                )
-        await query.answer()
-        return
-
-    if action == "confirm_delete_file":
-        series_key = parts[3]
-        lang_code = parts[4]
-        season_num = parts[5]
-        file_index = int(parts[6])
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            files = series_data["languages"][lang_code]["seasons"][season_num]["files"]
-            if 0 <= file_index < len(files):
-                deleted_file = files.pop(file_index)
-                await update_series(series_key, {"languages": series_data["languages"]})
-                await query.message.edit_text(f"File '{deleted_file.get('file_name', 'Unnamed File')}' deleted.")
-                user_series_data[user_id] = {"step": "manage_files_menu", "data": series_data, "current_lang_code": lang_code, "current_season_num": season_num} # Refresh menu
-                await send_files_menu(query.message, series_data, lang_code, season_num)
-        await query.answer()
-        return
-
-    if action == "cancel_delete_file":
-        series_key = parts[3]
-        lang_code = parts[4]
-        season_num = parts[5]
-        file_index = int(parts[6]) # Not strictly needed but good for consistency
-        series_data = await get_series_by_key(series_key)
-        if series_data:
-            user_series_data[user_id] = {"step": "manage_files_menu", "data": series_data, "current_lang_code": lang_code, "current_season_num": season_num}
-            await send_files_menu(query.message, series_data, lang_code, season_num)
-        await query.answer()
-        return
-
-    # --- Handlers for input during editing flows ---
-@Client.on_message(filters.text & filters.private & filters.user(ADMINS) & ~filters.command(["newseries", "editseries", "cloneseries", "seriview"]))
-async def handle_edit_input(client: Client, message: Message):
-    user_id = message.from_user.id
-    if user_id not in user_series_data or not user_series_data[user_id].get("step").startswith("edit_"):
-        return # Not in an editing flow that requires text input
-
-    current_step = user_series_data[user_id]["step"]
-    series_data = user_series_data[user_id]["data"]
-    series_key = series_data["key"]
-
-    if current_step == "edit_details":
-        if message.text.lower() == "/skip":
-            user_series_data[user_id]["step"] = "edit_overview"
-            await message.reply_text("Send the **new overview** for the series. Or send `/skip` to keep current overview.")
-            return
-
-        new_title = message.text
-        movie_info = await get_movie_info(new_title, TMDB_API_KEY)
-        if movie_info:
-            series_data["title"] = movie_info["title"]
-            series_data["overview"] = movie_info["overview"]
-            series_data["poster_path"] = movie_info["poster_path"]
-            await update_series(series_key, {"title": series_data["title"], "overview": series_data["overview"], "poster_path": series_data["poster_path"]})
-            await message.reply_text(f"Title, overview, and poster updated to **{series_data['title']}**.\n\n"
-                                     "Returning to edit menu.",
-                                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Edit Menu", callback_data=f"back_to_edit_menu_{series_key}")]])
-                                    )
-            user_series_data[user_id]["step"] = "edit_menu" # Go back to main edit menu
+        # Re-send the main series message if publishing failed
+        series_data = get_series_by_key(series_key)
+        if series_data: # Ensure series_data is not None before passing
+            new_main_msg_id = await send_main_series_message(client, user_id, series_data, main_message_id)
+            if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
+            temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
         else:
-            await message.reply_text("Could not find details for the new title. Please try a different title or send `/skip`.")
-        return
-
-    if current_step == "add_season_to_existing_lang":
-        season_num = message.text
-        current_lang_code = user_series_data[user_id]["current_lang_code"]
-        if not season_num.isdigit():
-            await message.reply_text("Invalid season number. Please send a digit (e.g., `1`).")
-            return
-        
-        if season_num in series_data["languages"][current_lang_code]["seasons"]:
-            await message.reply_text(f"Season {season_num} already exists for this language. Please choose a different season number or manage the existing one.")
-            return
-
-        season_name = f"Season {season_num}"
-        series_data["languages"][current_lang_code]["seasons"][season_num] = {"name": season_name, "files": []}
-        await update_series(series_key, {"languages": series_data["languages"]})
-        user_series_data[user_id]["step"] = "add_file_to_existing_season"
-        user_series_data[user_id]["current_season_num"] = season_num
-        await message.reply_text(f"Season {season_num} added. Now, forward me a **file** or send a **link** for this season. Send `/done` when finished with files for this season.")
-        return
-
-    if current_step == "add_file_to_existing_season":
-        current_lang_code = user_series_data[user_id]["current_lang_code"]
-        current_season_num = user_series_data[user_id]["current_season_num"]
-
-        if message.text == "/done":
-            user_series_data[user_id]["step"] = "manage_season_menu"
-            await send_season_menu(message, series_data, current_lang_code, current_season_num)
-            return
-
-        file_info = {}
-        if message.document:
-            file_info = {
-                "type": "document",
-                "file_id": message.document.file_id,
-                "file_name": message.document.file_name,
-                "caption": message.caption,
-                "link": None
-            }
-        elif message.video:
-            file_info = {
-                "type": "video",
-                "file_id": message.video.file_id,
-                "file_name": message.video.file_name,
-                "caption": message.caption,
-                "link": None
-            }
-        elif message.text and (message.text.startswith("http://") or message.text.startswith("https://")):
-            file_info = {
-                "type": "link",
-                "file_name": f"Link: {message.text[:30]}...",
-                "link": message.text,
-                "caption": None
-            }
-        else:
-            await message.reply_text("Please forward a file or send a direct link.")
-            return
-        
-        series_data["languages"][current_lang_code]["seasons"][current_season_num]["files"].append(file_info)
-        await update_series(series_key, {"languages": series_data["languages"]})
-        await message.reply_text("File/Link added. Send another file/link or `/done`.")
-        return
-
-# --- Helper functions for menus ---
-async def send_language_menu(message: Message, series_data: dict):
-    key = series_data["key"]
-    text = f"**Managing Languages for `{series_data['title']}`:**\n\n"
-    buttons = []
-    
-    languages = series_data.get("languages", {})
-    if languages:
-        for lang_code, lang_data in languages.items():
-            lang_name = lang_data.get("name", lang_code.upper())
-            text += f"- {lang_name} (`{lang_code}`)\n"
-            buttons.append([
-                InlineKeyboardButton(f"Edit {lang_name}", callback_data=f"edit_lang_{key}_{lang_code}"),
-                InlineKeyboardButton(f"Delete {lang_name}", callback_data=f"delete_lang_confirm_{key}_{lang_code}")
-            ])
-    else:
-        text += "No languages added yet."
-
-    buttons.append([InlineKeyboardButton("Add New Language", callback_data=f"add_language_to_series_{key}")])
-    buttons.append([InlineKeyboardButton("Back to Main Edit Menu", callback_data=f"back_to_edit_menu_{key}")])
-    
-    await message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-
-@Client.on_callback_query(filters.regex(r"^add_language_to_series_"))
-async def add_language_to_series_callback(client: Client, query):
-    user_id = query.from_user.id
-    series_key = query.data.split("_")[4]
-    series_data = await get_series_by_key(series_key)
-    if series_data:
-        user_series_data[user_id] = {"step": "add_language_to_existing_series", "data": series_data}
-        await query.message.edit_text("Please send the **language name** (e.g., `Spanish`).")
-    await query.answer()
-
-@Client.on_message(filters.text & filters.private & filters.user(ADMINS) & ~filters.command(["newseries", "editseries", "cloneseries", "seriview"]))
-async def handle_add_language_to_existing_series(client: Client, message: Message):
-    user_id = message.from_user.id
-    if user_id not in user_series_data or user_series_data[user_id]["step"] != "add_language_to_existing_series":
-        return
-
-    series_data = user_series_data[user_id]["data"]
-    series_key = series_data["key"]
-    lang_name = message.text
-    lang_code = lang_name.lower().replace(" ", "_")
-
-    if lang_code in series_data.get("languages", {}):
-        await message.reply_text(f"Language '{lang_name}' already exists. Please choose a different name or manage the existing one.")
-        return
-
-    series_data["languages"][lang_code] = {"name": lang_name, "seasons": {}}
-    await update_series(series_key, {"languages": series_data["languages"]})
-    
-    user_series_data[user_id]["step"] = "manage_languages_menu" # Go back to language menu
-    await message.reply_text(f"Language '{lang_name}' added. Returning to language management.",
-                             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Language Menu", callback_data=f"manage_languages_{series_key}")]])
-                            )
-    await send_language_menu(message, series_data) # Refresh the menu
-    
-async def send_lang_details_menu(message: Message, series_data: dict, lang_code: str):
-    key = series_data["key"]
-    lang_name = series_data["languages"][lang_code]["name"]
-    text = f"**Managing Language: {lang_name} (`{lang_code}`) for `{series_data['title']}`**\n\n"
-    text += "Seasons:\n"
-    
-    seasons = series_data["languages"][lang_code].get("seasons", {})
-    buttons = []
-    if seasons:
-        for season_num, season_data in seasons.items():
-            season_name = season_data.get("name", f"Season {season_num}")
-            text += f"- {season_name} (Files: {len(season_data.get('files', []))})\n"
-            buttons.append([
-                InlineKeyboardButton(f"Manage {season_name}", callback_data=f"manage_season_{key}_{lang_code}_{season_num}"),
-                InlineKeyboardButton(f"Delete {season_name}", callback_data=f"delete_season_confirm_{key}_{lang_code}_{season_num}")
-            ])
-    else:
-        text += "No seasons added yet for this language."
-
-    buttons.append([InlineKeyboardButton("Add New Season", callback_data=f"add_season_to_lang_{key}_{lang_code}")])
-    buttons.append([InlineKeyboardButton("Back to Language List", callback_data=f"manage_languages_{key}")])
-    
-    await message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-
-async def send_season_menu(message: Message, series_data: dict, lang_code: str, season_num: str):
-    key = series_data["key"]
-    lang_name = series_data["languages"][lang_code]["name"]
-    season_name = series_data["languages"][lang_code]["seasons"][season_num]["name"]
-    text = f"**Managing Season: {season_name} for {lang_name} in `{series_data['title']}`**\n\n"
-    text += "Files:\n"
-    
-    files = series_data["languages"][lang_code]["seasons"][season_num].get("files", [])
-    buttons = []
-    if files:
-        for i, file_info in enumerate(files):
-            file_display_name = file_info.get("file_name", f"File {i+1}")
-            text += f"- {file_display_name}\n"
-            buttons.append([
-                InlineKeyboardButton(f"Delete {file_display_name}", callback_data=f"delete_file_confirm_{key}_{lang_code}_{season_num}_{i}")
-            ])
-    else:
-        text += "No files added yet for this season."
-
-    buttons.append([InlineKeyboardButton("Add New File/Link", callback_data=f"add_file_to_season_{key}_{lang_code}_{season_num}")])
-    buttons.append([InlineKeyboardButton("Back to Language Details", callback_data=f"edit_lang_{key}_{lang_code}")])
-    
-    await message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-
-@Client.on_callback_query(filters.regex(r"^back_to_edit_menu_"))
-async def back_to_edit_menu_callback(client: Client, query):
-    user_id = query.from_user.id
-    series_key = query.data.split("_")[4]
-    series_data = await get_series_by_key(series_key)
-    if series_data:
-        user_series_data[user_id] = {"step": "edit_menu", "data": series_data}
-        await send_edit_menu(query.message, series_data)
-    await query.answer()
+            await client.send_message(user_id, "Series data not found after failed publish attempt. Please check logs.")
+            temp_admin_data.pop(user_id, None) # Clear session if series data is completely lost
