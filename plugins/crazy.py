@@ -1300,7 +1300,7 @@ async def process_codec_input(client: Client, message: Message, codec: str):
     link_key = f"get_{abs(int(str(target_db_channel_id).replace('-100','')))}_{new_first_msg_id}_{new_last_msg_id}"
 
     if add_or_update_quality(series_key, language_name, season_name, quality_name, link_key, codec):
-        await processing_msg.edit_text("Files added to Database Successfully!")
+        await processing_msg.edit(text="Files added to Database Successfully!")
         
         # Delete user's forwarded messages
         await delete_messages_from_user_chat(client, user_id, files_to_delete)
