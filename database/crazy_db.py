@@ -269,3 +269,28 @@ def publish_series(series_key):
     series["published"] = True
     
     return update_series(series_key, series)
+
+# New function to get the most specific poster for a user view
+def get_specific_poster(series_key, language_name=None, season_name=None):
+    series = series_collection.find_one({"_id": series_key})
+    if not series:
+        return None
+
+    # Check for season-specific poster
+    if language_name and season_name:
+        for lang in series.get("languages", []):
+            if lang["name"].lower() == language_name.lower():
+                for season in lang.get("seasons", []):
+                    if season["name"].lower() == season_name.lower():
+                        if season.get("poster_file_id"):
+                            return season["poster_file_id"]
+
+    # Check for language-specific poster
+    if language_name:
+        for lang in series.get("languages", []):
+            if lang["name"].lower() == language_name.lower():
+                if lang.get("poster_file_id"):
+                    return lang["poster_file_id"]
+    
+    # Fallback to series-level poster
+    return series.get("poster_file_id")
