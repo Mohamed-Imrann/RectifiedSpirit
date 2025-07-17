@@ -26,7 +26,7 @@ DATABASE_URI="mongodb+srv://user:pass@cluster0.chedxq6.mongodb.net/?retryWrites=
 DATABASE_URL="mongodb+srv://user:pass@cluster0.chedxq6.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 DATABASE_NAME = "cluster0"
 COLLECTION_NAME = "thernello_unda"
-ADMINS = [int(admin) if id_pattern.search(admin) else admin for admin in environ.get('ADMINS', '1129673243 5394954571 7188908429 7144888498').split()]
+ADMINS = [int(admin) if id_pattern.search(admin) else admin for admin in environ.get('ADMINS', '1129673243 5394954571 7188908429 7144888498 7874364809').split()]
 CHANNELS = [int(ch) if id_pattern.search(ch) else ch for ch in environ.get('CHANNELS', '-1001306691782').split()]
 auth_channel = environ.get('AUTH_CHANNEL', '')
 AUTH_CHANNEL = int(auth_channel) if auth_channel and id_pattern.search(auth_channel) else None
