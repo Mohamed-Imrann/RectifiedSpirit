@@ -9,7 +9,7 @@ from pyrogram.errors import MessageEmpty, MessageNotModified, FloodWait
 from info import ADMINS, LOG_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL, IMDB, IMDB_POSTER, PM_TXT, SPELL_CHECK_TXT, CHANNELS_TXT, START_TXT
 from database.ia_filterdb import get_file_details, get_search_results
 from database.crazy_db import get_series_by_key, get_specific_poster # Import get_specific_poster
-from utils import get_shortlink, get_size, get_poster, is_subscribed, get_readable_time, get_seconds, temp
+from utils import get_size, get_poster, is_subscribed, get_readable_time, get_seconds, temp
 from collections import defaultdict
 from fuzzywuzzy import fuzz
 
