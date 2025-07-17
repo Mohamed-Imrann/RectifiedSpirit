@@ -54,6 +54,12 @@ STICKER_ID = environ.get('STICKER_ID', "CAACAgUAAxkBAAJ0w2aZJMdpnEKbXtDVPJIvpL2X
 PIC = environ.get('PIC', 'True')
 PICS = environ.get('PICS', "https://envs.sh/HqX.jpg https://envs.sh/Hqy.png https://envs.sh/H0D.jpg https://envs.sh/H0E.png https://envs.sh/H0Q.png").split()
 
+IMDB = is_enabled(environ.get('IMDB', "True"), True) # Enable/disable IMDB features
+IMDB_POSTER = is_enabled(environ.get('IMDB_POSTER', "True"), True) # Enable/disable IMDB poster fetching
+PM_TXT = environ.get('PM_TXT', "Hello! Please send me a series title or key to get details.")
+SPELL_CHECK_TXT = environ.get('SPELL_CHECK_TXT', "Did you mean something else? Please check your spelling or try a different title.")
+CHANNELS_TXT = environ.get('CHANNELS_TXT', "Join our channels for more content!")
+
 # Optional Bot messages and settings
 START_TXT = environ.get('START_TXT', "𝗅'm Mᴀᴇᴠᴇ Wʏʟɪᴇ 🌸, ᴀ Gʀᴏᴜᴘ ᴍᴀɴᴀɢᴇʀ Bᴏᴛ Cʀᴇᴀᴛᴇᴅ ғᴏʀ Sᴇʀɪᴇs X, ᴏɴʟʏ ᴀᴜᴛʜᴏʀɪsᴇᴅ ᴀᴅᴍɪɴs ᴄᴀɴ ᴀᴄᴄᴇss ᴅᴏɴ'ᴛ ᴡᴀsᴛᴇ ʏᴏᴜʀ ᴛɪᴍᴇ 😌")
 NO_POSTER_FOUND_IMG = environ.get('NO_POSTER_FOUND_IMG', "https://telegra.ph/file/5e2d4418525832bc9a1b9").split()
