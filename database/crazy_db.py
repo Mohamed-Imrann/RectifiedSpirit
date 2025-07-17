@@ -14,7 +14,7 @@ class CrazyDB:
     async def add_series(self, series_data):
         """Adds a new series document. Returns True on success, False on duplicate key error."""
         try:
-            # Ensure 'key' is unique
+            # Ensure '_id' is unique
             if await self.collection.find_one({"_id": series_data["_id"]}): # Use _id as the primary key
                 logger.warning(f"Series with _id '{series_data.get('_id', 'N/A')}' already exists. Skipping insertion.")
                 return False
