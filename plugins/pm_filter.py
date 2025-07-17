@@ -9,11 +9,11 @@ from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, InputMediaPhoto, CallbackQuery
 from pyrogram.errors import MessageEmpty, MessageNotModified, FloodWait
 
-from info import ADMINS, LOG_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL, IMDB, IMDB_POSTER, PM_TXT, SPELL_CHECK_TXT, CHANNELS_TXT, START_TXT, TMDB_API_KEY, NO_POSTER_FOUND_IMG
+from info import ADMINS, LOG_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL, IMDB, IMDB_POSTER, PM_TXT, SPELL_CHECK_TXT, CHANNELS_TXT, START_TXT, TMDB_API_KEY, NO_POSTER_FOUND_IMG, FORCE_SUB_CHANNEL
 from database.crazy_db import get_series_by_key, get_series_by_title, get_all_series, get_specific_poster # Corrected imports
 from database.ia_filterdb import get_file_details, get_search_results # Assuming these are still needed
 from utils import get_shortlink, get_size, get_poster, is_subscribed, get_readable_time, get_seconds, temp, get_poster_from_tmdb # Assuming these are in utils
-from Script import script # Assuming this is still needed
+# from Script import script # Removed as it's not used here and might cause circular import if it imports from plugins
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -25,6 +25,8 @@ SERIES_KEY_REGEX = re.compile(r'^[Ss]\d{3}$')
 # This is to prevent spamming the bot with rapid button clicks
 user_last_interaction = defaultdict(int)
 COOLDOWN_TIME = 2 # seconds
+
+# NO_POSTER_FOUND_IMG is imported from info.py
 
 async def get_series_poster_for_user(series_key: str, language_name: str = None, season_name: str = None):
     """
@@ -61,6 +63,70 @@ async def pm_admin_filter(client: Client, message: Message):
             await message.reply_text(SPELL_CHECK_TXT)
         else:
             await message.reply_text(PM_TXT)
+
+async def send_series_details(client: Client, message: Message, series_data: dict):
+    # This function is used by pm_admin_filter, but its implementation was missing.
+    # Re-implementing it based on the expected behavior.
+    series_key = series_data['_id']
+    title = series_data.get('title', 'N/A')
+    languages = series_data.get('languages', [])
+
+    if not languages:
+        text = f"<b>Title:</b> <code>{title}</code>\n\nNo languages found for this series. Please try again later or contact the admin."
+        poster = await get_series_poster_for_user(series_key)
+        try:
+            if message.photo: # If original message was a photo
+                await message.edit_media(InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.HTML))
+            else:
+                await message.edit_text(text, parse_mode=enums.ParseMode.HTML)
+        except MessageNotModified:
+            pass
+        return
+
+    text = f"<b>Series:</b> <code>{title}</code>\n\nSelect a language:"
+    buttons = []
+    for lang in languages:
+        if lang.get("seasons"): # Only show languages that have seasons
+            buttons.append(
+                InlineKeyboardButton(lang['name'], callback_data=f"user_lang:{series_key}:{lang['name']}")
+            )
+    
+    if not buttons: # If no languages have seasons, don't show language selection
+        text = f"<b>Series:</b> <code>{title}</code>\n\nNo active content (seasons/qualities) found for this series. Please try again later or contact the admin."
+        poster = await get_series_poster_for_user(series_key)
+        try:
+            if message.photo:
+                await message.edit_media(InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.HTML))
+            else:
+                await message.edit_text(text, parse_mode=enums.ParseMode.HTML)
+        except MessageNotModified:
+            pass
+        return
+
+    reply_markup = InlineKeyboardMarkup(chunk_buttons(buttons, chunk_size=2)) # chunk_size=2 for horizontal layout
+    
+    poster = await get_series_poster_for_user(series_key)
+    try:
+        if message.photo:
+            await message.edit_media(
+                InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.HTML),
+                reply_markup=reply_markup
+            )
+        else:
+            await message.reply_photo(
+                photo=poster,
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=enums.ParseMode.HTML
+            )
+            # await message.delete() # Do not delete original message for admin commands
+    except MessageNotModified:
+        pass
+    except Exception as e:
+        logger.error(f"Error sending/editing language selection message for admin: {e}")
+        # Fallback to text message if photo fails
+        await message.edit_text(text, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
+
 
 @Client.on_message(filters.private & filters.text & filters.incoming & ~filters.user(ADMINS))
 async def pm_user_filter(client: Client, message: Message):
@@ -100,7 +166,7 @@ async def pm_user_filter(client: Client, message: Message):
         results = await get_search_results(query, filter=True)
         if not results:
             if SPELL_CHECK_TXT:
-                imdb_data = await get_poster(query, bulk=True) # get_poster from utils.py
+                imdb_data = get_poster(query, bulk=True) # get_poster from utils.py is not async
                 if imdb_data:
                     buttons = [[InlineKeyboardButton(f"{i.get('title')} ({i.get('year')})", callback_data=f"spellcheck_{i.get('imdb_id')}") for i in imdb_data]]
                     markup = InlineKeyboardMarkup(buttons)
@@ -114,7 +180,7 @@ async def pm_user_filter(client: Client, message: Message):
 
         if not published_results:
             if SPELL_CHECK_TXT:
-                imdb_data = await get_poster(query, bulk=True)
+                imdb_data = get_poster(query, bulk=True) # get_poster from utils.py is not async
                 if imdb_data:
                     buttons = [[InlineKeyboardButton(f"{i.get('title')} ({i.get('year')})", callback_data=f"spellcheck_{i.get('imdb_id')}") for i in imdb_data]]
                     markup = InlineKeyboardMarkup(buttons)
@@ -133,7 +199,7 @@ async def pm_user_filter(client: Client, message: Message):
 
         buttons = []
         for series_key, files in grouped_results.items():
-            series_data_from_db = await get_series_by_key(series_key)
+            series_data_from_db = await get_series_by_key(series_key) # Await the async function
             if series_data_from_db and series_data_from_db.get('published'):
                 title = series_data_from_db.get('title', series_key)
                 # Show the primary entry point for this series
@@ -152,7 +218,7 @@ async def pm_user_filter(client: Client, message: Message):
 
         if not buttons: # If all found series were unpublished or no valid buttons could be created
             if SPELL_CHECK_TXT:
-                imdb_data = await get_poster(query, bulk=True)
+                imdb_data = get_poster(query, bulk=True) # get_poster from utils.py is not async
                 if imdb_data:
                     buttons = [[InlineKeyboardButton(f"{i.get('title')} ({i.get('year')})", callback_data=f"spellcheck_{i.get('imdb_id')}") for i in imdb_data]]
                     markup = InlineKeyboardMarkup(buttons)
@@ -187,7 +253,7 @@ async def spellcheck_callback(client: Client, callback_query: CallbackQuery):
 
     try:
         # Fetch details using imdb_id
-        movie_data = await get_poster(imdb_id, id=True) # get_poster from utils.py
+        movie_data = get_poster(imdb_id, id=True) # get_poster from utils.py is not async
         if not movie_data:
             await callback_query.message.edit_text("Could not find details for this ID.")
             return
@@ -195,7 +261,7 @@ async def spellcheck_callback(client: Client, callback_query: CallbackQuery):
         # Try to find a matching series in the crazy_db
         imdb_title = movie_data.get('title')
         found_series = None
-        all_series = await get_all_series() # Get all series to search
+        all_series = await get_all_series() # Await the async function # Get all series to search
         for series in all_series:
             series_title = series.get('title', '')
             if fuzz.ratio(imdb_title.lower(), series_title.lower()) > 80 and series.get('published'):
@@ -301,7 +367,7 @@ async def series_select_callback(client: Client, callback_query: CallbackQuery):
     series_key = callback_query.data.split(":")[1]
     await callback_query.answer("Loading series details...", cache_time=0)
 
-    series_data = await get_series_by_key(series_key)
+    series_data = await get_series_by_key(series_key) # Await the async function
     if not series_data or not series_data.get('published'):
         await callback_query.message.edit_text("Series not found or not published.")
         return
@@ -320,7 +386,7 @@ async def user_language_select_callback(client: Client, callback_query: Callback
     _, series_key, language_name = callback_query.data.split(":")
     await callback_query.answer(f"Loading seasons for {language_name}...", cache_time=0)
 
-    series_data = await get_series_by_key(series_key)
+    series_data = await get_series_by_key(series_key) # Await the async function
     if not series_data or not series_data.get('published'):
         await callback_query.message.edit_text("Series not found or not published.")
         return
@@ -376,7 +442,7 @@ async def user_season_select_callback(client: Client, callback_query: CallbackQu
     _, series_key, language_name, season_name = callback_query.data.split(":")
     await callback_query.answer(f"Loading qualities for {season_name}...", cache_time=0)
 
-    series_data = await get_series_by_key(series_key)
+    series_data = await get_series_by_key(series_key) # Await the async function
     if not series_data or not series_data.get('published'):
         await callback_query.message.edit_text("Series not found or not published.")
         return
@@ -435,7 +501,7 @@ async def user_quality_select_callback(client: Client, callback_query: CallbackQ
     _, series_key, language_name, season_name, quality_name = callback_query.data.split(":")
     await callback_query.answer(f"Fetching files for {quality_name}...", cache_time=0)
 
-    series_data = await get_series_by_key(series_key)
+    series_data = await get_series_by_key(series_key) # Await the async function
     if not series_data or not series_data.get('published'):
         await callback_query.message.edit_text("Series not found or not published.")
         return
@@ -521,7 +587,7 @@ async def file_details_callback(client: Client, callback_query: CallbackQuery):
     await callback_query.answer("Fetching file details...", cache_time=0)
 
     try:
-        files = await get_file_details(file_id)
+        files = await get_file_details(file_id) # Await the async function
         if not files:
             await callback_query.message.edit_text("File not found in database.")
             return
