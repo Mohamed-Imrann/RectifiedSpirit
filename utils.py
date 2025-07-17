@@ -2,7 +2,7 @@ import re
 import asyncio
 import requests
 import time
-from info import DB_CHANNEL, RAW_DB_CHANNEL, TMDB_API_KEY, IMGBB_API_KEY, SHORTLINK_URL, SHORTLINK_API, FORCE_SUB_CHANNEL
+from info import DB_CHANNEL, RAW_DB_CHANNEL, TMDB_API_KEY, IMGBB_API_KEY, FORCE_SUB_CHANNEL
 from pyrogram.errors import FloodWait
 
 class Temp:
@@ -149,23 +149,6 @@ async def get_poster_from_tmdb(poster_path, tmdb_api_key):
     if poster_path:
         return f"https://image.tmdb.org/t/p/w500{poster_path}"
     return None
-
-async def get_shortlink(url):
-    """
-    Generates a shortlink using a configured shortlink service.
-    Requires SHORTLINK_URL and SHORTLINK_API from info.py.
-    """
-    if SHORTLINK_URL and SHORTLINK_API:
-        try:
-            api_url = f"{SHORTLINK_URL}/api?api={SHORTLINK_API}&url={requests.utils.quote(url)}"
-            response = requests.get(api_url)
-            response.raise_for_status()
-            data = response.json()
-            if data.get('status') == 'success':
-                return data['shortenedUrl']
-        except Exception as e:
-            print(f"Error generating shortlink: {e}")
-    return url # Return original URL if shortlink generation fails or not configured
 
 def get_size(bytes, suffix="B"):
     """
