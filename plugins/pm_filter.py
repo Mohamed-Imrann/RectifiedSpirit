@@ -1,11 +1,22 @@
 import asyncio
 import re
-from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, InputMediaPhoto
-from database.crazy_db import get_series_by_key, get_series_by_title, get_all_series_keys
+import time
+import logging
+from collections import defaultdict
+from fuzzywuzzy import fuzz
+
+from pyrogram import Client, filters, enums
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, InputMediaPhoto, CallbackQuery
+from pyrogram.errors import MessageEmpty, MessageNotModified, FloodWait
+
 from info import ADMINS, LOG_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL, IMDB, IMDB_POSTER, PM_TXT, SPELL_CHECK_TXT, CHANNELS_TXT, START_TXT, TMDB_API_KEY, NO_POSTER_FOUND_IMG
-from Script import script
-from utils import get_poster_from_tmdb, get_shortlink
+from database.crazy_db import get_series_by_key, get_series_by_title, get_all_series, get_specific_poster # Corrected imports
+from database.ia_filterdb import get_file_details, get_search_results # Assuming these are still needed
+from utils import get_shortlink, get_size, get_poster, is_subscribed, get_readable_time, get_seconds, temp, get_poster_from_tmdb # Assuming these are in utils
+from Script import script # Assuming this is still needed
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # Regex to match series keys (e.g., S001, S002)
 SERIES_KEY_REGEX = re.compile(r'^[Ss]\d{3}$')
@@ -15,15 +26,13 @@ SERIES_KEY_REGEX = re.compile(r'^[Ss]\d{3}$')
 user_last_interaction = defaultdict(int)
 COOLDOWN_TIME = 2 # seconds
 
-NO_POSTER_FOUND_IMG = ["https://envs.sh/esA.jpg"] # Placeholder image
-
 async def get_series_poster_for_user(series_key: str, language_name: str = None, season_name: str = None):
     """
     Retrieves the most specific poster available for a series, language, or season.
     Falls back to higher-level posters if more specific ones are not found.
     """
-    poster = get_specific_poster(series_key, language_name, season_name)
-    return poster if poster else NO_POSTER_FOUND_IMG[0]
+    poster = await get_specific_poster(series_key, language_name, season_name)
+    return poster if poster else NO_POSTER_FOUND_IMG
 
 @Client.on_message(filters.private & filters.text & filters.incoming & filters.user(ADMINS))
 async def pm_admin_filter(client: Client, message: Message):
@@ -35,16 +44,16 @@ async def pm_admin_filter(client: Client, message: Message):
     if SERIES_KEY_REGEX.match(text):
         series_key = text.upper()
         series_data = await get_series_by_key(series_key)
-        if series_data:
+        if series_data and series_data.get('published', False):
             await send_series_details(client, message, series_data)
             return
         else:
-            await message.reply_text("No series found with that key.")
+            await message.reply_text("No published series found with that key.")
             return
 
     # Try to search by title
     series_data = await get_series_by_title(text)
-    if series_data:
+    if series_data and series_data.get('published', False):
         await send_series_details(client, message, series_data)
     else:
         # If no series found, offer spell check or general message
@@ -55,163 +64,12 @@ async def pm_admin_filter(client: Client, message: Message):
 
 @Client.on_message(filters.private & filters.text & filters.incoming & ~filters.user(ADMINS))
 async def pm_user_filter(client: Client, message: Message):
-    # For non-admin users, just respond with a general message
-    if PM_TXT:
-        await message.reply_text(PM_TXT)
-    else:
-        await message.reply_text(START_TXT) # Fallback to START_TXT if PM_TXT is not set
-
-async def send_series_details(client: Client, message: Message, series_data: dict):
-    title = series_data.get("title", "N/A")
-    overview = series_data.get("overview", "No overview available.")
-    poster_path = series_data.get("poster_path")
-    languages = series_data.get("languages", {})
-    
-    caption = f"**{title}**\n\n{overview}"
-
-    reply_markup = []
-    for lang_code, lang_data in languages.items():
-        lang_name = lang_data.get("name", lang_code.upper())
-        seasons = lang_data.get("seasons", {})
-        
-        lang_buttons = []
-        for season_num, season_data in seasons.items():
-            season_name = season_data.get("name", f"Season {season_num}")
-            # Assuming 'files' or 'links' exist for each season
-            # For simplicity, let's just create a button for the season
-            # In a real scenario, this would lead to another menu or direct links
-            lang_buttons.append(InlineKeyboardButton(season_name, callback_data=f"season_{series_data['key']}_{lang_code}_{season_num}"))
-        
-        if lang_buttons:
-            reply_markup.append([InlineKeyboardButton(lang_name, callback_data=f"lang_{series_data['key']}_{lang_code}")])
-            # Add season buttons in a new row for each language
-            reply_markup.append(lang_buttons)
-
-    if not reply_markup:
-        reply_markup.append([InlineKeyboardButton("No content available", callback_data="no_content")])
-
-    keyboard = InlineKeyboardMarkup(reply_markup)
-
-    poster_url = None
-    if IMDB_POSTER and poster_path: # IMDB_POSTER is a flag to enable/disable poster fetching
-        poster_url = await get_poster_from_tmdb(poster_path, TMDB_API_KEY)
-    
-    if poster_url:
-        try:
-            await message.reply_photo(photo=poster_url, caption=caption, reply_markup=keyboard)
-        except Exception as e:
-            print(f"Error sending photo: {e}. Sending text message instead.")
-            await message.reply_text(caption, reply_markup=keyboard)
-    else:
-        # Fallback to default poster if IMDB_POSTER is False or poster not found
-        if NO_POSTER_FOUND_IMG:
-            try:
-                await message.reply_photo(photo=NO_POSTER_FOUND_IMG[0], caption=caption, reply_markup=keyboard)
-            except Exception as e:
-                print(f"Error sending default photo: {e}. Sending text message instead.")
-                await message.reply_text(caption, reply_markup=keyboard)
-        else:
-            await message.reply_text(caption, reply_markup=keyboard)
-
-# Callback query handler for language and season buttons
-@Client.on_callback_query(filters.regex(r"^(lang|season)_"))
-async def callback_handler(client: Client, query):
-    data = query.data
-    parts = data.split("_")
-    action = parts[0]
-    series_key = parts[1]
-    lang_code = parts[2]
-
-    series_data = await get_series_by_key(series_key)
-    if not series_data:
-        await query.answer("Series data not found.", show_alert=True)
-        return
-
-    if action == "lang":
-        # User clicked on a language button, show seasons for that language
-        lang_data = series_data.get("languages", {}).get(lang_code)
-        if lang_data:
-            seasons = lang_data.get("seasons", {})
-            if seasons:
-                season_buttons = []
-                for season_num, season_data in seasons.items():
-                    season_name = season_data.get("name", f"Season {season_num}")
-                    season_buttons.append(InlineKeyboardButton(season_name, callback_data=f"season_{series_key}_{lang_code}_{season_num}"))
-                
-                keyboard = InlineKeyboardMarkup([season_buttons])
-                await query.message.edit_caption(
-                    caption=f"**{series_data['title']} - {lang_data.get('name', lang_code.upper())}**\n\nSelect a season:",
-                    reply_markup=keyboard
-                )
-            else:
-                await query.answer("No seasons available for this language.", show_alert=True)
-        else:
-            await query.answer("Language data not found.", show_alert=True)
-    elif action == "season":
-        season_num = parts[3]
-        lang_data = series_data.get("languages", {}).get(lang_code)
-        if lang_data:
-            season_data = lang_data.get("seasons", {}).get(season_num)
-            if season_data:
-                # Assuming season_data contains 'files' or 'links'
-                files = season_data.get("files", []) # Or links
-                if files:
-                    file_buttons = []
-                    for file_info in files:
-                        file_name = file_info.get("name", "File")
-                        file_link = file_info.get("link") # Assuming a direct link or shortlink
-                        if file_link:
-                            # Use get_shortlink if available and needed
-                            final_link = await get_shortlink(file_link) # Assuming get_shortlink exists in utils
-                            file_buttons.append(InlineKeyboardButton(file_name, url=final_link))
-                    
-                    if file_buttons:
-                        keyboard = InlineKeyboardMarkup([file_buttons])
-                        await query.message.edit_caption(
-                            caption=f"**{series_data['title']} - {lang_data.get('name', lang_code.upper())} - {season_data.get('name', f'Season {season_num}')}**\n\nHere are the files:",
-                            reply_markup=keyboard
-                        )
-                    else:
-                        await query.answer("No files found for this season.", show_alert=True)
-                else:
-                    await query.answer("No files found for this season.", show_alert=True)
-            else:
-                await query.answer("Season data not found.", show_alert=True)
-        else:
-            await query.answer("Language data not found.", show_alert=True)
-    
-    await query.answer() # Acknowledge the query
-
-def chunk_buttons(buttons, chunk_size=2):
-    """
-    Helper function to chunk buttons into lists of lists with a specified chunk size.
-    """
-    return [buttons[i:i + chunk_size] for i in range(0, len(buttons), chunk_size)]
-
-@Client.on_message(filters.private & filters.text & filters.incoming & filters.user(ADMINS))
-async def pm_admin_commands(client: Client, message: Message):
-    # This handler will primarily be for admin messages not related to the series management UI
-    # The series management UI commands and callbacks are handled in crazy.py
-    if message.text == "/start":
-        await message.reply_text(START_TXT.format(first_name=message.from_user.first_name, last_name=message.from_user.last_name), disable_web_page_preview=True)
-    elif message.text == "/c":
-        # Example: show channels
-        await message.reply_text(CHANNELS_TXT, disable_web_page_preview=True)
-    elif message.text == "/imdb":
-        await message.reply_text(IMDB_POSTER, disable_web_page_preview=True)
-    else:
-        # For non-command text, we can still respond
-        # await message.reply_text("Hello, Admin! I'm here to help manage your series. Use commands like /newseries, /editseries, /cloneseries, or /seriview to get started.")
-        pass # Let crazy.py handle other text inputs for its state machine
-
-@Client.on_message(filters.text & filters.private & filters.incoming & ~filters.user(ADMINS))
-async def pm_text_filter(client: Client, message: Message):
     if message.text == "/start":
         await message.reply_text(START_TXT.format(first_name=message.from_user.first_name, last_name=message.from_user.last_name), disable_web_page_preview=True)
         return
     
     # Check subscription status for non-admin users
-    if PM_TXT and not await is_subscribed(client, message):
+    if FORCE_SUB_CHANNEL and not await is_subscribed(client, message):
         try:
             temp_msg = await message.reply_text(PM_TXT, disable_web_page_preview=True)
             await asyncio.sleep(60)
@@ -232,10 +90,17 @@ async def pm_text_filter(client: Client, message: Message):
     user_last_interaction[message.from_user.id] = current_time
 
     try:
+        # First, try to find a series in crazy_db
+        series_data = await get_series_by_title(query)
+        if series_data and series_data.get('published', False):
+            await show_series_languages(client, message, series_data)
+            return
+
+        # If no direct series match, try general file search (ia_filterdb)
         results = await get_search_results(query, filter=True)
         if not results:
             if SPELL_CHECK_TXT:
-                imdb_data = await get_poster(query, bulk=True)
+                imdb_data = await get_poster(query, bulk=True) # get_poster from utils.py
                 if imdb_data:
                     buttons = [[InlineKeyboardButton(f"{i.get('title')} ({i.get('year')})", callback_data=f"spellcheck_{i.get('imdb_id')}") for i in imdb_data]]
                     markup = InlineKeyboardMarkup(buttons)
@@ -266,25 +131,17 @@ async def pm_text_filter(client: Client, message: Message):
                 # Fallback for old filters or files not linked to a crazy_db series
                 grouped_results[r['file_name']].append(r) # Group by filename if no series key
 
-        if len(grouped_results) == 1 and next(iter(grouped_results.values()))[0].get('data', {}).get('_id'):
-            # If only one series, proceed to show its languages/seasons if available via crazy_db
-            series_data = get_series_by_key(next(iter(grouped_results.keys())))
-            if series_data and series_data.get('published') and series_data.get('languages'):
-                await show_series_languages(client, message, series_data)
-                return
-
         buttons = []
         for series_key, files in grouped_results.items():
-            series_data = get_series_by_key(series_key)
-            if series_data and series_data.get('published'):
-                title = series_data.get('title', series_key)
+            series_data_from_db = await get_series_by_key(series_key)
+            if series_data_from_db and series_data_from_db.get('published'):
+                title = series_data_from_db.get('title', series_key)
                 # Show the primary entry point for this series
                 buttons.append(
                     InlineKeyboardButton(f"🎬 {title}", callback_data=f"series_select:{series_key}")
                 )
             else:
                 # For non-crazy_db entries or unpublished crazy_db entries, display file details
-                # This part is simplified, could be expanded to list individual files if needed
                 for file_data in files:
                     buttons.append(
                         InlineKeyboardButton(
@@ -306,7 +163,7 @@ async def pm_text_filter(client: Client, message: Message):
         await message.reply_text(
             "Here are the results found for your query. Please select a series or file:",
             reply_markup=reply_markup,
-            parse_mode="html"
+            parse_mode=enums.ParseMode.HTML
         )
 
     except FloodWait as e:
@@ -315,6 +172,7 @@ async def pm_text_filter(client: Client, message: Message):
     except Exception as e:
         logger.error(f"Error in pm_text_filter: {e}", exc_info=True)
         await message.reply_text("An error occurred while processing your request.")
+
 
 @Client.on_callback_query(filters.regex(r"^spellcheck_") & ~filters.user(ADMINS))
 async def spellcheck_callback(client: Client, callback_query: CallbackQuery):
@@ -329,7 +187,7 @@ async def spellcheck_callback(client: Client, callback_query: CallbackQuery):
 
     try:
         # Fetch details using imdb_id
-        movie_data = await get_poster(imdb_id, id=True)
+        movie_data = await get_poster(imdb_id, id=True) # get_poster from utils.py
         if not movie_data:
             await callback_query.message.edit_text("Could not find details for this ID.")
             return
@@ -337,7 +195,7 @@ async def spellcheck_callback(client: Client, callback_query: CallbackQuery):
         # Try to find a matching series in the crazy_db
         imdb_title = movie_data.get('title')
         found_series = None
-        all_series = get_series_by_key("") # Use an empty string or a special key to get all series
+        all_series = await get_all_series() # Get all series to search
         for series in all_series:
             series_title = series.get('title', '')
             if fuzz.ratio(imdb_title.lower(), series_title.lower()) > 80 and series.get('published'):
@@ -352,22 +210,23 @@ async def spellcheck_callback(client: Client, callback_query: CallbackQuery):
                    f"<b>IMDb ID:</b> <code>{movie_data.get('imdb_id', 'N/A')}</code>\n\n" \
                    "No matching published series found in the database for this entry. You can try another search or contact admin."
             
-            poster = movie_data.get('poster') or NO_POSTER_FOUND_IMG[0]
+            poster = movie_data.get('poster') or NO_POSTER_FOUND_IMG
             
             try:
                 await callback_query.message.edit_media(
-                    InputMediaPhoto(media=poster, caption=text, parse_mode="html"),
+                    InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.HTML),
                     reply_markup=None # Remove buttons as no series found
                 )
             except MessageNotModified:
                 pass # If content is the same, no need to edit
             except Exception as e:
                 logger.error(f"Error editing message media in spellcheck_callback: {e}")
-                await callback_query.message.edit_text(text, reply_markup=None, parse_mode="html")
+                await callback_query.message.edit_text(text, reply_markup=None, parse_mode=enums.ParseMode.HTML)
 
     except Exception as e:
         logger.error(f"Error in spellcheck_callback: {e}")
         await callback_query.message.edit_text("An error occurred while fetching details.")
+
 
 async def show_series_languages(client: Client, message: Message, series_data: dict):
     series_key = series_data['_id']
@@ -379,9 +238,9 @@ async def show_series_languages(client: Client, message: Message, series_data: d
         poster = await get_series_poster_for_user(series_key)
         try:
             if message.photo: # If original message was a photo
-                await message.edit_media(InputMediaPhoto(media=poster, caption=text, parse_mode="html"))
+                await message.edit_media(InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.HTML))
             else:
-                await message.edit_text(text, parse_mode="html")
+                await message.edit_text(text, parse_mode=enums.ParseMode.HTML)
         except MessageNotModified:
             pass
         return
@@ -399,9 +258,9 @@ async def show_series_languages(client: Client, message: Message, series_data: d
         poster = await get_series_poster_for_user(series_key)
         try:
             if message.photo:
-                await message.edit_media(InputMediaPhoto(media=poster, caption=text, parse_mode="html"))
+                await message.edit_media(InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.HTML))
             else:
-                await message.edit_text(text, parse_mode="html")
+                await message.edit_text(text, parse_mode=enums.ParseMode.HTML)
         except MessageNotModified:
             pass
         return
@@ -412,7 +271,7 @@ async def show_series_languages(client: Client, message: Message, series_data: d
     try:
         if message.photo:
             await message.edit_media(
-                InputMediaPhoto(media=poster, caption=text, parse_mode="html"),
+                InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.HTML),
                 reply_markup=reply_markup
             )
         else:
@@ -420,7 +279,7 @@ async def show_series_languages(client: Client, message: Message, series_data: d
                 photo=poster,
                 caption=text,
                 reply_markup=reply_markup,
-                parse_mode="html"
+                parse_mode=enums.ParseMode.HTML
             )
             await message.delete() # Delete original text message if new photo message is sent
     except MessageNotModified:
@@ -428,7 +287,8 @@ async def show_series_languages(client: Client, message: Message, series_data: d
     except Exception as e:
         logger.error(f"Error sending/editing language selection message: {e}")
         # Fallback to text message if photo fails
-        await message.edit_text(text, reply_markup=reply_markup, parse_mode="html")
+        await message.edit_text(text, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
+
 
 @Client.on_callback_query(filters.regex(r"^series_select:") & ~filters.user(ADMINS))
 async def series_select_callback(client: Client, callback_query: CallbackQuery):
@@ -441,12 +301,13 @@ async def series_select_callback(client: Client, callback_query: CallbackQuery):
     series_key = callback_query.data.split(":")[1]
     await callback_query.answer("Loading series details...", cache_time=0)
 
-    series_data = get_series_by_key(series_key)
+    series_data = await get_series_by_key(series_key)
     if not series_data or not series_data.get('published'):
         await callback_query.message.edit_text("Series not found or not published.")
         return
 
     await show_series_languages(client, callback_query.message, series_data)
+
 
 @Client.on_callback_query(filters.regex(r"^user_lang:") & ~filters.user(ADMINS))
 async def user_language_select_callback(client: Client, callback_query: CallbackQuery):
@@ -459,7 +320,7 @@ async def user_language_select_callback(client: Client, callback_query: Callback
     _, series_key, language_name = callback_query.data.split(":")
     await callback_query.answer(f"Loading seasons for {language_name}...", cache_time=0)
 
-    series_data = get_series_by_key(series_key)
+    series_data = await get_series_by_key(series_key)
     if not series_data or not series_data.get('published'):
         await callback_query.message.edit_text("Series not found or not published.")
         return
@@ -494,14 +355,15 @@ async def user_language_select_callback(client: Client, callback_query: Callback
     poster = await get_series_poster_for_user(series_key, language_name=language_name)
     try:
         await callback_query.message.edit_media(
-            InputMediaPhoto(media=poster, caption=text, parse_mode="html"),
+            InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.HTML),
             reply_markup=reply_markup
         )
     except MessageNotModified:
         pass
     except Exception as e:
         logger.error(f"Error editing message media in user_language_select_callback: {e}")
-        await callback_query.message.edit_text(text, reply_markup=reply_markup, parse_mode="html")
+        await callback_query.message.edit_text(text, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
+
 
 @Client.on_callback_query(filters.regex(r"^user_season:") & ~filters.user(ADMINS))
 async def user_season_select_callback(client: Client, callback_query: CallbackQuery):
@@ -514,7 +376,7 @@ async def user_season_select_callback(client: Client, callback_query: CallbackQu
     _, series_key, language_name, season_name = callback_query.data.split(":")
     await callback_query.answer(f"Loading qualities for {season_name}...", cache_time=0)
 
-    series_data = get_series_by_key(series_key)
+    series_data = await get_series_by_key(series_key)
     if not series_data or not series_data.get('published'):
         await callback_query.message.edit_text("Series not found or not published.")
         return
@@ -552,14 +414,15 @@ async def user_season_select_callback(client: Client, callback_query: CallbackQu
     poster = await get_series_poster_for_user(series_key, language_name=language_name, season_name=season_name)
     try:
         await callback_query.message.edit_media(
-            InputMediaPhoto(media=poster, caption=text, parse_mode="html"),
+            InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.HTML),
             reply_markup=reply_markup
         )
     except MessageNotModified:
         pass
     except Exception as e:
         logger.error(f"Error editing message media in user_season_select_callback: {e}")
-        await callback_query.message.edit_text(text, reply_markup=reply_markup, parse_mode="html")
+        await callback_query.message.edit_text(text, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
+
 
 @Client.on_callback_query(filters.regex(r"^user_quality:") & ~filters.user(ADMINS))
 async def user_quality_select_callback(client: Client, callback_query: CallbackQuery):
@@ -572,7 +435,7 @@ async def user_quality_select_callback(client: Client, callback_query: CallbackQ
     _, series_key, language_name, season_name, quality_name = callback_query.data.split(":")
     await callback_query.answer(f"Fetching files for {quality_name}...", cache_time=0)
 
-    series_data = get_series_by_key(series_key)
+    series_data = await get_series_by_key(series_key)
     if not series_data or not series_data.get('published'):
         await callback_query.message.edit_text("Series not found or not published.")
         return
@@ -606,9 +469,6 @@ async def user_quality_select_callback(client: Client, callback_query: CallbackQ
         first_msg_id = int(parts[2])
         last_msg_id = int(parts[3])
         
-        # Convert raw_id back to Pyrogram format channel ID (e.g., -100XXXXXXXXX)
-        db_channel_id = int(f"-100{db_channel_raw_id}")
-
         # Construct the caption for the message
         caption_text = (
             f"<b>Series:</b> <code>{series_data.get('title', 'N/A')}</code>\n"
@@ -624,9 +484,6 @@ async def user_quality_select_callback(client: Client, callback_query: CallbackQ
         
         button_text = f"Get {quality_name} Files"
         get_files_url = f"https://t.me/c/{db_channel_raw_id}/{first_msg_id}-{last_msg_id}" # Direct range link
-        # Note: Pyrogram's send_message and forward_messages are better for actual file delivery.
-        # This direct link is for simplicity but might not be ideal for large numbers of files.
-        # A more robust solution would involve forwarding messages from the DB_CHANNEL.
 
         reply_markup = InlineKeyboardMarkup([
             [InlineKeyboardButton(button_text, url=get_files_url)],
@@ -636,7 +493,7 @@ async def user_quality_select_callback(client: Client, callback_query: CallbackQ
         poster = await get_series_poster_for_user(series_key, language_name=language_name, season_name=season_name)
         try:
             await callback_query.message.edit_media(
-                InputMediaPhoto(media=poster, caption=caption_text, parse_mode="html"),
+                InputMediaPhoto(media=poster, caption=caption_text, parse_mode=enums.ParseMode.HTML),
                 reply_markup=reply_markup,
                 disable_web_page_preview=True
             )
@@ -644,7 +501,7 @@ async def user_quality_select_callback(client: Client, callback_query: CallbackQ
             pass
         except Exception as e:
             logger.error(f"Error editing message media in user_quality_select_callback: {e}")
-            await callback_query.message.edit_text(caption_text, reply_markup=reply_markup, parse_mode="html", disable_web_page_preview=True)
+            await callback_query.message.edit_text(caption_text, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
 
     except ValueError:
         await callback_query.message.edit_text("Invalid file link found in database. Please contact admin.")
@@ -682,16 +539,16 @@ async def file_details_callback(client: Client, callback_query: CallbackQuery):
             # If the original message was a photo/video, try to edit media. Otherwise, send new message.
             if callback_query.message.photo or callback_query.message.video:
                 await callback_query.message.edit_media(
-                    InputMediaPhoto(media=file_data.file_id, caption=caption, parse_mode="html"), # Use file_id as media
+                    InputMediaPhoto(media=file_data.file_id, caption=caption, parse_mode=enums.ParseMode.HTML), # Use file_id as media
                     reply_markup=reply_markup
                 )
             else:
-                await callback_query.message.edit_text(caption, reply_markup=reply_markup, parse_mode="html")
+                await callback_query.message.edit_text(caption, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
         except MessageNotModified:
             pass # No change, don't modify
         except Exception as e:
             logger.error(f"Error editing/sending file details message: {e}")
-            await callback_query.message.edit_text(caption, reply_markup=reply_markup, parse_mode="html")
+            await callback_query.message.edit_text(caption, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
 
     except Exception as e:
         logger.error(f"Error in file_details_callback: {e}", exc_info=True)
