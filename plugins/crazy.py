@@ -11,7 +11,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, 
 from imdb import Cinemagoer
 from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, TMDB_API_KEY, LOG_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL, IMGBB_API_KEY, NO_POSTER_FOUND_IMG
 from database.crazy_db import (
-    add_series, get_series_by_key, update_series_field, add_or_update_language,
+    add_series, get_series_by_key, add_or_update_language,
     get_languages, delete_language, add_or_update_season, get_seasons, delete_season,
     add_or_update_quality, get_qualities, get_quality_link, delete_quality,
     get_poster_file_id, update_poster_file_id, publish_series, get_series, get_specific_poster, # Import get_specific_poster
