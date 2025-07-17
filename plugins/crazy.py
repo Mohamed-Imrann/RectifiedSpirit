@@ -14,7 +14,7 @@ from database.crazy_db import (
     add_series, get_series_by_key, update_series_field, add_or_update_language,
     get_languages, delete_language, add_or_update_season, get_seasons, delete_season,
     add_or_update_quality, get_qualities, get_quality_link, delete_quality,
-    get_poster_file_id, update_poster_file_id, publish_series, get_series # Import get_series to search by title
+    get_poster_file_id, update_poster_file_id, publish_series, get_series, get_specific_poster # Import get_specific_poster
 )
 from utils import get_message_id, get_messages_in_range, delete_messages_from_user_chat, get_poster, find_most_similar_title
 from fuzzywuzzy import fuzz # Import fuzzywuzzy
@@ -297,26 +297,42 @@ async def send_language_management_message(client: Client, user_id: int, series_
 
     reply_markup = InlineKeyboardMarkup(buttons)
 
+    # Determine which poster to use: series poster
+    poster_to_use = series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG
+
     try:
-        await client.edit_message_text(
-            chat_id=user_id,
-            message_id=message_id,
-            text=text,
-            reply_markup=reply_markup,
-            parse_mode=enums.ParseMode.HTML
-        )
+        if message_id:
+            await client.edit_message_media(
+                chat_id=user_id,
+                message_id=message_id,
+                media=InputMediaPhoto(media=poster_to_use, caption=text, parse_mode=enums.ParseMode.HTML),
+                reply_markup=reply_markup
+            )
+            return message_id
+        else:
+            msg = await client.send_photo(
+                chat_id=user_id,
+                photo=poster_to_use,
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=enums.ParseMode.HTML
+            )
+            return msg.id
     except (MessageIdInvalid, FloodWait) as e: # Removed MessageNotFound
         logger.warning(f"Failed to edit language management message (ID: {message_id}): {e}. Attempting to send a new message.")
-        new_msg = await client.send_message(
+        new_msg = await client.send_photo(
             chat_id=user_id,
-            text=text,
+            photo=poster_to_use,
+            caption=text,
             reply_markup=reply_markup,
             parse_mode=enums.ParseMode.HTML
         )
         temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
+        return new_msg.id
     except Exception as e:
         logger.error(f"An unexpected error occurred editing language management message: {e}")
         await client.send_message(user_id, "Error updating language management display. Please try again.")
+        return None
 
 
 async def send_season_management_message(client: Client, user_id: int, series_key: str, language_name: str, message_id: int):
@@ -352,26 +368,42 @@ async def send_season_management_message(client: Client, user_id: int, series_ke
 
     reply_markup = InlineKeyboardMarkup(buttons)
 
+    # Determine which poster to use: language poster, then series poster
+    poster_to_use = current_lang.get("poster_file_id") or series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG
+
     try:
-        await client.edit_message_text(
-            chat_id=user_id,
-            message_id=message_id,
-            text=text,
-            reply_markup=reply_markup,
-            parse_mode=enums.ParseMode.HTML
-        )
+        if message_id:
+            await client.edit_message_media(
+                chat_id=user_id,
+                message_id=message_id,
+                media=InputMediaPhoto(media=poster_to_use, caption=text, parse_mode=enums.ParseMode.HTML),
+                reply_markup=reply_markup
+            )
+            return message_id
+        else:
+            msg = await client.send_photo(
+                chat_id=user_id,
+                photo=poster_to_use,
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=enums.ParseMode.HTML
+            )
+            return msg.id
     except (MessageIdInvalid, FloodWait) as e: # Removed MessageNotFound
         logger.warning(f"Failed to edit season management message (ID: {message_id}): {e}. Attempting to send a new message.")
-        new_msg = await client.send_message(
+        new_msg = await client.send_photo(
             chat_id=user_id,
-            text=text,
+            photo=poster_to_use,
+            caption=text,
             reply_markup=reply_markup,
             parse_mode=enums.ParseMode.HTML
         )
         temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
+        return new_msg.id
     except Exception as e:
         logger.error(f"An unexpected error occurred editing season management message: {e}")
         await client.send_message(user_id, "Error updating season management display. Please try again.")
+        return None
 
 
 async def send_quality_management_message(client: Client, user_id: int, series_key: str, language_name: str, season_name: str, message_id: int):
@@ -382,7 +414,7 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
         return
 
     current_lang = next((lang for lang in series_data.get("languages", []) if lang["name"].lower() == language_name.lower()), None)
-    current_season = next((s for s in current_lang.get("seasons", []) if s["name"].lower() == season_name.lower()), None)
+    current_season = next((s for s in current_lang.get("seasons", []) if s["name"].lower() == season_name.lower()), None) if current_lang else None
     if not current_season:
         await client.send_message(user_id, "Season not found.")
         return
@@ -409,26 +441,42 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
 
     reply_markup = InlineKeyboardMarkup(buttons)
 
+    # Determine which poster to use: season poster, then language poster, then series poster
+    poster_to_use = current_season.get("poster_file_id") or current_lang.get("poster_file_id") or series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG
+
     try:
-        await client.edit_message_text(
-            chat_id=user_id,
-            message_id=message_id,
-            text=text,
-            reply_markup=reply_markup,
-            parse_mode=enums.ParseMode.HTML
-        )
+        if message_id:
+            await client.edit_message_media(
+                chat_id=user_id,
+                message_id=message_id,
+                media=InputMediaPhoto(media=poster_to_use, caption=text, parse_mode=enums.ParseMode.HTML),
+                reply_markup=reply_markup
+            )
+            return message_id
+        else:
+            msg = await client.send_photo(
+                chat_id=user_id,
+                photo=poster_to_use,
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=enums.ParseMode.HTML
+            )
+            return msg.id
     except (MessageIdInvalid, FloodWait) as e: # Removed MessageNotFound
         logger.warning(f"Failed to edit quality management message (ID: {message_id}): {e}. Attempting to send a new message.")
-        new_msg = await client.send_message(
+        new_msg = await client.send_photo(
             chat_id=user_id,
-            text=text,
+            photo=poster_to_use,
+            caption=text,
             reply_markup=reply_markup,
             parse_mode=enums.ParseMode.HTML
         )
         temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
+        return new_msg.id
     except Exception as e:
         logger.error(f"An unexpected error occurred editing quality management message: {e}")
         await client.send_message(user_id, "Error updating quality management display. Please try again.")
+        return None
 
 # --- Command Handlers ---
 
@@ -609,9 +657,8 @@ async def edit_series_command(client: Client, message: Message):
             temp_admin_data[user_id]["main_message_id"] = temp_msg.id
             return # Exit, wait for callback
 
-    if series_data.get('published'):
-        await message.reply(f"Series '{series_data.get('title', 'N/A')}' is already published and cannot be edited via this UI. If you need to make changes, consider cloning it first.")
-        return
+    # Removed the check for 'published' status here to allow editing published series.
+    # A warning will be shown in send_main_series_message if it's published.
 
     # Proceed to load the series for editing
     temp_msg = await message.reply_photo(
@@ -625,6 +672,42 @@ async def edit_series_command(client: Client, message: Message):
     temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
     
     await send_main_series_message(client, user_id, series_data, temp_msg.id)
+
+    if series_data.get('published'):
+        await client.send_message(
+            user_id,
+            "⚠️ **Warning:** This series is currently **published**. Any changes you make will **not** be live until you click 'Publish Series' again."
+        )
+
+@Client.on_message(filters.command('seriview') & filters.user(ADMINS))
+async def seriview_command(client: Client, message: Message):
+    user_id = message.from_user.id
+    all_series = get_series()
+
+    if not all_series:
+        await message.reply("No series found in the database.")
+        return
+
+    text = "<b>All Series in Database:</b>\n\n"
+    buttons = []
+    for s in all_series:
+        title = s.get('title', 'N/A')
+        series_key = s.get('_id', 'N/A')
+        published_status = "✅ Published" if s.get('published', False) else "❌ Unpublished"
+        
+        text += f"• <code>{title}</code> (Key: <code>{series_key}</code>) - {published_status}\n"
+        buttons.append([
+            InlineKeyboardButton(f"Edit {title}", callback_data=f"local_series_select:{series_key}")
+        ])
+    
+    reply_markup = InlineKeyboardMarkup(chunk_buttons(buttons, chunk_size=1)) # One button per row for readability
+
+    await message.reply_text(
+        text=text,
+        reply_markup=reply_markup,
+        parse_mode=enums.ParseMode.HTML,
+        disable_web_page_preview=True
+    )
 
 
 # --- Callback Query Handlers ---
@@ -726,15 +809,20 @@ async def media_selection_callback(client: Client, callback_query: CallbackQuery
 async def local_series_selection_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     data_parts = callback_query.data.split(":")
-    unique_id = data_parts[1]
+    # Check if data_parts has enough elements for the old UUID logic, if not, assume it's a direct key
+    if len(data_parts) > 1 and len(data_parts[1]) == 36 and '-' in data_parts[1]: # Basic UUID check
+        unique_id = data_parts[1]
+        if user_id not in temp_admin_data or unique_id not in temp_admin_data[user_id]:
+            await callback_query.answer("Session expired or invalid data.", show_alert=True)
+            await callback_query.message.delete()
+            return
+        stored_data = temp_admin_data[user_id].pop(unique_id)
+        series_key = stored_data['series_key']
+    else:
+        # Assume it's the direct series_key from /seriview
+        series_key = data_parts[1]
+        await callback_query.answer(f"Loading series: {series_key}...", show_alert=False)
 
-    if user_id not in temp_admin_data or unique_id not in temp_admin_data[user_id]:
-        await callback_query.answer("Session expired or invalid data.", show_alert=True)
-        await callback_query.message.delete()
-        return
-
-    stored_data = temp_admin_data[user_id].pop(unique_id)
-    series_key = stored_data['series_key']
     main_message_id = temp_admin_data[user_id].get("main_message_id")
 
     series_data = get_series_by_key(series_key)
@@ -746,13 +834,7 @@ async def local_series_selection_callback(client: Client, callback_query: Callba
         )
         return
 
-    if series_data.get('published'):
-        await client.edit_message_text(
-            chat_id=user_id,
-            message_id=main_message_id,
-            text=f"Series '{series_data.get('title', 'N/A')}' is already published and cannot be edited via this UI. If you need to make changes, consider cloning it first."
-        )
-        return
+    # Removed the check for 'published' status here to allow editing published series.
     
     await callback_query.answer("Loading series for editing...")
     
@@ -762,6 +844,12 @@ async def local_series_selection_callback(client: Client, callback_query: Callba
         temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
         temp_admin_data[user_id]["current_series_key"] = series_key
         temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
+    
+    if series_data.get('published'):
+        await client.send_message(
+            user_id,
+            "⚠️ **Warning:** This series is currently **published**. Any changes you make will **not** be live until you click 'Publish Series' again."
+        )
 
 
 @Client.on_callback_query(filters.regex(r"^back_to_series:") & filters.user(ADMINS))
@@ -1494,18 +1582,40 @@ async def confirm_publish_callback(client: Client, callback_query: CallbackQuery
     main_message_id = temp_admin_data[user_id].get("main_message_id")
 
     if publish_series(series_key):
-        await client.edit_message_text(
-            chat_id=user_id,
-            message_id=main_message_id,
-            text="Published Successfully! This series is now live and cannot be edited via this UI."
-        )
+        try: # Added try-except for the edit_message_text here
+            await client.edit_message_text(
+                chat_id=user_id,
+                message_id=main_message_id,
+                text="Published Successfully! This series is now live and cannot be edited via this UI."
+            )
+        except (MessageIdInvalid, FloodWait) as e:
+            logger.warning(f"Failed to edit final publish message (ID: {main_message_id}): {e}. Sending a new one.")
+            await client.send_message(
+                chat_id=user_id,
+                text="Published Successfully! This series is now live and cannot be edited via this UI."
+            )
+        except Exception as e:
+            logger.error(f"An unexpected error occurred editing final publish message: {e}")
+            await client.send_message(user_id, "Published Successfully! (But failed to update message).")
+            
         temp_admin_data.pop(user_id, None) # Clear session data for this admin
     else:
-        await client.edit_message_text(
-            chat_id=user_id,
-            message_id=main_message_id,
-            text="Failed to publish series. Please try again."
-        )
+        try: # Added try-except for the edit_message_text here
+            await client.edit_message_text(
+                chat_id=user_id,
+                message_id=main_message_id,
+                text="Failed to publish series. Please try again."
+            )
+        except (MessageIdInvalid, FloodWait) as e:
+            logger.warning(f"Failed to edit failed-publish message (ID: {main_message_id}): {e}. Sending a new one.")
+            await client.send_message(
+                chat_id=user_id,
+                text="Failed to publish series. Please try again."
+            )
+        except Exception as e:
+            logger.error(f"An unexpected error occurred editing failed-publish message: {e}")
+            await client.send_message(user_id, "Failed to publish series. (But failed to update message).")
+
         # Re-send the main series message if publishing failed
         series_data = get_series_by_key(series_key)
         if series_data: # Ensure series_data is not None before passing
