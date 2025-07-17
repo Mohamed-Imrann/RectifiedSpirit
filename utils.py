@@ -2,7 +2,7 @@ import re
 import asyncio
 import requests
 import time
-from info import DB_CHANNEL, RAW_DB_CHANNEL, TMDB_API_KEY, IMGBB_API_KEY, FORCE_SUB_CHANNEL
+from info import DB_CHANNEL, RAW_DB_CHANNEL, TMDB_API_KEY, IMGBB_API_KEY
 from pyrogram.errors import FloodWait
 
 class Temp:
@@ -160,21 +160,6 @@ def get_size(bytes, suffix="B"):
             return f"{bytes:.2f}{unit}{suffix}"
         bytes /= factor
 
-async def is_subscribed(client, message):
-    """
-    Checks if a user is subscribed to the FORCE_SUB_CHANNEL.
-    """
-    if not FORCE_SUB_CHANNEL:
-        return True # No force sub configured
-    try:
-        member = await client.get_chat_member(FORCE_SUB_CHANNEL, message.from_user.id)
-        if member.status in ["member", "administrator", "creator"]:
-            return True
-        else:
-            return False
-    except Exception as e:
-        print(f"Error checking subscription: {e}")
-        return False # Assume not subscribed on error
 
 def get_readable_time(seconds: int) -> str:
     """
