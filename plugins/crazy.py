@@ -1305,7 +1305,6 @@ async def process_codec_input(client: Client, message: Message, codec: str):
 
         # Go back to quality management view
         main_message_id = temp_admin_data[user_id].get("main_message_id")
-        await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
         temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
         
         # Clear temporary file data
