@@ -2,7 +2,6 @@ from aiohttp import web
 from .route import routes
 
 # Explicitly import all plugin modules
-from . import auto
 from . import banned
 from . import broadcast
 from . import commands
