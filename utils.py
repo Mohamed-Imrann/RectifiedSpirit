@@ -3,6 +3,7 @@ import os
 import asyncio
 import logging
 from pyrogram import Client, enums
+from pyrogram.types import Message
 from pyrogram.errors import MessageEmpty, MessageNotModified, FloodWait
 from imdb import Cinemagoer
 from info import LOG_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL
