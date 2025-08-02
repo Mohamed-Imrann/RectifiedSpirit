@@ -1,4 +1,5 @@
 import logging
+from pyrogram import Clients, filters, enums
 from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid, ChatWriteForbidden, MessageNotModified, ChannelPrivate, ChannelInvalid, MessageIdInvalid
 from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, NO_POSTER_FOUND_IMG
 from imdb import Cinemagoer 
