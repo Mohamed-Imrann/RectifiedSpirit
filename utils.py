@@ -537,8 +537,56 @@ def parser(text, keyword):
                 else:
                     buttons.append([InlineKeyboardButton(
                         text=match.group(2),
-       
-# Temporary storage for admin session data
+                        callback_data=f"alertmessage:{i}:{keyword}"
+                    )])
+                i += 1
+                alerts.append(match.group(4))
+            elif bool(match.group(5)) and buttons:
+                buttons[-1].append(InlineKeyboardButton(
+                    text=match.group(2),
+                    url=match.group(4).replace(" ", "")
+                ))
+            else:
+                buttons.append([InlineKeyboardButton(
+                    text=match.group(2),
+                    url=match.group(4).replace(" ", "")
+                )])
+
+        else:
+            note_data += text[prev:to_check]
+            prev = match.start(1) - 1
+    else:
+        note_data += text[prev:]
+
+    try:
+        return note_data, buttons, alerts
+    except:
+        return note_data, buttons, None
+
+def remove_escapes(text: str) -> str:
+    res = ""
+    is_escaped = False
+    for counter in range(len(text)): # Corrected range function usage
+        if is_escaped:
+            res += text[counter]
+            is_escaped = False
+        elif text[counter] == "\\":
+            is_escaped = True
+        else:
+            res += text[counter]
+    return res
+
+def humanbytes(size):
+    if not size:
+        return ""
+    power = 2**10
+    n = 0
+    Dic_powerN = {0: ' ', 1: 'Ki', 2: 'Mi', 3: 'Gi', 4: 'Ti'}
+    while size > power:
+        size /= power
+        n += 1
+    return str(round(size, 2)) + " " + Dic_powerN[n] + 'B'
+
 class TempData:
   def __init__(self):
       self.ADMIN = {}
