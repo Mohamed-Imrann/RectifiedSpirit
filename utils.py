@@ -46,6 +46,7 @@ class temp(object):
     LINK_ONE = None
     LINK_TWO = None
     SETTINGS = {}
+    admin_data = {} # Added for centralized admin state management
 
 def find_most_similar_title(query, search_results):
     """Finds the most similar title from IMDb search results."""
