@@ -33,9 +33,7 @@ from info import (
     SPELL_CHECK_IMAGE, 
     NO_POSTER_FOUND_IMG,
     AUTH_CHANNEL,
-    PICS,
-    NOR_IMG,
-    SPELL_IMG
+    PICS
 )
 from database.crazy_db import (
     db,
