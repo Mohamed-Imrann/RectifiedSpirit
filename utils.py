@@ -18,7 +18,6 @@ from pyrogram.errors import FloodWait, UserIsBlocked, MessageNotModified, PeerId
 from database.users_chats_db import db
 from database.ia_filterdb import Media, get_file_details, unpack_new_file_id, get_bad_files
 from database.gfilters_mdb import find_gfilter, get_gfilters
-from database.connections_mdb import active_connection
 import logging
 from imdb import Cinemagoer
 from fuzzywuzzy import fuzz
