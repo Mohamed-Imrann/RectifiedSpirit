@@ -13,7 +13,7 @@ from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.errors.exceptions.bad_request_400 import MediaEmpty, PhotoInvalidDimensions, WebpageMediaEmpty
 from Script import script
-from info import ADMINS, AUTH_CHANNEL, AUTH_USERS, CUSTOM_FILE_CAPTION, AUTH_GROUPS, P_TTI_SHOW_OFF, IMDB, SINGLE_BUTTON, SPELL_CHECK_REPLY, IMDB_TEMPLATE, LONG_IMDB_DESCRIPTION, PROTECT_CONTENT, SHORTLINK_URL, SHORTLINK_API, SHORTLINK, TUTORIAL, IS_TUTORIAL, SHORTLINK_URL, SHORTLINK_API, SHORTLINK, TUTORIAL_2, TUTORIAL_3, STREAM_MODE, ONLINE_STREAM, URL
+from info import ADMINS, AUTH_CHANNEL, CUSTOM_FILE_CAPTION
 from pyrogram.errors import FloodWait, UserIsBlocked, MessageNotModified, PeerIdInvalid
 from utils import get_size, is_subscribed, get_poster, search_gagala, temp, get_settings, save_group_settings
 from database.users_chats_db import db
