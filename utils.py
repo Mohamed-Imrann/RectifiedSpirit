@@ -43,8 +43,8 @@ class TempData:
         self.CURRENT = int(os.environ.get("SKIP", 2))
         self.CANCEL = False
         self.ME = None
-        self.TEMP_ONE = None
-        self.TEMP_TWO = None
+        self.LINK_ONE = None
+        self.LINK_TWO = None
 
 
 temp = TempData()
