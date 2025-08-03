@@ -18,7 +18,7 @@ from database.join_reqs import JoinReqs
 db1 = JoinReqs
 from pymongo import MongoClient
 from info import ADMINS, AUTH_CHANNEL, LOG_CHANNEL, CUSTOM_FILE_CAPTION, PROTECT_CONTENT, DATABASE_URI, DATABASE_NAME, AUTO_DELETE_TIME, AUTO_DELETE_MSG, BATCH_FILE_CAPTION as CUSTOM_CAPTION, DB_CHANNEL, RAW_DB_CHANNEL, STICKER, STICKER_ID, PIC, PICS, START_TXT
-from utils import get_size, is_subscribed, temp, temp_requests
+from utils import get_size, is_subscribed, temp
 import re
 import json
 import base64
