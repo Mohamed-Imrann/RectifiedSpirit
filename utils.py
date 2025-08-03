@@ -1,348 +1,147 @@
-import logging
-from pyrogram import Client, filters, enums
-from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid, ChatWriteForbidden, MessageNotModified, ChannelPrivate, ChannelInvalid, MessageIdInvalid
-from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, NO_POSTER_FOUND_IMG
-from imdb import Cinemagoer 
-import asyncio
-from pyrogram.types import Message, InlineKeyboardButton
-from pyrogram import enums
-from typing import Union
 import re
 import os
-from datetime import datetime
-from typing import List
-from database.users_chats_db import db
-from bs4 import BeautifulSoup
+import time
+import math
+import json
+import string
+import random
+import asyncio
+import logging
 import requests
-from pyrogram.errors.exceptions.bad_request_400 import UserNotParticipant
-import difflib # Import difflib for find_most_similar_title
+import pyrogram
+from pyrogram import Client, filters, enums
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.errors.exceptions.bad_request_400 import MediaEmpty, PhotoInvalidDimensions, WebpageMediaEmpty
+from Script import script
+from info import ADMINS, AUTH_CHANNEL, AUTH_USERS, CUSTOM_FILE_CAPTION, AUTH_GROUPS, P_TTI_SHOW_OFF, IMDB, SINGLE_BUTTON, SPELL_CHECK_REPLY, IMDB_TEMPLATE, LONG_IMDB_DESCRIPTION, PROTECT_CONTENT, SHORTLINK_URL, SHORTLINK_API, SHORTLINK, TUTORIAL, IS_TUTORIAL, SHORTLINK_URL, SHORTLINK_API, SHORTLINK, TUTORIAL_2, TUTORIAL_3, STREAM_MODE, ONLINE_STREAM, URL
+from pyrogram.errors import FloodWait, UserIsBlocked, MessageNotModified, PeerIdInvalid
+from utils import get_size, is_subscribed, get_poster, search_gagala, temp, get_settings, save_group_settings
+from database.users_chats_db import db
+from database.ia_filterdb import Media, get_file_details, unpack_new_file_id, get_bad_files
+from database.gfilters_mdb import find_gfilter, get_gfilters
+from database.connections_mdb import active_connection
+import logging
+from imdb import Cinemagoer
+from fuzzywuzzy import fuzz
+from difflib import get_close_matches
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-BTN_URL_REGEX = re.compile(
-    r"(\[([^\[]+?)\]$$(buttonurl|buttonalert):(?:/{0,2})(.+?)(:same)?$$)"
-)
-temp_requests = {}
-AUTO_DEL_SUCCESS_MSG = """Your File Has Been Deleted To Avoid BOT Copyright.\nYou Can Request Again If You Want!🫵🏻"""
-AUTO_DELETE_TIME = 600
-imdb = Cinemagoer() 
+# Initialize IMDb
+imdb = Cinemagoer()
 
-BANNED = {}
-SMART_OPEN = '“'
-SMART_CLOSE = '”'
-START_CHAR = ('\'', '"', SMART_OPEN)
- 
-class temp(object):
-    START_TIME = 0
-    BANNED_USERS = []
-    BANNED_CHATS = []
-    ME = None
-    CURRENT=int(os.environ.get("SKIP", 2))
-    CANCEL = False
-    MELCOW = {}
-    FILES_IDS = {}
-    U_NAME = None
-    B_NAME = None
-    LINK_ONE = None
-    LINK_TWO = None
-    SETTINGS = {}
+class TempData:
+    def __init__(self):
+        self.ADMIN = {}
+        self.U_NAME = None  # Bot username, set during bot startup
+        self.B_NAME = None
+        self.SETTINGS = {}
+        self.FILES = {}
+        self.admin_data = {}
+        self.BANNED_CHATS = []
+        self.BANNED_USERS = []
+        self.MELCOW = {}
+        self.CURRENT = int(os.environ.get("SKIP", 2))
+        self.CANCEL = False
+        self.ME = None
 
-def find_most_similar_title(query, search_results):
-    """Finds the most similar title from IMDb search results."""
-    titles = [movie.get('title', '').lower() for movie in search_results]
-    matches = difflib.get_close_matches(query.lower(), titles, n=1, cutoff=0.6)
-    if matches:
-        for movie in search_results:
-            if movie.get('title', '').lower() == matches[0]:
-                return movie
-    return None
-
-async def is_subscribed(bot, query=None, userid=None):
-    try:
-        if userid == None and query != None:
-            user = await bot.get_chat_member(AUTH_CHANNEL, query.from_user.id)
-        else:
-            user = await bot.get_chat_member(AUTH_CHANNEL, int(userid))
-    except UserNotParticipant:
-        pass
-    except Exception as e:
-        logger.exception(e)
-    else:
-        if user.status != enums.ChatMemberStatus.BANNED:
-            return True
-
-    return False
+temp = TempData()
 
 async def get_message_id(client, message):
-    if message.forward_from_chat:
-        # Forwarded message from channel
-        channel_id = str(message.forward_from_chat.id)
-        raw_id = abs(int(channel_id.replace("-100", "")))
-        if raw_id in RAW_DB_CHANNEL:
-            return channel_id, message.forward_from_message_id
-        return 0, 0
-
-    elif message.text:
-        # Direct link
-        pattern = r"https://t.me/(?:c/)?(\d+)/(\d+)"
-        matches = re.match(pattern, message.text)
-        if not matches:
-            return 0, 0
-
-        extracted_raw_channel_id = int(matches.group(1))
-        msg_id = int(matches.group(2))
-        
-        if extracted_raw_channel_id in RAW_DB_CHANNEL:
-            pyrogram_channel_id = f"-100{extracted_raw_channel_id}"
-            return pyrogram_channel_id, msg_id
-        return 0, 0
-
-    elif message.chat and str(message.chat.id).startswith("-100"):
-        # Directly sent message from a channel (e.g., via bot API, not forwarded)
-        channel_id = str(message.chat.id)
-        raw_id = abs(int(channel_id.replace("-100", "")))
-        if raw_id in RAW_DB_CHANNEL:
-            return channel_id, message.id
-        return 0, 0
-
-    return 0, 0
+    """
+    Extracts channel ID and message ID from a forwarded message or a post link.
+    Returns (channel_id, message_id) or (None, None) if invalid.
+    """
+    try:
+        if message.forward_from_chat:
+            # Forwarded message
+            channel_id = message.forward_from_chat.id
+            msg_id = message.forward_from_message_id
+            logger.info(f"Extracted from forwarded message - Channel: {channel_id}, Message: {msg_id}")
+            return channel_id, msg_id
+        elif message.text and ('t.me/' in message.text or 'telegram.me/' in message.text):
+            # Message link
+            link = message.text.strip()
+            if '/c/' in link:
+                # Private channel link
+                parts = link.split('/')
+                channel_id = int('-100' + parts[-2])
+                msg_id = int(parts[-1])
+            else:
+                # Public channel link
+                parts = link.split('/')
+                username = parts[-2]
+                msg_id = int(parts[-1])
+                try:
+                    chat = await client.get_chat(username)
+                    channel_id = chat.id
+                except Exception as e:
+                    logger.error(f"Error getting chat info for {username}: {e}")
+                    return None, None
+            
+            logger.info(f"Extracted from link - Channel: {channel_id}, Message: {msg_id}")
+            return channel_id, msg_id
+        else:
+            logger.warning("No forwarded message or valid link found")
+            return None, None
+    except Exception as e:
+        logger.error(f"Error extracting message ID: {e}")
+        return None, None
 
 async def get_messages_in_range(client, source_channel_id, start_msg_id, end_msg_id, target_channel_id):
     """
-    Copies messages from a source channel to a target channel within a message ID range.
-    Returns a list of the copied messages in the target channel.
+    Copies messages from a source channel within a given range to a target channel.
+    Returns a list of copied messages.
     """
-    copied_messages = []
-    current_msg_id = start_msg_id
-    
-    logger.info(f"Attempting to copy messages from source_channel_id: {source_channel_id} (type: {type(source_channel_id)}) "
-                f"from msg_id: {start_msg_id} to {end_msg_id} "
-                f"to target_channel_id: {target_channel_id} (type: {type(target_channel_id)})")
-
-    while current_msg_id <= end_msg_id:
-        try:
-            msg = await client.get_messages(chat_id=source_channel_id, message_ids=current_msg_id)
-            if not msg:
-                logger.warning(f"Message {current_msg_id} not found in source channel {source_channel_id}. Skipping.")
-                current_msg_id += 1
-                continue
-
+    try:
+        copied_messages = []
+        logger.info(f"Copying messages from {start_msg_id} to {end_msg_id} in channel {source_channel_id}")
+        
+        for msg_id in range(start_msg_id, end_msg_id + 1):
             try:
-                copied_msg = await msg.copy(chat_id=target_channel_id)
-                copied_messages.append(copied_msg)
-                logger.info(f"Successfully copied message {current_msg_id} to {target_channel_id} as {copied_msg.id}")
-                await asyncio.sleep(0.5) # Small delay to avoid flood limits
-            except ChatWriteForbidden:
-                logger.error(f"Bot cannot write to target channel {target_channel_id}. Check permissions.")
-                return [] # Critical error, stop copying
-            except MessageNotModified:
-                logger.warning(f"Message {current_msg_id} was not modified when copying to {target_channel_id}. Skipping.")
-            except FloodWait as e:
-                logger.warning(f"FloodWait: Sleeping for {e.value} seconds before retrying message {current_msg_id}")
-                await asyncio.sleep(e.value)
-                continue # Retry current message after delay
+                message = await client.get_messages(source_channel_id, msg_id)
+                if message and not message.empty:
+                    # Copy message to target channel
+                    if message.media:
+                        copied_msg = await client.copy_message(
+                            chat_id=target_channel_id,
+                            from_chat_id=source_channel_id,
+                            message_id=msg_id
+                        )
+                    else:
+                        copied_msg = await client.send_message(
+                            chat_id=target_channel_id,
+                            text=message.text or message.caption or "File"
+                        )
+                    copied_messages.append(copied_msg)
+                    logger.info(f"Copied message {msg_id} to {copied_msg.id}")
+                    
+                    # Small delay to avoid flood limits
+                    await asyncio.sleep(0.1)
+                    
             except Exception as e:
-                logger.error(f"Error copying message {current_msg_id} from {source_channel_id} to {target_channel_id}: {e}")
-                # Decide whether to continue or break on error. For now, continue.
-                pass
-        except ChannelPrivate:
-            logger.error(f"Source channel {source_channel_id} is private and bot is not a member or admin.")
-            return []
-        except ChannelInvalid:
-            logger.error(f"Source channel ID {source_channel_id} is invalid.")
-            return []
-        except FloodWait as e:
-            logger.warning(f"FloodWait on get_messages: Sleeping for {e.value} seconds before retrying message {current_msg_id}")
-            await asyncio.sleep(e.value)
-            continue # Retry current message after delay
-        except Exception as e:
-            logger.error(f"Error getting message {current_msg_id} from {source_channel_id}: {e}")
-            # Decide whether to continue or break on error. For now, continue.
-            pass
-        current_msg_id += 1
-    return copied_messages
-
-async def get_messages(client, channel_id, message_ids):
-    messages = []
-    total_messages = 0
-    while total_messages < len(message_ids):
-        tem_ids = message_ids[total_messages:total_messages + 200]
-        try:
-            msgs = await client.get_messages(chat_id=channel_id, message_ids=tem_ids)
-        except FloodWait as e:
-            print(f"FloodWait: Sleeping for {e.x} seconds")
-            await asyncio.sleep(e.x)
-            msgs = await client.get_messages(chat_id=channel_id, message_ids=tem_ids)
-        except Exception as e:
-            print(f"An error occurred: {e}")
-            break  # Exit on unexpected exceptions
-        else:
-            total_messages += len(tem_ids)
-            messages.extend(msgs)
-    return messages
-
-async def delete_file(messages, client, process):
-    await asyncio.sleep(AUTO_DELETE_TIME)
-    for msg in messages:
-        try:
-            await client.delete_messages(chat_id=msg.chat.id, message_ids=[msg.id])
-        except Exception as e:
-            await asyncio.sleep(e.x)
-            print(f"The attempt to delete the media {msg.id} was unsuccessful: {e}")
+                logger.error(f"Error copying message {msg_id}: {e}")
+                continue
+        
+        logger.info(f"Successfully copied {len(copied_messages)} messages")
+        return copied_messages
+        
+    except Exception as e:
+        logger.error(f"Error in get_messages_in_range: {e}")
+        return []
 
 async def delete_messages_from_user_chat(client, user_id, message_ids):
-    """Deletes a list of messages from a user's private chat."""
+    """Deletes a list of messages from the user's private chat."""
     try:
-        await client.delete_messages(chat_id=user_id, message_ids=message_ids)
-        logger.info(f"Successfully deleted messages {message_ids} from user {user_id} chat.")
+        if message_ids:
+            await client.delete_messages(chat_id=user_id, message_ids=message_ids)
+            logger.info(f"Deleted {len(message_ids)} messages from user {user_id}")
     except Exception as e:
-        logger.error(f"Failed to delete messages {message_ids} from user {user_id} chat: {e}")
+        logger.error(f"Error deleting messages from user chat: {e}")
 
-
-def get_poster(query, bulk=False, id=False, file=None):
-    if not id:
-        query = (query.strip()).lower()
-        title = query
-        year = re.findall(r'[1-2]\d{3}$', query, re.IGNORECASE)
-        if year:
-            year = list_to_str(year[:1])
-            title = (query.replace(year, "")).strip()
-        elif file is not None:
-            year = re.findall(r'[1-2]\d{3}', file, re.IGNORECASE)
-            if year:
-                year = list_to_str(year[:1]) 
-        else:
-            year = None
-        movieid = imdb.search_movie(title.lower(), results=10)
-        if not movieid:
-            return None
-        if year:
-            filtered=list(filter(lambda k: str(k.get('year')) == str(year), movieid))
-            if not filtered:
-                filtered = movieid
-        else:
-            filtered = movieid
-        movieid=list(filter(lambda k: k.get('kind') in ['movie', 'tv series'], filtered))
-        if not movieid:
-            movieid = filtered
-        if bulk:
-            return movieid
-        movieid = movieid[0].movieID
-    else:
-        movieid = query
-    movie = imdb.get_movie(movieid)
-    if movie.get("original air date"):
-        date = movie["original air date"]
-    elif movie.get("year"):
-        date = movie.get("year")
-    else:
-        date = "N/A"
-    plot = ""
-    if not LONG_IMDB_DESCRIPTION:
-        plot = movie.get('plot')
-        if plot and (plot) > 0:
-            plot = plot[0]
-    else:
-        plot = movie.get('plot outline')
-    if plot and len(plot) > 800:
-        plot = plot[0:800] + "..."
-
-    return {
-        'title': movie.get('title'),
-        'votes': movie.get('votes'),
-        "aka": list_to_str(movie.get("akas")),
-        "seasons": movie.get("number of seasons"),
-        "box_office": movie.get('box office'),
-        'localized_title': movie.get('localized title'),
-        'kind': movie.get("kind"),
-        "imdb_id": f"tt{movie.get('imdbID')}",
-        "cast": list_to_str(movie.get("cast")),
-        "runtime": list_to_str(movie.get("runtimes")),
-        "countries": list_to_str(movie.get("countries")),
-        "certificates": list_to_str(movie.get("certificates")),
-        "languages": list_to_str(movie.get("languages")),
-        "director": list_to_str(movie.get("director")),
-        "writer":list_to_str(movie.get("writer")),
-        "producer":list_to_str(movie.get("producer")) ,
-        "composer":list_to_str(movie.get("composer")) ,
-        "cinematographer":list_to_str(movie.get("cinematographer")),
-        "music_team": list_to_str(movie.get("music department")),
-        "distributors": list_to_str(movie.get("distributors")),
-        'release_date': date,
-        'year': movie.get('year'),
-        'genres': list_to_str(movie.get("genres")),
-        'poster': movie.get('full-size cover url') or NO_POSTER_FOUND_IMG, # Ensure a fallback poster
-        'plot': plot,
-        'rating': str(movie.get("rating")),
-        'url':f'https://www.imdb.com/title/tt{movieid}'
-    }
-
-async def broadcast_messages(user_id, message):
-    try:
-        await message.copy(chat_id=user_id)
-        return True, "Success"
-    except FloodWait as e:
-        await asyncio.sleep(e.x)
-        return await broadcast_messages(user_id, message)
-    except InputUserDeactivated:
-        await db.delete_user(int(user_id))
-        logging.info(f"{user_id}-Removed from Database, since deleted account.")
-        return False, "Deleted"
-    except UserIsBlocked:
-        logging.info(f"{user_id} -Blocked the bot.")
-        return False, "Blocked"
-    except PeerIdInvalid:
-        await db.delete_user(int(user_id))
-        logging.info(f"{user_id} - PeerIdInvalid")
-        return False, "Error"
-    except Exception as e:
-        return False, "Error"
-
-async def broadcast_messages_group(chat_id, message):
-    try:
-        kd = await message.copy(chat_id=chat_id)
-        try:
-            await kd.pin()
-        except:
-            pass
-        return True, "Succes"
-    except FloodWait as e:
-        await asyncio.sleep(e.x)
-        return await broadcast_messages_group(chat_id, message)
-    except Exception as e:
-        return False, "Error"
-
-async def search_gagala(text):
-    usr_agent = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
-        'Chrome/61.0.3163.100 Safari/537.36'
-        }
-
-    text = text.replace(" ", '+')
-    url = f'https://www.google.com/search?q={text}'
-    response = requests.get(url, headers=usr_agent)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, 'html.parser')
-    titles = soup.find_all( 'h3' )
-    return [title.getText() for title in titles]
-
-async def get_settings(group_id):
-    settings = temp.SETTINGS.get(group_id)
-    if not settings:
-        settings = await db.get_settings(group_id)
-        temp.SETTINGS[group_id] = settings
-    return settings
-    
-async def save_group_settings(group_id, key, value):
-    current = await get_settings(group_id)
-    current[key] = value
-    temp.SETTINGS[group_id] = current
-    await db.update_settings(group_id, current)
-    
 def get_size(size):
     """Get size in readable format"""
-
     units = ["Bytes", "KB", "MB", "GB", "TB", "PB", "EB"]
     size = float(size)
     i = 0
@@ -353,9 +152,9 @@ def get_size(size):
 
 def split_list(l, n):
     for i in range(0, len(l), n):
-        yield l[i:i + n]  
+        yield l[i:i + n]
 
-def get_file_id(msg: Message):
+def get_file_id(msg: pyrogram.types.Message):
     if msg.media:
         for message_type in (
             "photo",
@@ -372,20 +171,21 @@ def get_file_id(msg: Message):
                 setattr(obj, "message_type", message_type)
                 return obj
 
-def extract_user(message: Message) -> Union[int, str]:
+def extract_user(message: pyrogram.types.Message) -> (int, str):
     """extracts the user from a message"""
+    # https://github.com/SpEcHiDe/PyroGramBot/blob/f30e2cca12002121bad1982f68cd0ff9814ce027/pyrobot/helper_functions/extract_user.py#L7
     user_id = None
     user_first_name = None
     if message.reply_to_message:
         user_id = message.reply_to_message.from_user.id
         user_first_name = message.reply_to_message.from_user.first_name
-
     elif len(message.command) > 1:
         if (
-            len(message.entities) > 1 and
+            len(message.entities) >= 2 and
             message.entities[1].type == enums.MessageEntityType.TEXT_MENTION
         ):
-           
+            # 0: is the command
+            # 1: should be the user
             required_entity = message.entities[1]
             user_id = required_entity.user.id
             user_first_name = required_entity.user.first_name
@@ -400,182 +200,29 @@ def extract_user(message: Message) -> Union[int, str]:
     else:
         user_id = message.from_user.id
         user_first_name = message.from_user.first_name
-    return (user_id, user_first_name)
-
-def list_to_str(k):
-    if not k:
-        return "N/A"
-    elif len(k) == 1:
-        return str(k[0])
-    elif MAX_LIST_ELM:
-        k = k[:int(MAX_LIST_ELM)]
-        return ' '.join(f'{elem}, ' for elem in k)
-    else:
-        return ' '.join(f'{elem}, ' for elem in k)
+    return user_id, user_first_name
 
 def last_online(from_user):
-    time = ""
+    time_list = ["s", "m", "h", "days"]
     if from_user.is_bot:
-        time += "🤖 Bot :("
+        return ""
     elif from_user.status == enums.UserStatus.RECENTLY:
-        time += "Recently"
+        return "Recently"
     elif from_user.status == enums.UserStatus.LAST_WEEK:
-        time += "Within the last week"
+        return "Within the last week"
     elif from_user.status == enums.UserStatus.LAST_MONTH:
-        time += "Within the last month"
+        return "Within the last month"
     elif from_user.status == enums.UserStatus.LONG_AGO:
-        time += "A long time ago :("
+        return "A long time ago :("
     elif from_user.status == enums.UserStatus.ONLINE:
-        time += "Currently Online"
+        return "Currently Online"
     elif from_user.status == enums.UserStatus.OFFLINE:
-        time += from_user.last_online_date.strftime("%a, %d %b %Y, %H:%M:%S")
-    return time
+        return from_user.last_online_date.strftime("%a, %d %b %Y, %I:%M %p")
 
-def split_quotes(text: str) -> List:
-    if not any(text.startswith(char) for char in START_CHAR):
+def split_quotes(text: str) -> list:
+    if not any(i in text for i in ('\n', '\r')):
         return text.split(None, 1)
-    counter = 1  # ignore first char -> is some kind of quote
-    while counter < len(text):
-        if text[counter] == "\\":
-            counter += 1
-        elif text[counter] == text[0] or (text[0] == SMART_OPEN and text[counter] == SMART_CLOSE):
-            break
-        counter += 1
-    else:
-        return text.split(None, 1)
-
-    # 1 to avoid starting quote, and counter is exclusive so avoids ending
-    key = remove_escapes(text[1:counter].strip())
-    # index will be in range, or `else` would have been executed and returned
-    rest = text[counter + 1:].strip()
-    if not key:
-        key = text[0] + text[0]
-    return list(filter(None, [key, rest]))
-
-def gfilterparser(text, keyword):
-    if "buttonalert" in text:
-        text = (text.replace("\n", "\\n").replace("\t", "\\t"))
-    buttons = []
-    note_data = ""
-    prev = 0
-    i = 0
-    alerts = []
-    for match in BTN_URL_REGEX.finditer(text):
-        # Check if btnurl is escaped
-        n_escapes = 0
-        to_check = match.start(1) - 1
-        while to_check > 0 and text[to_check] == "\\":
-            n_escapes += 1
-            to_check -= 1
-
-        # if even, not escaped -> create button
-        if n_escapes % 2 == 0:
-            note_data += text[prev:match.start(1)]
-            prev = match.end(1)
-            if match.group(3) == "buttonalert":
-                # create a thruple with button label, url, and newline status
-                if bool(match.group(5)) and buttons:
-                    buttons[-1].append(InlineKeyboardButton(
-                        text=match.group(2),
-                        callback_data=f"gfilteralert:{i}:{keyword}"
-                    ))
-                else:
-                    buttons.append([InlineKeyboardButton(
-                        text=match.group(2),
-                        callback_data=f"gfilteralert:{i}:{keyword}"
-                    )])
-                i += 1
-                alerts.append(match.group(4))
-            elif bool(match.group(5)) and buttons:
-                buttons[-1].append(InlineKeyboardButton(
-                    text=match.group(2),
-                    url=match.group(4).replace(" ", "")
-                ))
-            else:
-                buttons.append([InlineKeyboardButton(
-                    text=match.group(2),
-                    url=match.group(4).replace(" ", "")
-                )])
-
-        else:
-            note_data += text[prev:to_check]
-            prev = match.start(1) - 1
-    else:
-        note_data += text[prev:]
-
-    try:
-        return note_data, buttons, alerts
-    except:
-        return note_data, buttons, None
-        
-def parser(text, keyword):
-    if "buttonalert" in text:
-        text = (text.replace("\n", "\\n").replace("\t", "\\t"))
-    buttons = []
-    note_data = ""
-    prev = 0
-    i = 0
-    alerts = []
-    for match in BTN_URL_REGEX.finditer(text):
-        # Check if btnurl is escaped
-        n_escapes = 0
-        to_check = match.start(1) - 1
-        while to_check > 0 and text[to_check] == "\\":
-            n_escapes += 1
-            to_check -= 1
-
-        # if even, not escaped -> create button
-        if n_escapes % 2 == 0:
-            note_data += text[prev:match.start(1)]
-            prev = match.end(1)
-            if match.group(3) == "buttonalert":
-                # create a thruple with button label, url, and newline status
-                if bool(match.group(5)) and buttons:
-                    buttons[-1].append(InlineKeyboardButton(
-                        text=match.group(2),
-                        callback_data=f"alertmessage:{i}:{keyword}"
-                    ))
-                else:
-                    buttons.append([InlineKeyboardButton(
-                        text=match.group(2),
-                        callback_data=f"alertmessage:{i}:{keyword}"
-                    )])
-                i += 1
-                alerts.append(match.group(4))
-            elif bool(match.group(5)) and buttons:
-                buttons[-1].append(InlineKeyboardButton(
-                    text=match.group(2),
-                    url=match.group(4).replace(" ", "")
-                ))
-            else:
-                buttons.append([InlineKeyboardButton(
-                    text=match.group(2),
-                    url=match.group(4).replace(" ", "")
-                )])
-
-        else:
-            note_data += text[prev:to_check]
-            prev = match.start(1) - 1
-    else:
-        note_data += text[prev:]
-
-    try:
-        return note_data, buttons, alerts
-    except:
-        return note_data, buttons, None
-
-def remove_escapes(text: str) -> str:
-    res = ""
-    is_escaped = False
-    for counter in range(len(text)): # Corrected range function usage
-        if is_escaped:
-            res += text[counter]
-            is_escaped = False
-        elif text[counter] == "\\":
-            is_escaped = True
-        else:
-            res += text[counter]
-    return res
+    return [i.strip() for i in re.findall(r'(?:[^\s,"]|"(?:\\.|[^"])*")+', text)]
 
 def humanbytes(size):
     if not size:
@@ -588,163 +235,426 @@ def humanbytes(size):
         n += 1
     return str(round(size, 2)) + " " + Dic_powerN[n] + 'B'
 
-class TempData:
-  def __init__(self):
-      self.ADMIN = {}
-      self.U_NAME = None # Bot username, set during bot startup
+def shortlink(url, api):
+    main_url = f'https://{SHORTLINK_URL}/api'
+    param = {'api': api, 'url': url}
+    try:
+        resp = requests.get(main_url, params=param, timeout=5)
+        data = resp.json()
+        if data["status"] == "success":
+            return data['shortenedUrl']
+        else:
+            logger.error(f"Error in shortlink generation: {data}")
+            return url
+    except Exception as e:
+        logger.error(f"Error in shortlink: {e}")
+        return url
 
-temp = TempData()
+def get_shortlink(chat_id, url):
+    if not SHORTLINK_URL:
+        return url
+    elif chat_id in SHORTLINK.get('exclude', []):
+        return url
+    else:
+        return shortlink(url, SHORTLINK_API)
 
-async def get_message_id(client, message):
-  """
-  Extracts channel ID and message ID from a forwarded message or a post link.
-  Returns (channel_id, message_id) or (None, None) if invalid.
-  """
-  if message.forward_from_chat and message.forward_from_chat.type == enums.ChatType.CHANNEL:
-      return message.forward_from_chat.id, message.forward_from_message_id
-  elif message.text and "t.me/c/" in message.text:
-      match = re.search(r"t\.me/c/(\d+)/(\d+)", message.text)
-      if match:
-          channel_id_raw = int(match.group(1))
-          message_id = int(match.group(2))
-          # Convert raw channel ID to Pyrogram format (-100 prefix)
-          channel_id = int(f"-100{channel_id_raw}")
-          return channel_id, message_id
-  return None, None
+async def check_token_validity(api):
+    main_url = f'https://{SHORTLINK_URL}/api'
+    param = {'api': api}
+    try:
+        resp = requests.get(main_url, params=param, timeout=5)
+        data = resp.json()
+        return data.get("status") == "success"
+    except Exception as e:
+        logger.error(f"Error checking token validity: {e}")
+        return False
 
+async def get_shortlink_stats(api):
+    main_url = f'https://{SHORTLINK_URL}/api/stats'
+    param = {'api': api}
+    try:
+        resp = requests.get(main_url, params=param, timeout=5)
+        data = resp.json()
+        return data
+    except Exception as e:
+        logger.error(f"Error getting shortlink stats: {e}")
+        return {}
 
-def split_list(l, n):
-    for i in range(0, len(l), n):
-        yield l[i:i + n]  
+async def is_subscribed(client, query):
+    try:
+        user = await client.get_chat_member(AUTH_CHANNEL, query.from_user.id)
+    except UserNotParticipant:
+        pass
+    except Exception as e:
+        logger.exception(e)
+    else:
+        if user.status != enums.ChatMemberStatus.BANNED:
+            return True
+    return False
 
-def get_file_id(msg: Message):
-    if msg.media:
-        for message_type in (
-            "photo",
-            "animation",
-            "audio",
-            "document",
-            "video",
-            "video_note",
-            "voice",
-            "sticker"
-        ):
-            obj = getattr(msg, message_type)
-            if obj:
-                setattr(obj, "message_type", message_type)
-                return obj
+async def get_poster(query, bulk=False, id=False, file=None):
+    if not IMDB:
+        return None
+    
+    logger.info(f"IMDB query: {query}")
+    
+    try:
+        if id:
+            # If query is an IMDb ID, get movie by ID
+            movie = imdb.get_movie(query)
+            movies = [movie] if movie else []
+        else:
+            # Search for movies/series
+            movies = imdb.search_movie(query)
+        
+        if not movies:
+            logger.warning(f"No IMDB results found for: {query}")
+            return None
+        
+        if bulk:
+            # Return multiple results for selection
+            results = []
+            for movie in movies[:10]:  # Limit to 10 results
+                try:
+                    imdb.update(movie, info=['main'])
+                    poster = movie.get('full-size cover url', movie.get('cover url'))
+                    results.append({
+                        'title': movie.get('title', 'N/A'),
+                        'year': movie.get('year', 'N/A'),
+                        'imdb_id': movie.movieID,
+                        'kind': movie.get('kind', 'movie'),
+                        'poster': poster,
+                        'rating': movie.get('rating', 'N/A'),
+                        'genres': ', '.join(movie.get('genres', [])),
+                        'plot': movie.get('plot outline', movie.get('plot', ['N/A'])[0] if movie.get('plot') else 'N/A')
+                    })
+                except Exception as e:
+                    logger.error(f"Error processing movie {movie}: {e}")
+                    continue
+            return results
+        else:
+            # Return single result
+            movie = movies[0]
+            try:
+                imdb.update(movie, info=['main'])
+                poster = movie.get('full-size cover url', movie.get('cover url'))
+                return {
+                    'title': movie.get('title', 'N/A'),
+                    'year': movie.get('year', 'N/A'),
+                    'imdb_id': movie.movieID,
+                    'kind': movie.get('kind', 'movie'),
+                    'poster': poster,
+                    'rating': movie.get('rating', 'N/A'),
+                    'genres': ', '.join(movie.get('genres', [])),
+                    'plot': movie.get('plot outline', movie.get('plot', ['N/A'])[0] if movie.get('plot') else 'N/A')
+                }
+            except Exception as e:
+                logger.error(f"Error processing single movie result: {e}")
+                return None
+                
+    except Exception as e:
+        logger.error(f"Error in get_poster: {e}")
+        return None
 
-async def get_messages_in_range(client: Client, source_channel_id: int, start_msg_id: int, end_msg_id: int, target_channel_id: int):
-  """
-  Copies messages from a source channel within a given range to a target channel.
-  Returns a list of copied messages.
-  """
-  copied_messages = []
-  for msg_id in range(start_msg_id, end_msg_id + 1):
-      try:
-          # Get the message from the source channel
-          msg = await client.get_messages(source_channel_id, msg_id)
-          if msg:
-              # Copy the message to the target channel
-              copied_msg = await msg.copy(target_channel_id)
-              copied_messages.append(copied_msg)
-              await asyncio.sleep(0.5) # Small delay to avoid flood waits
-      except FloodWait as e:
-          logger.warning(f"FloodWait: Sleeping for {e.value} seconds.")
-          await asyncio.sleep(e.value)
-          # Retry the current message after waiting
-          try:
-              msg = await client.get_messages(source_channel_id, msg_id)
-              if msg:
-                  copied_msg = await msg.copy(target_channel_id)
-                  copied_messages.append(copied_msg)
-          except Exception as retry_e:
-              logger.error(f"Failed to copy message {msg_id} after FloodWait: {retry_e}")
-      except Exception as e:
-          logger.error(f"Error copying message {msg_id} from {source_channel_id}: {e}")
-  return copied_messages
-
-async def delete_messages_from_user_chat(client: Client, user_id: int, message_ids: list):
-  """Deletes a list of messages from the user's private chat."""
-  if not message_ids:
-      return
-  try:
-      await client.delete_messages(chat_id=user_id, message_ids=message_ids)
-  except Exception as e:
-      logger.warning(f"Could not delete messages {message_ids} from user {user_id} chat: {e}")
-
-def get_poster(query, bulk=False, id=False):
-  """
-  Fetches movie/TV show information from IMDb.
-  - query: search term
-  - bulk: if True, returns multiple search results for selection
-  - id: if True, query is an IMDb ID
-  """
-  ia = Cinemagoer()
-  try:
-      if id:
-          # Fetch by IMDb ID
-          movie = ia.get_movie(query)
-          if movie:
-              return {
-                  'title': movie.get('title'),
-                  'year': movie.get('year'),
-                  'genres': ', '.join(movie.get('genres', [])),
-                  'rating': movie.get('rating'),
-                  'poster': movie.get('cover url'),
-                  'imdb_id': movie.movieID,
-                  'kind': movie.get('kind')
-              }
-          return None
-      else:
-          # Search by query
-          search_results = ia.search_movie(query)
-          if bulk:
-              results = []
-              for movie in search_results[:10]: # Limit to 10 results
-                  results.append({
-                      'title': movie.get('title'),
-                      'year': movie.get('year'),
-                      'imdb_id': movie.movieID,
-                      'kind': movie.get('kind'),
-                      'poster': movie.get('cover url')
-                  })
-              return results
-          elif search_results:
-              movie = search_results[0]
-              return {
-                  'title': movie.get('title'),
-                  'year': movie.get('year'),
-                  'genres': ', '.join(movie.get('genres', [])),
-                  'rating': movie.get('rating'),
-                  'poster': movie.get('cover url'),
-                  'imdb_id': movie.movieID,
-                  'kind': movie.get('kind')
-              }
-          return None
-  except Exception as e:
-      logger.error(f"IMDb API error: {e}")
-      return None
+async def search_gagala(text):
+    usr_agent = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
+                      'Chrome/61.0.3163.100 Safari/537.36'
+        }
+    text = text.replace(" ", '+')
+    url = f'https://www.google.com/search?q={text}'
+    try:
+        resp = requests.get(url, headers=usr_agent, timeout=5)
+        resp.raise_for_status()
+        return resp.text
+    except Exception as e:
+        logger.error(f"Error in Google search: {e}")
+        return ""
 
 def find_most_similar_title(query, titles):
-  """Finds the most similar title from a list using fuzzy matching."""
-  if not titles:
-      return None
-  
-  best_match = None
-  highest_ratio = -1
-  
-  for title in titles:
-      ratio = fuzz.ratio(query.lower(), title.lower())
-      if ratio > highest_ratio:
-          highest_ratio = ratio
-          best_match = title
-          
-  # Consider a match only if it's above a certain threshold (e.g., 70%)
-  if highest_ratio >= 70:
-      return best_match
-  return None
+    """Find the most similar title using fuzzy matching."""
+    if not titles:
+        return None
+    
+    # Use fuzzywuzzy to find the best match
+    best_match = None
+    best_ratio = 0
+    
+    for title in titles:
+        ratio = fuzz.ratio(query.lower(), title.lower())
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_match = title
+    
+    # Return the best match if it's above a threshold
+    return best_match if best_ratio >= 60 else None
 
 def chunk_buttons(buttons, chunk_size=2):
-  """Chunks a list of buttons into sublists of a given size."""
-  return [buttons[i:i + chunk_size] for i in range(0, len(buttons), chunk_size)]
+    """Chunk buttons into rows."""
+    if not buttons:
+        return []
+    
+    chunked = []
+    for i in range(0, len(buttons), chunk_size):
+        chunked.append(buttons[i:i + chunk_size])
+    return chunked
+
+async def get_settings(group_id):
+    settings = temp.SETTINGS.get(group_id)
+    if not settings:
+        settings = await db.get_settings(group_id)
+        temp.SETTINGS[group_id] = settings
+    return settings
+
+async def save_group_settings(group_id, key, value):
+    current = await get_settings(group_id)
+    current[key] = value
+    temp.SETTINGS[group_id] = current
+    await db.update_settings(group_id, current)
+
+def get_readable_time(seconds: int) -> str:
+    count = 0
+    up_time = ""
+    time_list = []
+    time_suffix_list = ["s", "m", "h", "days"]
+    while count < 4:
+        count += 1
+        remainder, result = divmod(seconds, 60) if count < 3 else divmod(seconds, 24)
+        if seconds == 0 and remainder == 0:
+            break
+        time_list.append(int(result))
+        seconds = int(remainder)
+    hmm = len(time_list)
+    for x in range(hmm):
+        time_list[x] = str(time_list[x]) + time_suffix_list[x]
+    if len(time_list) == 4:
+        up_time += f"{time_list.pop()}, "
+    time_list.reverse()
+    up_time += ":".join(time_list)
+    return up_time
+
+def get_readable_file_size(size_bytes):
+    if size_bytes is None:
+        return "0B"
+    index = 0
+    size_bytes = float(size_bytes)
+    while size_bytes >= 1024:
+        size_bytes /= 1024
+        index += 1
+    try:
+        return f'{round(size_bytes, 2)}{["B", "KB", "MB", "GB", "TB"][index]}'
+    except IndexError:
+        return 'File too large'
+
+def get_progress_bar_string(pct):
+    pct = float(str(pct).strip('%'))
+    p = min(max(pct, 0), 100)
+    cFull = int(p // 8)
+    p_str = '■' * cFull
+    p_str += '□' * (12 - cFull)
+    return f"[{p_str}]"
+
+def time_formatter(milliseconds: int) -> str:
+    seconds, milliseconds = divmod(int(milliseconds), 1000)
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    tmp = ((str(days) + "d, ") if days else "") + \
+        ((str(hours) + "h, ") if hours else "") + \
+        ((str(minutes) + "m, ") if minutes else "") + \
+        ((str(seconds) + "s, ") if seconds else "") + \
+        ((str(milliseconds) + "ms, ") if milliseconds else "")
+    return tmp[:-2]
+
+def get_file_name(media_msg):
+    """Get file name from media message."""
+    try:
+        if media_msg.document:
+            return media_msg.document.file_name
+        elif media_msg.video:
+            return media_msg.video.file_name or f"video_{media_msg.video.file_id[:10]}.mp4"
+        elif media_msg.audio:
+            return media_msg.audio.file_name or f"audio_{media_msg.audio.file_id[:10]}.mp3"
+        elif media_msg.photo:
+            return f"photo_{media_msg.photo.file_id[:10]}.jpg"
+        elif media_msg.animation:
+            return media_msg.animation.file_name or f"animation_{media_msg.animation.file_id[:10]}.gif"
+        elif media_msg.voice:
+            return f"voice_{media_msg.voice.file_id[:10]}.ogg"
+        elif media_msg.video_note:
+            return f"video_note_{media_msg.video_note.file_id[:10]}.mp4"
+        elif media_msg.sticker:
+            return f"sticker_{media_msg.sticker.file_id[:10]}.webp"
+        else:
+            return "unknown_file"
+    except Exception as e:
+        logger.error(f"Error getting file name: {e}")
+        return "unknown_file"
+
+async def encode_file_id(s: str) -> str:
+    return s
+
+async def decode_file_id(s: str) -> str:
+    return s
+
+def get_file_type(file_path):
+    """Get file type from file path."""
+    if not file_path:
+        return "unknown"
+    
+    extension = file_path.split('.')[-1].lower()
+    
+    video_extensions = ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', '3gp']
+    audio_extensions = ['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma', 'm4a']
+    image_extensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg']
+    document_extensions = ['pdf', 'doc', 'docx', 'txt', 'rtf', 'odt']
+    
+    if extension in video_extensions:
+        return "video"
+    elif extension in audio_extensions:
+        return "audio"
+    elif extension in image_extensions:
+        return "image"
+    elif extension in document_extensions:
+        return "document"
+    else:
+        return "document"  # Default to document for unknown types
+
+def format_file_size(bytes_size):
+    """Format file size in human readable format."""
+    if bytes_size == 0:
+        return "0 B"
+    
+    size_names = ["B", "KB", "MB", "GB", "TB"]
+    i = int(math.floor(math.log(bytes_size, 1024)))
+    p = math.pow(1024, i)
+    s = round(bytes_size / p, 2)
+    return f"{s} {size_names[i]}"
+
+def clean_file_name(file_name):
+    """Clean file name by removing special characters."""
+    if not file_name:
+        return "unknown_file"
+    
+    # Remove or replace problematic characters
+    cleaned = re.sub(r'[<>:"/\\|?*]', '_', file_name)
+    cleaned = re.sub(r'[^\w\s.-]', '', cleaned)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    
+    return cleaned if cleaned else "unknown_file"
+
+def get_duration_string(duration_seconds):
+    """Convert duration in seconds to readable string."""
+    if not duration_seconds:
+        return "Unknown"
+    
+    hours = duration_seconds // 3600
+    minutes = (duration_seconds % 3600) // 60
+    seconds = duration_seconds % 60
+    
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    else:
+        return f"{minutes:02d}:{seconds:02d}"
+
+def is_valid_file_id(file_id):
+    """Check if file ID is valid."""
+    if not file_id or not isinstance(file_id, str):
+        return False
+    
+    # Basic validation - Telegram file IDs are usually long alphanumeric strings
+    return len(file_id) > 10 and file_id.replace('_', '').replace('-', '').isalnum()
+
+def generate_random_string(length=10):
+    """Generate random string of specified length."""
+    letters = string.ascii_lowercase + string.digits
+    return ''.join(random.choice(letters) for _ in range(length))
+
+def escape_markdown(text):
+    """Escape markdown special characters."""
+    if not text:
+        return ""
+    
+    escape_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in escape_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
+def truncate_text(text, max_length=100):
+    """Truncate text to specified length."""
+    if not text:
+        return ""
+    
+    if len(text) <= max_length:
+        return text
+    
+    return text[:max_length-3] + "..."
+
+def validate_url(url):
+    """Validate if string is a valid URL."""
+    if not url:
+        return False
+    
+    url_pattern = re.compile(
+        r'^https?://'  # http:// or https://
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
+        r'localhost|'  # localhost...
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
+        r'(?::\d+)?'  # optional port
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+    
+    return url_pattern.match(url) is not None
+
+def get_file_extension(filename):
+    """Get file extension from filename."""
+    if not filename:
+        return ""
+    
+    return filename.split('.')[-1].lower() if '.' in filename else ""
+
+def format_caption(template, **kwargs):
+    """Format caption template with provided kwargs."""
+    try:
+        return template.format(**kwargs)
+    except KeyError as e:
+        logger.error(f"Missing key in caption template: {e}")
+        return template
+    except Exception as e:
+        logger.error(f"Error formatting caption: {e}")
+        return template
+
+def is_admin_user(user_id):
+    """Check if user is admin."""
+    return user_id in ADMINS
+
+def get_random_pic():
+    """Get random picture from PICS list."""
+    if PICS:
+        return random.choice(PICS)
+    return NOR_IMG
+
+def get_spell_check_image():
+    """Get random spell check image."""
+    if SPELL_IMG:
+        return random.choice(SPELL_IMG)
+    return NOR_IMG
+
+def log_user_activity(user_id, activity, details=None):
+    """Log user activity."""
+    logger.info(f"User {user_id} - {activity}" + (f" - {details}" if details else ""))
+
+def log_error(error, context=None):
+    """Log error with context."""
+    logger.error(f"Error: {error}" + (f" - Context: {context}" if context else ""))
+
+def log_info(message, context=None):
+    """Log info message."""
+    logger.info(f"{message}" + (f" - Context: {context}" if context else ""))
+
+def log_warning(message, context=None):
+    """Log warning message."""
+    logger.warning(f"{message}" + (f" - Context: {context}" if context else ""))
+
+def log_debug(message, context=None):
+    """Log debug message."""
+    logger.debug(f"{message}" + (f" - Context: {context}" if context else ""))
