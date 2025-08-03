@@ -222,27 +222,6 @@ def split_quotes(text: str) -> list:
         return text.split(None, 1)
     return [i.strip() for i in re.findall(r'(?:[^\s,"]|"(?:\\.|[^"])*")+', text)]
 
-def gsplit_quotes(text: str) -> List:
-    if not any(text.startswith(char) for char in START_CHAR):
-        return text.split(None, 1)
-    counter = 1  # ignore first char -> is some kind of quote
-    while counter < len(text):
-        if text[counter] == "\\":
-            counter += 1
-        elif text[counter] == text[0] or (text[0] == SMART_OPEN and text[counter] == SMART_CLOSE):
-            break
-        counter += 1
-    else:
-        return text.split(None, 1)
-
-    # 1 to avoid starting quote, and counter is exclusive so avoids ending
-    key = remove_escapes(text[1:counter].strip())
-    # index will be in range, or `else` would have been executed and returned
-    rest = text[counter + 1:].strip()
-    if not key:
-        key = text[0] + text[0]
-    return list(filter(None, [key, rest]))
-
 def gfilterparser(text, keyword):
     if "buttonalert" in text:
         text = (text.replace("\n", "\\n").replace("\t", "\\t"))
@@ -309,51 +288,6 @@ def humanbytes(size):
         size /= power
         n += 1
     return str(round(size, 2)) + " " + Dic_powerN[n] + 'B'
-
-def shortlink(url, api):
-    main_url = f'https://{SHORTLINK_URL}/api'
-    param = {'api': api, 'url': url}
-    try:
-        resp = requests.get(main_url, params=param, timeout=5)
-        data = resp.json()
-        if data["status"] == "success":
-            return data['shortenedUrl']
-        else:
-            logger.error(f"Error in shortlink generation: {data}")
-            return url
-    except Exception as e:
-        logger.error(f"Error in shortlink: {e}")
-        return url
-
-def get_shortlink(chat_id, url):
-    if not SHORTLINK_URL:
-        return url
-    elif chat_id in SHORTLINK.get('exclude', []):
-        return url
-    else:
-        return shortlink(url, SHORTLINK_API)
-
-async def check_token_validity(api):
-    main_url = f'https://{SHORTLINK_URL}/api'
-    param = {'api': api}
-    try:
-        resp = requests.get(main_url, params=param, timeout=5)
-        data = resp.json()
-        return data.get("status") == "success"
-    except Exception as e:
-        logger.error(f"Error checking token validity: {e}")
-        return False
-
-async def get_shortlink_stats(api):
-    main_url = f'https://{SHORTLINK_URL}/api/stats'
-    param = {'api': api}
-    try:
-        resp = requests.get(main_url, params=param, timeout=5)
-        data = resp.json()
-        return data
-    except Exception as e:
-        logger.error(f"Error getting shortlink stats: {e}")
-        return {}
 
 async def is_subscribed(client, query):
     try:
