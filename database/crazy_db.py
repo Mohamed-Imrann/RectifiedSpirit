@@ -323,25 +323,33 @@ class Database:
         self.series_collection.replace_one({"_id": series_key}, cleaned_series)
         return True
 
-    def search_published_series(self, query: str, limit: int = 10):
+    async def search_published_series(self, query: str, limit: int = 10):
         """
         Searches for published series by title or key using regex for partial matching.
         Returns a list of matching series documents.
         """
-        # Create a case-insensitive regex pattern for the query
-        regex_pattern = f".*{re.escape(query)}.*"
-        
-        # Search criteria: published is True AND (title matches OR _id matches)
-        search_criteria = {
-            "published": True,
-            "$or": [
-                {"title": {"$regex": regex_pattern, "$options": "i"}},
-                {"_id": {"$regex": regex_pattern, "$options": "i"}}
-            ]
-        }
-        
-        # Execute the search and return results
-        return list(self.series_collection.find(search_criteria).limit(limit))
+        try:
+            # Create a case-insensitive regex pattern for the query
+            regex_pattern = f".*{re.escape(query)}.*"
+            
+            # Search criteria: published is True AND (title matches OR _id matches)
+            search_criteria = {
+                "published": True,
+                "$or": [
+                    {"title": {"$regex": regex_pattern, "$options": "i"}},
+                    {"_id": {"$regex": regex_pattern, "$options": "i"}}
+                ]
+            }
+            
+            # Execute the search and return results as a list
+            cursor = self.series_collection.find(search_criteria).limit(limit)
+            results = []
+            async for document in cursor:
+                results.append(document)
+            return results
+        except Exception as e:
+            print(f"Error in search_published_series: {e}")
+            return []
 
     def get_languages(self, series_key: str):
         """Get all languages for a series."""
@@ -461,8 +469,8 @@ def update_poster_file_id(series_key, file_id):
 def publish_series(series_key):
     return db.publish_series(series_key)
 
-def search_published_series(query, limit=10):
-    return db.search_published_series(query, limit)
+async def search_published_series(query, limit=10):
+    return await db.search_published_series(query, limit)
 
 def get_specific_poster(series_key, language_name=None, season_name=None):
     return db.get_specific_poster(series_key, language_name, season_name)
