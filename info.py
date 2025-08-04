@@ -61,6 +61,22 @@ SPELL_CHECK_TXT = environ.get('SPELL_CHECK_TXT', "Did you mean something else? P
 CHANNELS_TXT = environ.get('CHANNELS_TXT', "Join our channels for more content!")
 
 # Optional Bot messages and settings
+WELCOME_MESSAGE = os.environ.get("WELCOME_MESSAGE", "Hello {mention}! I am an advanced auto-filter bot. Send me the name of a movie or series to get started.")
+
+# Optional: About message.
+ABOUT_MESSAGE = os.environ.get("ABOUT_MESSAGE", "I am an advanced auto-filter bot created by @cold_onez.")
+
+# Optional: Start message for deep links.
+START_DEEPLINK_MESSAGE = os.environ.get("START_DEEPLINK_MESSAGE", "Click the button below to get your file.")
+
+# Optional: Support group link.
+SUPPORT_GROUP_LINK = os.environ.get("SUPPORT_GROUP_LINK", "https://t.me/Sflixbots")
+
+# Optional: Updates channel link.
+UPDATES_CHANNEL_LINK = os.environ.get("UPDATES_CHANNEL_LINK", "https://t.me/SflixBots")
+
+# Optional: Bot owner link.
+BOT_OWNER_LINK = os.environ.get("BOT_OWNER_LINK", "t.me/Sflixbots")
 START_TXT = environ.get('START_TXT', "𝗅'm Mᴀᴇᴠᴇ Wʏʟɪᴇ 🌸, ᴀ Gʀᴏᴜᴘ ᴍᴀɴᴀɢᴇʀ Bᴏᴛ Cʀᴇᴀᴛᴇᴅ ғᴏʀ Sᴇʀɪᴇs X, ᴏɴʟʏ ᴀᴜᴛʜᴏʀɪsᴇᴅ ᴀᴅᴍɪɴs ᴄᴀɴ ᴀᴄᴄᴇss ᴅᴏɴ'ᴛ ᴡᴀsᴛᴇ ʏᴏᴜʀ ᴛɪᴍᴇ 😌")
 NO_POSTER_FOUND_IMG = environ.get('NO_POSTER_FOUND_IMG', "https://telegra.ph/file/5e2d4418525832bc9a1b9").split()
 SPELL_CHECK_IMAGE = environ.get('SPELL_CHECK_IMAGE', 'https://envs.sh/t8X.jpg?=ilovSTARLEY').split()
