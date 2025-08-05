@@ -31,7 +31,7 @@ TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
 # Helper to chunk buttons for inline keyboard
-def chunk_buttons(buttons, chunk_size=2):
+def chunk_buttons(buttons, chunk_size=3): # Changed default chunk_size to 3
     return [buttons[i:i + chunk_size] for i in range(0, len(buttons), chunk_size)]
 
 async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
@@ -287,14 +287,15 @@ async def send_language_management_message(client: Client, user_id: int, series_
 
     buttons = []
     for lang in languages:
-        buttons.append([
+        buttons.append(
             InlineKeyboardButton(f"{lang['name']} ({len(lang.get('seasons', []))} Seasons)", callback_data=f"manage_seasons:{series_key}:{lang['name']}")
-        ])
+        )
     
-    buttons.append([InlineKeyboardButton("+ Language", callback_data=f"add_language:{series_key}")])
-    buttons.append([InlineKeyboardButton("Back to Series", callback_data=f"back_to_series:{series_key}")])
+    buttons_chunked = chunk_buttons(buttons, chunk_size=3) # Apply chunking
+    buttons_chunked.append([InlineKeyboardButton("+ Language", callback_data=f"add_language:{series_key}")])
+    buttons_chunked.append([InlineKeyboardButton("Back to Series", callback_data=f"back_to_series:{series_key}")])
 
-    reply_markup = InlineKeyboardMarkup(buttons)
+    reply_markup = InlineKeyboardMarkup(buttons_chunked)
 
     # Determine which poster to use: series poster
     poster_to_use = series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG
@@ -356,16 +357,17 @@ async def send_season_management_message(client: Client, user_id: int, series_ke
 
     buttons = []
     for season in seasons:
-        buttons.append([
+        buttons.append(
             InlineKeyboardButton(f"{season['name']} ({len(season.get('qualities', []))} Qualities)", callback_data=f"manage_qualities:{series_key}:{language_name}:{season['name']}")
-        ])
+        )
     
-    buttons.append([InlineKeyboardButton("+ Season", callback_data=f"add_season:{series_key}:{language_name}")])
-    buttons.append([InlineKeyboardButton("Change Poster for this Language", callback_data=f"change_language_poster:{series_key}:{language_name}")])
-    buttons.append([InlineKeyboardButton(f"Delete '{language_name}' Group", callback_data=f"delete_language:{series_key}:{language_name}")])
-    buttons.append([InlineKeyboardButton("Back to Languages", callback_data=f"manage_languages:{series_key}")])
+    buttons_chunked = chunk_buttons(buttons, chunk_size=3) # Apply chunking
+    buttons_chunked.append([InlineKeyboardButton("+ Season", callback_data=f"add_season:{series_key}:{language_name}")])
+    buttons_chunked.append([InlineKeyboardButton("Change Poster for this Language", callback_data=f"change_language_poster:{series_key}:{language_name}")])
+    buttons_chunked.append([InlineKeyboardButton(f"Delete '{language_name}' Group", callback_data=f"delete_language:{series_key}:{language_name}")])
+    buttons_chunked.append([InlineKeyboardButton("Back to Languages", callback_data=f"manage_languages:{series_key}")])
 
-    reply_markup = InlineKeyboardMarkup(buttons)
+    reply_markup = InlineKeyboardMarkup(buttons_chunked)
 
     # Determine which poster to use: language poster, then series poster
     poster_to_use = current_lang.get("poster_file_id") or series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG
@@ -429,16 +431,17 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
 
     buttons = []
     for quality in qualities:
-        buttons.append([
+        buttons.append(
             InlineKeyboardButton(f"{quality['name']}", callback_data=f"add_files:{series_key}:{language_name}:{season_name}:{quality['name']}")
-        ])
+        )
     
-    buttons.append([InlineKeyboardButton("+ Quality", callback_data=f"add_quality:{series_key}:{language_name}:{season_name}")])
-    buttons.append([InlineKeyboardButton("Change Poster for this Season", callback_data=f"change_season_poster:{series_key}:{language_name}:{season_name}")])
-    buttons.append([InlineKeyboardButton(f"Delete '{season_name}' Group", callback_data=f"delete_season:{series_key}:{language_name}:{season_name}")])
-    buttons.append([InlineKeyboardButton("Back to Seasons", callback_data=f"manage_seasons:{series_key}:{language_name}")])
+    buttons_chunked = chunk_buttons(buttons, chunk_size=3) # Apply chunking
+    buttons_chunked.append([InlineKeyboardButton("+ Quality", callback_data=f"add_quality:{series_key}:{language_name}:{season_name}")])
+    buttons_chunked.append([InlineKeyboardButton("Change Poster for this Season", callback_data=f"change_season_poster:{series_key}:{language_name}:{season_name}")])
+    buttons_chunked.append([InlineKeyboardButton(f"Delete '{season_name}' Group", callback_data=f"delete_season:{series_key}:{language_name}:{season_name}")])
+    buttons_chunked.append([InlineKeyboardButton("Back to Seasons", callback_data=f"manage_seasons:{series_key}:{language_name}")])
 
-    reply_markup = InlineKeyboardMarkup(buttons)
+    reply_markup = InlineKeyboardMarkup(buttons_chunked)
 
     # Determine which poster to use: season poster, then language poster, then series poster
     poster_to_use = current_season.get("poster_file_id") or current_lang.get("poster_file_id") or series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG
@@ -527,14 +530,14 @@ async def new_series_command(client: Client, message: Message):
             'source': item.get('source'),
             'query': query # Store original query for 'Back' button
         }
-        buttons.append([
+        buttons.append(
             InlineKeyboardButton(
                 text=f"{item.get('title', 'N/A')} ({item.get('year', 'N/A')}) - {item.get('source').upper()}",
                 callback_data=f"{item.get('source')}_select:{unique_id}"
             )
-        ])
+        )
     
-    reply_markup = InlineKeyboardMarkup(buttons)
+    reply_markup = InlineKeyboardMarkup(chunk_buttons(buttons, chunk_size=3)) # Apply chunking
     await temp_msg.edit_caption(
         "Select a series from below:\n\n"
         "**Choose Your Series:**",
@@ -694,9 +697,9 @@ async def seriview_command(client: Client, message: Message):
         published_status = "✅ Published" if s.get('published', False) else "❌ Unpublished"
         
         text += f"• <code>{title}</code> (Key: <code>{series_key}</code>) - {published_status}\n"
-        buttons.append([
+        buttons.append(
             InlineKeyboardButton(f"Edit {title}", callback_data=f"local_series_select:{series_key}")
-        ])
+        )
     
     reply_markup = InlineKeyboardMarkup(chunk_buttons(buttons, chunk_size=3)) # One button per row for readability
 
@@ -1261,6 +1264,7 @@ async def process_codec_input(client: Client, message: Message, codec: str):
     first_file_msg_id = temp_admin_data[user_id]["first_file_msg_id"]
     last_file_msg_id = temp_admin_data[user_id]["last_file_msg_id"]
     files_to_delete = temp_admin_data[user_id]["files_to_delete"]
+    main_message_id = temp_admin_data[user_id].get("main_message_id") # Get current main message ID
 
     # Delete the bot's prompt message and the user's reply
     try:
@@ -1287,7 +1291,11 @@ async def process_codec_input(client: Client, message: Message, codec: str):
     )
 
     if not copied_messages:
-        await processing_msg.edit_text("Failed to copy files to DB Channel. Please check bot's admin rights in the source and target channels.")
+        try:
+            await processing_msg.edit_text("Failed to copy files to DB Channel. Please check bot's admin rights in the source and target channels.")
+        except (MessageIdInvalid, FloodWait) as e:
+            logger.warning(f"Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
+            await client.send_message(user_id, "Failed to copy files to DB Channel. Please check bot's admin rights in the source and target channels.")
         return
 
     new_first_msg_id = copied_messages[0].id
@@ -1301,7 +1309,6 @@ async def process_codec_input(client: Client, message: Message, codec: str):
         await delete_messages_from_user_chat(client, user_id, files_to_delete)
 
         # Go back to quality management view
-        main_message_id = temp_admin_data[user_id].get("main_message_id")
         temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
         
         # Clear temporary file data
@@ -1310,10 +1317,21 @@ async def process_codec_input(client: Client, message: Message, codec: str):
         temp_admin_data[user_id].pop("last_file_msg_id", None)
         temp_admin_data[user_id].pop("files_to_delete", None)
 
-        await processing_msg.edit_text(f"Files added successfully for '{quality_name}'.")
-        await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+        try:
+            await processing_msg.edit_text(f"Files added successfully for '{quality_name}'.")
+        except (MessageIdInvalid, FloodWait) as e:
+            logger.warning(f"Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
+            await client.send_message(user_id, f"Files added successfully for '{quality_name}'.")
+
+        # Re-send the quality management message, updating the main_message_id
+        new_main_msg_id = await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+        if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
     else:
-        await processing_msg.edit_text("Failed to add files to database.")
+        try:
+            await processing_msg.edit_text("Failed to add files to database.")
+        except (MessageIdInvalid, FloodWait) as e:
+            logger.warning(f"Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
+            await client.send_message(user_id, "Failed to add files to database.")
 
     temp_admin_data[user_id].pop("ask_message_id", None) # Clear ask_message_id from temp_admin_data
 
@@ -1391,22 +1409,40 @@ async def process_poster_input(client: Client, message: Message, level: str):
     if new_poster_file_id:
         if level == "series":
             update_poster_file_id(series_key, new_poster_file_id)
-            await processing_msg.edit_text("Series poster updated successfully.")
+            try:
+                await processing_msg.edit_text("Series poster updated successfully.")
+            except (MessageIdInvalid, FloodWait) as e:
+                logger.warning(f"Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
+                await client.send_message(user_id, "Series poster updated successfully.")
             new_main_msg_id = await send_main_series_message(client, user_id, get_series_by_key(series_key), main_message_id)
             if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
             temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
         elif level == "language":
             add_or_update_language(series_key, language_name, new_poster_file_id)
-            await processing_msg.edit_text("Language poster updated successfully.")
-            await send_language_management_message(client, user_id, series_key, main_message_id)
+            try:
+                await processing_msg.edit_text("Language poster updated successfully.")
+            except (MessageIdInvalid, FloodWait) as e:
+                logger.warning(f"Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
+                await client.send_message(user_id, "Language poster updated successfully.")
+            new_main_msg_id = await send_language_management_message(client, user_id, series_key, main_message_id)
+            if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
             temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
         elif level == "season":
             add_or_update_season(series_key, language_name, season_name, new_poster_file_id)
-            await processing_msg.edit_text("Season poster updated successfully.")
-            await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+            try:
+                await processing_msg.edit_text("Season poster updated successfully.")
+            except (MessageIdInvalid, FloodWait) as e:
+                logger.warning(f"Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
+                await client.send_message(user_id, "Season poster updated successfully.")
+            new_main_msg_id = await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+            if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
             temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
     else:
-        await processing_msg.edit_text("Failed to upload new poster.")
+        try:
+            await processing_msg.edit_text("Failed to upload new poster.")
+        except (MessageIdInvalid, FloodWait) as e:
+            logger.warning(f"Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
+            await client.send_message(user_id, "Failed to upload new poster.")
 
     # Clean up temp data for poster
     temp_admin_data[user_id].pop("current_language", None)
@@ -1483,13 +1519,25 @@ async def process_edit_series_text(client: Client, message: Message, input_text:
                 updates[field] = value
     
     if updates:
+        confirmation_msg = None
+        try:
+            confirmation_msg = await message.reply("Series details updated successfully.")
+        except Exception as e:
+            logger.warning(f"Failed to send confirmation message: {e}")
+
         for field, value in updates.items():
             update_series_field(series_key, field, value)
-        confirmation_msg = await message.reply("Series details updated successfully.")
-        asyncio.create_task(confirmation_msg.delete()) # Delete confirmation after 5 seconds
+        
+        if confirmation_msg:
+            asyncio.create_task(confirmation_msg.delete()) # Delete confirmation after 5 seconds
     else:
-        confirmation_msg = await message.reply("No valid fields to update found in your message.")
-        asyncio.create_task(confirmation_msg.delete()) # Delete confirmation after 5 seconds
+        confirmation_msg = None
+        try:
+            confirmation_msg = await message.reply("No valid fields to update found in your message.")
+        except Exception as e:
+            logger.warning(f"Failed to send confirmation message: {e}")
+        if confirmation_msg:
+            asyncio.create_task(confirmation_msg.delete()) # Delete confirmation after 5 seconds
 
     series_data = get_series_by_key(series_key)
     # Re-send/edit the main series message
@@ -1508,7 +1556,8 @@ async def delete_language_callback(client: Client, callback_query: CallbackQuery
     else:
         await callback_query.answer(f"Failed to delete language '{language_name}'.", show_alert=True)
     
-    await send_language_management_message(client, user_id, series_key, main_message_id)
+    new_main_msg_id = await send_language_management_message(client, user_id, series_key, main_message_id)
+    if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
     temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
 
 @Client.on_callback_query(filters.regex(r"^delete_season:") & filters.user(ADMINS))
@@ -1522,7 +1571,8 @@ async def delete_season_callback(client: Client, callback_query: CallbackQuery):
     else:
         await callback_query.answer(f"Failed to delete season '{season_name}'.", show_alert=True)
     
-    await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+    new_main_msg_id = await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+    if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
     temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
 
 @Client.on_callback_query(filters.regex(r"^delete_quality:") & filters.user(ADMINS))
@@ -1536,7 +1586,8 @@ async def delete_quality_callback(client: Client, callback_query: CallbackQuery)
     else:
         await callback_query.answer(f"Failed to delete quality '{quality_name}'.", show_alert=True)
     
-    await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+    new_main_msg_id = await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+    if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
     temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
 
 @Client.on_callback_query(filters.regex(r"^publish_series:") & filters.user(ADMINS))
@@ -1587,13 +1638,15 @@ async def confirm_publish_callback(client: Client, callback_query: CallbackQuery
             )
         except (MessageIdInvalid, FloodWait) as e:
             logger.warning(f"Failed to edit final publish message (ID: {main_message_id}): {e}. Sending a new one.")
-            await client.send_message(
+            new_msg = await client.send_message(
                 chat_id=user_id,
                 text="Published Successfully! This series is now live and cannot be edited via this UI."
             )
+            temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
         except Exception as e:
             logger.error(f"An unexpected error occurred editing final publish message: {e}")
-            await client.send_message(user_id, "Published Successfully! (But failed to update message).")
+            new_msg = await client.send_message(user_id, "Published Successfully! (But failed to update message).")
+            temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
             
         temp_admin_data.pop(user_id, None) # Clear session data for this admin
     else:
@@ -1605,18 +1658,20 @@ async def confirm_publish_callback(client: Client, callback_query: CallbackQuery
             )
         except (MessageIdInvalid, FloodWait) as e:
             logger.warning(f"Failed to edit failed-publish message (ID: {main_message_id}): {e}. Sending a new one.")
-            await client.send_message(
+            new_msg = await client.send_message(
                 chat_id=user_id,
                 text="Failed to publish series. Please try again."
             )
+            temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
         except Exception as e:
             logger.error(f"An unexpected error occurred editing failed-publish message: {e}")
-            await client.send_message(user_id, "Failed to publish series. (But failed to update message).")
+            new_msg = await client.send_message(user_id, "Failed to publish series. (But failed to update message).")
+            temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
 
         # Re-send the main series message if publishing failed
         series_data = get_series_by_key(series_key)
         if series_data: # Ensure series_data is not None before passing
-            new_main_msg_id = await send_main_series_message(client, user_id, series_data, main_message_id)
+            new_main_msg_id = await send_main_series_message(client, user_id, series_data, temp_admin_data[user_id]["main_message_id"])
             if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
             temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
         else:
@@ -1771,7 +1826,7 @@ async def series_filter(client, message):
                     )
             
             if buttons:
-                buttons_chunked = chunk_buttons(buttons, chunk_size=1)
+                buttons_chunked = chunk_buttons(buttons, chunk_size=3) # Changed chunk_size to 3
                 reply_markup = InlineKeyboardMarkup(buttons_chunked)
                 etho = await message.reply_photo(photo=random.choice(SPELL_CHECK_IMAGE), caption="<b>Choose Your Series:</b>", reply_markup=reply_markup)
                 reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.from_user.id
@@ -1790,9 +1845,15 @@ async def send_series_details_to_user(client, message, series_data, edit_message
 
     if not languages:
         if edit_message:
-            await edit_message.edit_text("No languages available for this series yet.")
+            try:
+                await edit_message.edit_text("No languages available for this series yet.")
+            except (MessageIdInvalid, FloodWait) as e:
+                logger.warning(f"Failed to edit message (ID: {edit_message.id}): {e}. Sending new message.")
+                new_msg = await client.send_message(message.chat.id, "No languages available for this series yet.")
+                requestor[f"{new_msg.chat.id}•{new_msg.id}"] = message.from_user.id # Update requestor for new message
         else:
-            await message.reply_text("No languages available for this series yet.")
+            new_msg = await message.reply_text("No languages available for this series yet.")
+            requestor[f"{new_msg.chat.id}•{new_msg.id}"] = message.from_user.id # Update requestor for new message
         return
 
     reply_text = (
@@ -1809,7 +1870,7 @@ async def send_series_details_to_user(client, message, series_data, edit_message
     for lang in languages:
         buttons.append(InlineKeyboardButton(lang['name'], callback_data=f"user_lang:{series_data['_id']}:{lang['name']}"))
     
-    buttons_chunked = chunk_buttons(buttons, chunk_size=2)
+    buttons_chunked = chunk_buttons(buttons, chunk_size=3) # Changed chunk_size to 3
     reply_markup = InlineKeyboardMarkup(buttons_chunked)
     
     try:
@@ -1827,24 +1888,43 @@ async def send_series_details_to_user(client, message, series_data, edit_message
         asyncio.create_task(DeleteMessage(etho))
     except pyrogram.errors.MediaEmpty:
         logger.error(f"MediaEmpty error for poster: {poster_to_use}. Falling back to NO_POSTER_FOUND_IMG.")
-        if edit_message:
-            await edit_message.edit_media(
-                media=InputMediaPhoto(media=NO_POSTER_FOUND_IMG, caption=reply_text, parse_mode=enums.ParseMode.HTML),
-                reply_markup=reply_markup
-            )
-            etho = edit_message
-        else:
-            etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG, caption=reply_text, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
-        
-        reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.from_user.id
-        requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
-        asyncio.create_task(DeleteMessage(etho))
+        try:
+            if edit_message:
+                await edit_message.edit_media(
+                    media=InputMediaPhoto(media=NO_POSTER_FOUND_IMG, caption=reply_text, parse_mode=enums.ParseMode.HTML),
+                    reply_markup=reply_markup
+                )
+                etho = edit_message
+            else:
+                etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG, caption=reply_text, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
+            
+            reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.from_user.id
+            requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
+            asyncio.create_task(DeleteMessage(etho))
+        except (MessageIdInvalid, FloodWait) as e:
+            logger.warning(f"Failed to edit/send message after MediaEmpty fallback (ID: {edit_message.id if edit_message else 'N/A'}): {e}. Sending new message.")
+            new_msg = await client.send_message(message.chat.id, "An error occurred while fetching series details (poster issue).")
+            requestor[f"{new_msg.chat.id}•{new_msg.id}"] = message.from_user.id
+            asyncio.create_task(DeleteMessage(new_msg))
+    except (MessageIdInvalid, FloodWait) as e:
+        logger.warning(f"Failed to edit message (ID: {edit_message.id if edit_message else 'N/A'}): {e}. Sending new message.")
+        new_msg = await client.send_message(message.chat.id, "An error occurred while fetching series details.")
+        requestor[f"{new_msg.chat.id}•{new_msg.id}"] = message.from_user.id
+        asyncio.create_task(DeleteMessage(new_msg))
     except Exception as e:
         logger.error(f"Error sending series details to user: {e}")
         if edit_message:
-            await edit_message.edit_text("An error occurred while fetching series details.")
+            try:
+                await edit_message.edit_text("An error occurred while fetching series details.")
+            except (MessageIdInvalid, FloodWait) as e:
+                logger.warning(f"Failed to edit message (ID: {edit_message.id}): {e}. Sending new message.")
+                new_msg = await client.send_message(message.chat.id, "An error occurred while fetching series details.")
+                requestor[f"{new_msg.chat.id}•{new_msg.id}"] = message.from_user.id
+                asyncio.create_task(DeleteMessage(new_msg))
         else:
-            await message.reply_text("An error occurred while fetching series details.")
+            new_msg = await message.reply_text("An error occurred while fetching series details.")
+            requestor[f"{new_msg.chat.id}•{new_msg.id}"] = message.from_user.id
+            asyncio.create_task(DeleteMessage(new_msg))
 
 # --- Centralized Callback Handler ---
 
@@ -2053,11 +2133,17 @@ async def handle_user_series_selection(client: Client, query: CallbackQuery, ser
     if series_data and series_data.get('published', False):
         await send_series_details_to_user(client, query.message, series_data, edit_message=query.message)
     else:
-        await query.message.edit_text(
-            "Series not found or not published.",
-            disable_web_page_preview=True,
-            parse_mode=enums.ParseMode.HTML
-        )
+        try:
+            await query.message.edit_text(
+                "Series not found or not published.",
+                disable_web_page_preview=True,
+                parse_mode=enums.ParseMode.HTML
+            )
+        except (MessageIdInvalid, FloodWait) as e:
+            logger.warning(f"Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
+            new_msg = await client.send_message(query.message.chat.id, "Series not found or not published.")
+            requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
+            asyncio.create_task(DeleteMessage(new_msg))
     await query.answer() # Answer the callback query
 
 async def handle_user_language_selection(client: Client, query: CallbackQuery, series_key: str, language_name: str):
@@ -2087,7 +2173,7 @@ async def handle_user_language_selection(client: Client, query: CallbackQuery, s
         for season in seasons:
             buttons.append(InlineKeyboardButton(season['name'], callback_data=f"user_season:{series_key}:{language_name}:{season['name']}"))
         
-        buttons_chunked = chunk_buttons(buttons)
+        buttons_chunked = chunk_buttons(buttons, chunk_size=3) # Apply chunking
         buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"user_series_select:{series_key}")]) # Back to series selection
         reply_markup = InlineKeyboardMarkup(buttons_chunked)
         
@@ -2098,23 +2184,46 @@ async def handle_user_language_selection(client: Client, query: CallbackQuery, s
             )
         except pyrogram.errors.MediaEmpty:
             logger.error(f"MediaEmpty error for poster: {poster_to_use} during edit. Falling back to NO_POSTER_FOUND_IMG.")
-            await query.message.edit_media(
-                media=InputMediaPhoto(
-                    media=NO_POSTER_FOUND_IMG,
-                    caption=reply_text,
-                    parse_mode=enums.ParseMode.HTML
-                ),
-                reply_markup=reply_markup
-            )
+            try:
+                await query.message.edit_media(
+                    media=InputMediaPhoto(
+                        media=NO_POSTER_FOUND_IMG,
+                        caption=reply_text,
+                        parse_mode=enums.ParseMode.HTML
+                    ),
+                    reply_markup=reply_markup
+                )
+            except (MessageIdInvalid, FloodWait) as e:
+                logger.warning(f"Failed to edit message after MediaEmpty fallback (ID: {query.message.id}): {e}. Sending new message.")
+                new_msg = await client.send_message(query.message.chat.id, "An error occurred while fetching language details (poster issue).")
+                requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
+                asyncio.create_task(DeleteMessage(new_msg))
+        except (MessageIdInvalid, FloodWait) as e:
+            logger.warning(f"Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
+            new_msg = await client.send_message(query.message.chat.id, "An error occurred while fetching language details.")
+            requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
+            asyncio.create_task(DeleteMessage(new_msg))
         except Exception as e:
             logger.error(f"Error editing message media for language details: {e}")
-            await query.message.edit_text("An error occurred while fetching language details.")
+            try:
+                await query.message.edit_text("An error occurred while fetching language details.")
+            except (MessageIdInvalid, FloodWait) as e:
+                logger.warning(f"Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
+                new_msg = await client.send_message(query.message.chat.id, "An error occurred while fetching language details.")
+                requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
+                asyncio.create_task(DeleteMessage(new_msg))
     else:
-        await query.message.edit_text(
-            "Series not found or not published.",
-            disable_web_page_preview=True,
-            parse_mode=enums.ParseMode.HTML
-        )
+        try:
+            await query.message.edit_text(
+                "Series not found or not published.",
+                disable_web_page_preview=True,
+                parse_mode=enums.ParseMode.HTML
+            )
+        except (MessageIdInvalid, FloodWait) as e:
+            logger.warning(f"Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
+            new_msg = await client.send_message(query.message.chat.id, "Series not found or not published.")
+            requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
+            asyncio.create_task(DeleteMessage(new_msg))
     await query.answer() # Answer the callback query
 
 async def handle_user_season_selection(client: Client, query: CallbackQuery, series_key: str, language_name: str, season_name: str):
@@ -2146,7 +2255,7 @@ async def handle_user_season_selection(client: Client, query: CallbackQuery, ser
         for quality in qualities:
             buttons.append(InlineKeyboardButton(quality['name'], callback_data=f"b:{quality['link_key']}"))
         
-        buttons_chunked = chunk_buttons(buttons, chunk_size=2)
+        buttons_chunked = chunk_buttons(buttons, chunk_size=3) # Changed chunk_size to 3
         buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"user_lang:{series_key}:{language_name}")]) # Back to season selection
         reply_markup = InlineKeyboardMarkup(buttons_chunked)
         
@@ -2157,21 +2266,44 @@ async def handle_user_season_selection(client: Client, query: CallbackQuery, ser
             )
         except pyrogram.errors.MediaEmpty:
             logger.error(f"MediaEmpty error for poster: {poster_to_use} during edit. Falling back to NO_POSTER_FOUND_IMG.")
-            await query.message.edit_media(
-                media=InputMediaPhoto(
-                    media=NO_POSTER_FOUND_IMG,
-                    caption=reply_text,
-                    parse_mode=enums.ParseMode.HTML
-                ),
-                reply_markup=reply_markup
-            )
+            try:
+                await query.message.edit_media(
+                    media=InputMediaPhoto(
+                        media=NO_POSTER_FOUND_IMG,
+                        caption=reply_text,
+                        parse_mode=enums.ParseMode.HTML
+                    ),
+                    reply_markup=reply_markup
+                )
+            except (MessageIdInvalid, FloodWait) as e:
+                logger.warning(f"Failed to edit message after MediaEmpty fallback (ID: {query.message.id}): {e}. Sending new message.")
+                new_msg = await client.send_message(query.message.chat.id, "An error occurred while fetching season details (poster issue).")
+                requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
+                asyncio.create_task(DeleteMessage(new_msg))
+        except (MessageIdInvalid, FloodWait) as e:
+            logger.warning(f"Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
+            new_msg = await client.send_message(query.message.chat.id, "An error occurred while fetching season details.")
+            requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
+            asyncio.create_task(DeleteMessage(new_msg))
         except Exception as e:
             logger.error(f"Error editing message media for season details: {e}")
-            await query.message.edit_text("An error occurred while fetching season details.")
+            try:
+                await query.message.edit_text("An error occurred while fetching season details.")
+            except (MessageIdInvalid, FloodWait) as e:
+                logger.warning(f"Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
+                new_msg = await client.send_message(query.message.chat.id, "An error occurred while fetching season details.")
+                requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
+                asyncio.create_task(DeleteMessage(new_msg))
     else:
-        await query.message.edit_text(
-            "Series not found or not published.",
-            disable_web_page_preview=True,
-            parse_mode=enums.ParseMode.HTML
-        )
+        try:
+            await query.message.edit_text(
+                "Series not found or not published.",
+                disable_web_page_preview=True,
+                parse_mode=enums.ParseMode.HTML
+            )
+        except (MessageIdInvalid, FloodWait) as e:
+            logger.warning(f"Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
+            new_msg = await client.send_message(query.message.chat.id, "Series not found or not published.")
+            requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
+            asyncio.create_task(DeleteMessage(new_msg))
     await query.answer()
