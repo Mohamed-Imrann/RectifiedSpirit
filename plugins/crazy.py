@@ -18,7 +18,7 @@ from database.crazy_db import (
 )
 from utils import get_message_id, get_messages_in_range, delete_messages_from_user_chat, get_poster
 from fuzzywuzzy import fuzz # Import fuzzywuzzy
-from pyrogram.errors import MessageIdInvalid, FloodWait
+from pyrogram.errors import MessageIdInvalid, FloodWait, MediaEmpty
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -684,7 +684,7 @@ async def edit_series_command(client: Client, message: Message):
 async def seriview_command(client: Client, message: Message):
     user_id = message.from_user.id
     all_series = get_series()
-    print(all_series)
+    logger.info(f"Admin {user_id} requested seriview. Found {len(all_series)} series.")
     if not all_series:
         await message.reply("No series found in the database.")
         return
@@ -721,6 +721,7 @@ async def media_selection_callback(client: Client, callback_query: CallbackQuery
     unique_id = data_parts[1]
 
     if user_id not in temp_admin_data or unique_id not in temp_admin_data[user_id]:
+        logger.warning(f"Admin {user_id}: Session expired or invalid data for media selection.")
         await callback_query.answer("Session expired or invalid data.", show_alert=True)
         await callback_query.message.delete()
         return
@@ -731,6 +732,7 @@ async def media_selection_callback(client: Client, callback_query: CallbackQuery
     main_message_id = temp_admin_data[user_id].get("main_message_id")
 
     await callback_query.answer(f"Fetching details from {source.upper()}...")
+    logger.info(f"Admin {user_id}: Fetching details for media_id={media_id}, media_type={media_type} from {source.upper()}.")
 
     movie_details = None
     if source == 'tmdb':
@@ -739,6 +741,7 @@ async def media_selection_callback(client: Client, callback_query: CallbackQuery
         movie_details = await get_poster(media_id, id=True) # Use get_poster for IMDb details
 
     if not movie_details:
+        logger.error(f"Admin {user_id}: Failed to retrieve {source.upper()} data for media_id={media_id}.")
         await client.edit_message_caption(
             chat_id=user_id,
             message_id=main_message_id,
@@ -748,11 +751,13 @@ async def media_selection_callback(client: Client, callback_query: CallbackQuery
 
     # Generate a clean series key from the title for _id
     series_key = movie_details.get('title', 'N/A').lower().replace(" ", "").replace("-", "")
+    logger.info(f"Admin {user_id}: Generated series_key: {series_key}")
     
     # Check if series already exists, if so, load it
     existing_series = get_series_by_key(series_key)
     if existing_series:
         series_data = existing_series
+        logger.info(f"Admin {user_id}: Series '{series_key}' already exists. Loading for editing.")
         await callback_query.answer("Series already exists. Loading for editing.", show_alert=True)
     else:
         # Create new series data
@@ -769,10 +774,13 @@ async def media_selection_callback(client: Client, callback_query: CallbackQuery
             'languages': [],
             'published': False
         }
+        logger.info(f"Admin {user_id}: Attempting to add new series '{series_key}'.")
         if not add_series(series_data): # Attempt to add, check if successful
+            logger.warning(f"Admin {user_id}: Failed to add new series '{series_key}' (might already exist). Loading existing series.")
             await callback_query.answer("Failed to add new series (might already exist). Loading existing series.", show_alert=True)
             series_data = get_series_by_key(series_key) # Re-fetch if insertion failed due to duplicate
             if not series_data: # If still not found, something is wrong
+                logger.error(f"Admin {user_id}: Critical error: Series '{series_key}' not found after add/re-fetch attempt.")
                 await client.edit_message_caption(
                     chat_id=user_id,
                     message_id=main_message_id,
@@ -783,6 +791,7 @@ async def media_selection_callback(client: Client, callback_query: CallbackQuery
     # Re-fetch series_data to ensure it's the latest from DB, especially after add_series
     series_data = get_series_by_key(series_key)
     if not series_data: # Should not happen if add_series was successful or existing_series was found
+        logger.error(f"Admin {user_id}: Series data for '{series_key}' is None after initial setup. This is unexpected.")
         await client.edit_message_caption(
             chat_id=user_id,
             message_id=main_message_id,
@@ -791,11 +800,14 @@ async def media_selection_callback(client: Client, callback_query: CallbackQuery
         return
 
     # Download and upload poster to LOG_CHANNEL, then update DB
+    logger.info(f"Admin {user_id}: Downloading and uploading poster for '{series_key}'.")
     poster_file_id = await download_and_upload_poster(client, poster_url=movie_details.get('poster_url') or movie_details.get('poster'))
     if poster_file_id:
         update_series_field(series_key, "poster_file_id", poster_file_id)
         series_data["poster_file_id"] = poster_file_id # Update in memory for immediate use
+        logger.info(f"Admin {user_id}: Poster updated for '{series_key}'. File ID: {poster_file_id}")
     else:
+        logger.warning(f"Admin {user_id}: Failed to download/upload poster for '{series_key}'. Using placeholder.")
         await client.send_message(user_id, "Failed to download/upload poster. Using placeholder.")
         update_series_field(series_key, "poster_file_id", NO_POSTER_FOUND_IMG)
         series_data["poster_file_id"] = NO_POSTER_FOUND_IMG
@@ -806,6 +818,7 @@ async def media_selection_callback(client: Client, callback_query: CallbackQuery
         temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
         temp_admin_data[user_id]["current_series_key"] = series_key
         temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
+        logger.info(f"Admin {user_id}: Main series message updated/sent. New ID: {new_main_msg_id}")
 
 @Client.on_callback_query(filters.regex(r"^local_series_select:") & filters.user(ADMINS))
 async def local_series_selection_callback(client: Client, callback_query: CallbackQuery):
@@ -815,6 +828,7 @@ async def local_series_selection_callback(client: Client, callback_query: Callba
     if len(data_parts) > 1 and len(data_parts[1]) == 36 and '-' in data_parts[1]: # Basic UUID check
         unique_id = data_parts[1]
         if user_id not in temp_admin_data or unique_id not in temp_admin_data[user_id]:
+            logger.warning(f"Admin {user_id}: Session expired or invalid data for local series selection (UUID).")
             await callback_query.answer("Session expired or invalid data.", show_alert=True)
             await callback_query.message.delete()
             return
@@ -823,12 +837,14 @@ async def local_series_selection_callback(client: Client, callback_query: Callba
     else:
         # Assume it's the direct series_key from /seriview
         series_key = data_parts[1]
+        logger.info(f"Admin {user_id}: Direct local series selection for key: {series_key}.")
         await callback_query.answer(f"Loading series: {series_key}...", show_alert=False)
 
     main_message_id = temp_admin_data[user_id].get("main_message_id")
 
     series_data = get_series_by_key(series_key)
     if not series_data:
+        logger.error(f"Admin {user_id}: Selected local series '{series_key}' not found in database.")
         await client.edit_message_text(
             chat_id=user_id,
             message_id=main_message_id,
@@ -844,6 +860,7 @@ async def local_series_selection_callback(client: Client, callback_query: Callba
         temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
         temp_admin_data[user_id]["current_series_key"] = series_key
         temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
+        logger.info(f"Admin {user_id}: Local series '{series_key}' loaded for editing. Main message ID: {new_main_msg_id}")
     
     if series_data.get('published'):
         await client.send_message(
@@ -851,15 +868,16 @@ async def local_series_selection_callback(client: Client, callback_query: Callba
             "⚠️ **Warning:** This series is currently **published**. Any changes you make will **not** be live until you click 'Publish Series' again."
         )
 
-
 @Client.on_callback_query(filters.regex(r"^back_to_series:") & filters.user(ADMINS))
 async def back_to_series_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     series_key = callback_query.data.split(":")[1]
     main_message_id = temp_admin_data[user_id].get("main_message_id")
+    logger.info(f"Admin {user_id}: Back to series callback for '{series_key}'.")
 
     series_data = get_series_by_key(series_key)
     if not series_data:
+        logger.error(f"Admin {user_id}: Series '{series_key}' not found when trying to go back to series view.")
         await callback_query.answer("Series not found.", show_alert=True)
         return
 
@@ -870,12 +888,14 @@ async def back_to_series_callback(client: Client, callback_query: CallbackQuery)
         temp_admin_data[user_id].pop("current_language", None)
         temp_admin_data[user_id].pop("current_season", None)
         temp_admin_data[user_id].pop("current_quality", None)
+        logger.info(f"Admin {user_id}: Returned to series details view for '{series_key}'.")
 
 @Client.on_callback_query(filters.regex(r"^manage_languages:") & filters.user(ADMINS))
 async def manage_languages_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     series_key = callback_query.data.split(":")[1]
     main_message_id = temp_admin_data[user_id].get("main_message_id")
+    logger.info(f"Admin {user_id}: Managing languages for series '{series_key}'.")
 
     temp_admin_data[user_id]["current_series_key"] = series_key
     temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
@@ -885,6 +905,7 @@ async def manage_languages_callback(client: Client, callback_query: CallbackQuer
 async def add_language_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     series_key = callback_query.data.split(":")[1]
+    logger.info(f"Admin {user_id}: Initiating add language for series '{series_key}'.")
     
     await callback_query.answer("Enter language name...")
     
@@ -907,11 +928,13 @@ async def add_language_callback(client: Client, callback_query: CallbackQuery):
     )
     temp_admin_data[user_id]["state"] = "AWAITING_LANGUAGE_INPUT"
     temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+    logger.info(f"Admin {user_id}: Awaiting language input for series '{series_key}'.")
 
 @Client.on_message(filters.text & filters.private & filters.user(ADMINS))
 async def handle_admin_text_input(client: Client, message: Message):
     user_id = message.from_user.id
     current_state = temp_admin_data.get(user_id, {}).get("state")
+    logger.info(f"Admin {user_id}: Received text input '{message.text}' in state '{current_state}'.")
     
     if current_state == "AWAITING_LANGUAGE_INPUT":
         await process_language_input(client, message, message.text.strip())
@@ -925,11 +948,14 @@ async def handle_admin_text_input(client: Client, message: Message):
         await process_edit_series_text(client, message, message.text.strip())
     # Note: AWAITING_FIRST_FILE and AWAITING_LAST_FILE are handled in handle_admin_media_and_link_input
     # Poster inputs are handled in handle_admin_media_input
+    else:
+        logger.info(f"Admin {user_id}: Text input received but no matching state for processing.")
 
 @Client.on_message((filters.photo | filters.video | filters.document) & filters.private & filters.user(ADMINS))
 async def handle_admin_media_input(client: Client, message: Message):
     user_id = message.from_user.id
     current_state = temp_admin_data.get(user_id, {}).get("state")
+    logger.info(f"Admin {user_id}: Received media input in state '{current_state}'.")
 
     if current_state == "AWAITING_SERIES_POSTER":
         await process_poster_input(client, message, "series")
@@ -942,6 +968,7 @@ async def handle_admin_media_input(client: Client, message: Message):
     elif current_state == "AWAITING_LAST_FILE":
         await process_last_file_input(client, message)
     else:
+        logger.info(f"Admin {user_id}: Media input received but no matching state for processing.")
         # If media is sent in an unexpected state, just ignore or give a generic response
         # await message.reply("I'm not expecting a media file right now.") # Optional: for debugging
         pass # Do nothing, let the main message flow continue
@@ -952,8 +979,10 @@ async def process_language_input(client: Client, message: Message, language_name
     series_key = temp_admin_data[user_id].get("current_series_key")
     main_message_id = temp_admin_data[user_id].get("main_message_id")
     ask_message_id = temp_admin_data[user_id].get("ask_message_id")
+    logger.info(f"Admin {user_id}: Processing language input '{language_name}' for series '{series_key}'.")
 
     if not series_key:
+        logger.error(f"Admin {user_id}: Series key not found in session for language input.")
         await message.reply("Error: Series key not found in session.")
         return
 
@@ -962,8 +991,9 @@ async def process_language_input(client: Client, message: Message, language_name
         if ask_message_id:
             await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
         await message.delete() # Delete user's input message
+        logger.info(f"Admin {user_id}: Deleted prompt and user input messages for language.")
     except Exception as e:
-        logger.warning(f"Could not delete prompt/user message: {e}")
+        logger.warning(f"Admin {user_id}: Could not delete prompt/user message for language input: {e}")
 
     if add_or_update_language(series_key, language_name):
         confirmation_msg = await client.send_message(
@@ -972,10 +1002,12 @@ async def process_language_input(client: Client, message: Message, language_name
             reply_markup=ReplyKeyboardRemove() # Remove keyboard from this new message
         )
         asyncio.create_task(confirmation_msg.delete()) # Delete confirmation after 5 seconds
+        logger.info(f"Admin {user_id}: Language '{language_name}' added/updated successfully for series '{series_key}'.")
 
         await send_language_management_message(client, user_id, series_key, main_message_id)
         temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
     else:
+        logger.error(f"Admin {user_id}: Failed to add/update language '{language_name}' for series '{series_key}'.")
         await message.reply("Failed to add/update language.")
 
     temp_admin_data[user_id].pop("ask_message_id", None) # Clear ask_message_id from temp_admin_data
@@ -985,6 +1017,7 @@ async def manage_seasons_callback(client: Client, callback_query: CallbackQuery)
     user_id = callback_query.from_user.id
     _, series_key, language_name = callback_query.data.split(":")
     main_message_id = temp_admin_data[user_id].get("main_message_id")
+    logger.info(f"Admin {user_id}: Managing seasons for series '{series_key}', language '{language_name}'.")
 
     temp_admin_data[user_id]["current_series_key"] = series_key
     temp_admin_data[user_id]["current_language"] = language_name
@@ -995,6 +1028,7 @@ async def manage_seasons_callback(client: Client, callback_query: CallbackQuery)
 async def add_season_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     _, series_key, language_name = callback_query.data.split(":")
+    logger.info(f"Admin {user_id}: Initiating add season for series '{series_key}', language '{language_name}'.")
     
     await callback_query.answer("Enter season name...")
 
@@ -1016,6 +1050,7 @@ async def add_season_callback(client: Client, callback_query: CallbackQuery):
     )
     temp_admin_data[user_id]["state"] = "AWAITING_SEASON_INPUT"
     temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+    logger.info(f"Admin {user_id}: Awaiting season input for series '{series_key}', language '{language_name}'.")
 
 async def process_season_input(client: Client, message: Message, season_name: str):
     user_id = message.from_user.id
@@ -1023,8 +1058,10 @@ async def process_season_input(client: Client, message: Message, season_name: st
     language_name = temp_admin_data[user_id].get("current_language")
     main_message_id = temp_admin_data[user_id].get("main_message_id")
     ask_message_id = temp_admin_data[user_id].get("ask_message_id")
+    logger.info(f"Admin {user_id}: Processing season input '{season_name}' for series '{series_key}', language '{language_name}'.")
 
     if not all([series_key, language_name]):
+        logger.error(f"Admin {user_id}: Series or language not found in session for season input.")
         await message.reply("Error: Series or language not found in session.")
         return
 
@@ -1033,8 +1070,9 @@ async def process_season_input(client: Client, message: Message, season_name: st
         if ask_message_id:
             await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
         await message.delete() # Delete user's input message
+        logger.info(f"Admin {user_id}: Deleted prompt and user input messages for season.")
     except Exception as e:
-        logger.warning(f"Could not delete prompt/user message: {e}")
+        logger.warning(f"Admin {user_id}: Could not delete prompt/user message for season input: {e}")
 
     if add_or_update_season(series_key, language_name, season_name):
         confirmation_msg = await client.send_message(
@@ -1043,10 +1081,12 @@ async def process_season_input(client: Client, message: Message, season_name: st
             reply_markup=ReplyKeyboardRemove() # Remove keyboard from this new message
         )
         asyncio.create_task(confirmation_msg.delete()) # Delete confirmation after 5 seconds
+        logger.info(f"Admin {user_id}: Season '{season_name}' added/updated successfully for series '{series_key}', language '{language_name}'.")
 
         await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
         temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
     else:
+        logger.error(f"Admin {user_id}: Failed to add/update season '{season_name}' for series '{series_key}', language '{language_name}'.")
         await message.reply("Failed to add/update season.")
 
     temp_admin_data[user_id].pop("ask_message_id", None) # Clear ask_message_id from temp_admin_data
@@ -1056,6 +1096,7 @@ async def manage_qualities_callback(client: Client, callback_query: CallbackQuer
     user_id = callback_query.from_user.id
     _, series_key, language_name, season_name = callback_query.data.split(":")
     main_message_id = temp_admin_data[user_id].get("main_message_id")
+    logger.info(f"Admin {user_id}: Managing qualities for series '{series_key}', language '{language_name}', season '{season_name}'.")
 
     temp_admin_data[user_id]["current_series_key"] = series_key
     temp_admin_data[user_id]["current_language"] = language_name
@@ -1067,6 +1108,7 @@ async def manage_qualities_callback(client: Client, callback_query: CallbackQuer
 async def add_quality_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     _, series_key, language_name, season_name = callback_query.data.split(":")
+    logger.info(f"Admin {user_id}: Initiating add quality for series '{series_key}', language '{language_name}', season '{season_name}'.")
     
     await callback_query.answer("Enter quality name...")
 
@@ -1088,6 +1130,7 @@ async def add_quality_callback(client: Client, callback_query: CallbackQuery):
     )
     temp_admin_data[user_id]["state"] = "AWAITING_QUALITY_INPUT"
     temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+    logger.info(f"Admin {user_id}: Awaiting quality input for series '{series_key}', language '{language_name}', season '{season_name}'.")
 
 async def process_quality_input(client: Client, message: Message, quality_name: str):
     user_id = message.from_user.id
@@ -1096,8 +1139,10 @@ async def process_quality_input(client: Client, message: Message, quality_name: 
     season_name = temp_admin_data[user_id].get("current_season")
     main_message_id = temp_admin_data[user_id].get("main_message_id")
     ask_message_id = temp_admin_data[user_id].get("ask_message_id")
+    logger.info(f"Admin {user_id}: Processing quality input '{quality_name}' for series '{series_key}', language '{language_name}', season '{season_name}'.")
 
     if not all([series_key, language_name, season_name]):
+        logger.error(f"Admin {user_id}: Series, language, or season not found in session for quality input.")
         await message.reply("Error: Series, language, or season not found in session.")
         return
 
@@ -1106,8 +1151,9 @@ async def process_quality_input(client: Client, message: Message, quality_name: 
         if ask_message_id:
             await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
         await message.delete() # Delete user's input message
+        logger.info(f"Admin {user_id}: Deleted prompt and user input messages for quality.")
     except Exception as e:
-        logger.warning(f"Could not delete prompt/user message: {e}")
+        logger.warning(f"Admin {user_id}: Could not delete prompt/user message for quality input: {e}")
 
     # For now, we'll add with a placeholder link_key. Actual link will be added later.
     if add_or_update_quality(series_key, language_name, season_name, quality_name, "PENDING_LINK"):
@@ -1117,10 +1163,12 @@ async def process_quality_input(client: Client, message: Message, quality_name: 
             reply_markup=ReplyKeyboardRemove() # Remove keyboard from this new message
         )
         asyncio.create_task(confirmation_msg.delete()) # Delete confirmation after 5 seconds
+        logger.info(f"Admin {user_id}: Quality '{quality_name}' added/updated successfully for series '{series_key}'.")
 
         await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
         temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
     else:
+        logger.error(f"Admin {user_id}: Failed to add/update quality '{quality_name}' for series '{series_key}'.")
         await message.reply("Failed to add/update quality.")
 
     temp_admin_data[user_id].pop("ask_message_id", None) # Clear ask_message_id from temp_admin_data
@@ -1130,6 +1178,7 @@ async def add_files_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     _, series_key, language_name, season_name, quality_name = callback_query.data.split(":")
     # main_message_id = temp_admin_data[user_id].get("main_message_id") # Not directly used here, but for context
+    logger.info(f"Admin {user_id}: Initiating add files for series '{series_key}', lang '{language_name}', season '{season_name}', quality '{quality_name}'.")
 
     temp_admin_data[user_id]["current_series_key"] = series_key
     temp_admin_data[user_id]["current_language"] = language_name
@@ -1146,20 +1195,23 @@ async def add_files_callback(client: Client, callback_query: CallbackQuery):
     )
     temp_admin_data[user_id]["state"] = "AWAITING_FIRST_FILE"
     temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+    logger.info(f"Admin {user_id}: Awaiting first file for quality '{quality_name}'.")
 
 async def process_first_file_input(client: Client, message: Message):
     user_id = message.from_user.id
     ask_message_id = temp_admin_data[user_id].get("ask_message_id")
+    logger.info(f"Admin {user_id}: Processing first file input.")
     
     channel_id, msg_id = await get_message_id(client, message)
     if not channel_id or not msg_id:
+        logger.warning(f"Admin {user_id}: Invalid first file input (no channel_id or msg_id).")
         # Delete user's invalid input immediately
         try:
             await message.delete()
             if ask_message_id:
                 await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
         except Exception as e:
-            logger.warning(f"Could not delete invalid input/prompt: {e}")
+            logger.warning(f"Admin {user_id}: Could not delete invalid input/prompt for first file: {e}")
 
         await client.send_message(user_id, "Invalid message. Please forward a message from a **DB Channel** or send a valid **post link from a DB Channel**.")
         temp_admin_data[user_id]["state"] = "IDLE" # Reset state
@@ -1169,13 +1221,14 @@ async def process_first_file_input(client: Client, message: Message):
     temp_admin_data[user_id]["first_file_channel_id"] = channel_id
     temp_admin_data[user_id]["first_file_msg_id"] = msg_id
     temp_admin_data[user_id]["files_to_delete"].append(message.id) # Add user's forwarded message to delete list
+    logger.info(f"Admin {user_id}: First file received: Channel ID {channel_id}, Message ID {msg_id}.")
 
     # Delete the bot's prompt message
     try:
         if ask_message_id:
             await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
     except Exception as e:
-        logger.warning(f"Could not delete prompt message: {e}")
+        logger.warning(f"Admin {user_id}: Could not delete prompt message for first file: {e}")
 
     next_prompt_msg = await client.send_message(
         chat_id=user_id,
@@ -1189,33 +1242,37 @@ async def process_first_file_input(client: Client, message: Message):
     )
     temp_admin_data[user_id]["state"] = "AWAITING_LAST_FILE"
     temp_admin_data[user_id]["ask_message_id"] = next_prompt_msg.id # Update ask_message_id for the next step
+    logger.info(f"Admin {user_id}: Awaiting last file for quality '{temp_admin_data[user_id]['current_quality']}'.")
 
 async def process_last_file_input(client: Client, message: Message):
     user_id = message.from_user.id
     ask_message_id = temp_admin_data[user_id].get("ask_message_id")
+    logger.info(f"Admin {user_id}: Processing last file input.")
 
     channel_id, msg_id = await get_message_id(client, message)
     if not channel_id or not msg_id:
+        logger.warning(f"Admin {user_id}: Invalid last file input (no channel_id or msg_id).")
         # Delete user's invalid input immediately
         try:
             await message.delete()
             if ask_message_id:
                 await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
         except Exception as e:
-            logger.warning(f"Could not delete invalid input/prompt: {e}")
+            logger.warning(f"Admin {user_id}: Could not delete invalid input/prompt for last file: {e}")
         await client.send_message(user_id, "Invalid message. Please forward a message from a **DB Channel** or send a valid **post link from a DB Channel**.")
         temp_admin_data[user_id]["state"] = "IDLE" # Reset state
         temp_admin_data[user_id].pop("ask_message_id", None)
         return
     
     if channel_id != temp_admin_data[user_id]["first_file_channel_id"]:
+        logger.warning(f"Admin {user_id}: Last file channel ID mismatch. Expected {temp_admin_data[user_id]['first_file_channel_id']}, got {channel_id}.")
         # Delete user's invalid input immediately
         try:
             await message.delete()
             if ask_message_id:
                 await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
         except Exception as e:
-            logger.warning(f"Could not delete invalid input/prompt: {e}")
+            logger.warning(f"Admin {user_id}: Could not delete invalid input/prompt for channel mismatch: {e}")
         await client.send_message(user_id, "Last file must be from the same channel as the first file.")
         temp_admin_data[user_id]["state"] = "IDLE" # Reset state
         temp_admin_data[user_id].pop("ask_message_id", None)
@@ -1223,13 +1280,14 @@ async def process_last_file_input(client: Client, message: Message):
 
     temp_admin_data[user_id]["last_file_msg_id"] = msg_id
     temp_admin_data[user_id]["files_to_delete"].append(message.id) # Add user's forwarded message to delete list
+    logger.info(f"Admin {user_id}: Last file received: Message ID {msg_id}.")
 
     # Delete the bot's prompt message
     try:
         if ask_message_id:
             await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
     except Exception as e:
-        logger.warning(f"Could not delete prompt message: {e}")
+        logger.warning(f"Admin {user_id}: Could not delete prompt message for last file: {e}")
 
     reply_keyboard = ReplyKeyboardMarkup(
         [
@@ -1251,6 +1309,7 @@ async def process_last_file_input(client: Client, message: Message):
     )
     temp_admin_data[user_id]["state"] = "AWAITING_CODEC_INPUT"
     temp_admin_data[user_id]["ask_message_id"] = next_prompt_msg.id # Update ask_message_id for the next step
+    logger.info(f"Admin {user_id}: Awaiting codec input for quality '{temp_admin_data[user_id]['current_quality']}'.")
 
 async def process_codec_input(client: Client, message: Message, codec: str):
     user_id = message.from_user.id
@@ -1265,23 +1324,27 @@ async def process_codec_input(client: Client, message: Message, codec: str):
     last_file_msg_id = temp_admin_data[user_id]["last_file_msg_id"]
     files_to_delete = temp_admin_data[user_id]["files_to_delete"]
     main_message_id = temp_admin_data[user_id].get("main_message_id") # Get current main message ID
+    logger.info(f"Admin {user_id}: Processing codec input '{codec}' for quality '{quality_name}'.")
 
     # Delete the bot's prompt message and the user's reply
     try:
         if ask_message_id:
             await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
         await message.delete() # Delete user's input message
+        logger.info(f"Admin {user_id}: Deleted prompt and user input messages for codec.")
     except Exception as e:
-        logger.warning(f"Could not delete prompt/user message: {e}")
+        logger.warning(f"Admin {user_id}: Could not delete prompt/user message for codec input: {e}")
 
     processing_msg = await client.send_message(
         chat_id=user_id,
         text="Processing files... Please wait. This might take a while.",
         reply_markup=ReplyKeyboardRemove() # Remove keyboard from this new message
     )
+    logger.info(f"Admin {user_id}: Sent processing message.")
 
     # Copy messages to DB_CHANNEL
     target_db_channel_id = DB_CHANNEL[0] # Use the first DB channel for storage (Pyrogram format)
+    logger.info(f"Admin {user_id}: Copying messages from {first_file_channel_id} ({first_file_msg_id}-{last_file_msg_id}) to {target_db_channel_id}.")
     copied_messages = await get_messages_in_range(
         client, 
         first_file_channel_id, 
@@ -1291,22 +1354,26 @@ async def process_codec_input(client: Client, message: Message, codec: str):
     )
 
     if not copied_messages:
+        logger.error(f"Admin {user_id}: Failed to copy files to DB Channel for quality '{quality_name}'.")
         try:
             await processing_msg.edit_text("Failed to copy files to DB Channel. Please check bot's admin rights in the source and target channels.")
         except (MessageIdInvalid, FloodWait) as e:
-            logger.warning(f"Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
+            logger.warning(f"Admin {user_id}: Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
             await client.send_message(user_id, "Failed to copy files to DB Channel. Please check bot's admin rights in the source and target channels.")
         return
 
     new_first_msg_id = copied_messages[0].id
     new_last_msg_id = copied_messages[-1].id
+    logger.info(f"Admin {user_id}: Files copied. New range: {new_first_msg_id}-{new_last_msg_id}.")
     
     # Generate the link_key using the RAW_DB_CHANNEL format for the channel ID
     link_key = f"get_{abs(int(str(target_db_channel_id).replace('-100','')))}.{new_first_msg_id}.{new_last_msg_id}" # Changed to dot separator for consistency
+    logger.info(f"Admin {user_id}: Generated link_key: {link_key}.")
 
     if add_or_update_quality(series_key, language_name, season_name, quality_name, link_key, codec):
         # Delete user's forwarded messages
         await delete_messages_from_user_chat(client, user_id, files_to_delete)
+        logger.info(f"Admin {user_id}: Deleted user's forwarded messages.")
 
         # Go back to quality management view
         temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
@@ -1316,21 +1383,25 @@ async def process_codec_input(client: Client, message: Message, codec: str):
         temp_admin_data[user_id].pop("first_file_msg_id", None)
         temp_admin_data[user_id].pop("last_file_msg_id", None)
         temp_admin_data[user_id].pop("files_to_delete", None)
+        logger.info(f"Admin {user_id}: Cleared temporary file data.")
 
         try:
             await processing_msg.edit_text(f"Files added successfully for '{quality_name}'.")
         except (MessageIdInvalid, FloodWait) as e:
-            logger.warning(f"Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
+            logger.warning(f"Admin {user_id}: Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
             await client.send_message(user_id, f"Files added successfully for '{quality_name}'.")
+        logger.info(f"Admin {user_id}: Confirmed files added successfully.")
 
         # Re-send the quality management message, updating the main_message_id
         new_main_msg_id = await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
         if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
+        logger.info(f"Admin {user_id}: Quality management message re-sent/updated.")
     else:
+        logger.error(f"Admin {user_id}: Failed to add files to database for quality '{quality_name}'.")
         try:
             await processing_msg.edit_text("Failed to add files to database.")
         except (MessageIdInvalid, FloodWait) as e:
-            logger.warning(f"Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
+            logger.warning(f"Admin {user_id}: Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
             await client.send_message(user_id, "Failed to add files to database.")
 
     temp_admin_data[user_id].pop("ask_message_id", None) # Clear ask_message_id from temp_admin_data
@@ -1339,27 +1410,32 @@ async def process_codec_input(client: Client, message: Message, codec: str):
 async def change_series_poster_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     series_key = callback_query.data.split(":")[1]
+    logger.info(f"Admin {user_id}: Initiating change series poster for '{series_key}'.")
     
     await callback_query.answer("Send me the new poster image/video.")
     ask_msg = await client.send_message(user_id, "Please send the new poster image or video (thumbnail will be used).")
     temp_admin_data[user_id]["state"] = "AWAITING_SERIES_POSTER"
     temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+    logger.info(f"Admin {user_id}: Awaiting series poster input for '{series_key}'.")
 
 @Client.on_callback_query(filters.regex(r"^change_language_poster:") & filters.user(ADMINS))
 async def change_language_poster_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     _, series_key, language_name = callback_query.data.split(":")
+    logger.info(f"Admin {user_id}: Initiating change language poster for '{language_name}' in series '{series_key}'.")
     
     temp_admin_data[user_id]["current_language"] = language_name # Set for poster processing
     await callback_query.answer("Send me the new poster image/video for this language.")
     ask_msg = await client.send_message(user_id, f"Please send the new poster image or video for '{language_name}'.")
     temp_admin_data[user_id]["state"] = "AWAITING_LANGUAGE_POSTER"
     temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+    logger.info(f"Admin {user_id}: Awaiting language poster input for '{language_name}'.")
 
 @Client.on_callback_query(filters.regex(r"^change_season_poster:") & filters.user(ADMINS))
 async def change_season_poster_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     _, series_key, language_name, season_name = callback_query.data.split(":")
+    logger.info(f"Admin {user_id}: Initiating change season poster for '{season_name}' in language '{language_name}', series '{series_key}'.")
     
     temp_admin_data[user_id]["current_language"] = language_name # Set for poster processing
     temp_admin_data[user_id]["current_season"] = season_name # Set for poster processing
@@ -1367,6 +1443,7 @@ async def change_season_poster_callback(client: Client, callback_query: Callback
     ask_msg = await client.send_message(user_id, f"Please send the new poster image or video for '{season_name}'.")
     temp_admin_data[user_id]["state"] = "AWAITING_SEASON_POSTER"
     temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+    logger.info(f"Admin {user_id}: Awaiting season poster input for '{season_name}'.")
 
 async def process_poster_input(client: Client, message: Message, level: str):
     user_id = message.from_user.id
@@ -1375,15 +1452,17 @@ async def process_poster_input(client: Client, message: Message, level: str):
     language_name = temp_admin_data[user_id].get("current_language")
     season_name = temp_admin_data[user_id].get("current_season")
     main_message_id = temp_admin_data[user_id].get("main_message_id")
+    logger.info(f"Admin {user_id}: Processing poster input for level '{level}'.")
 
     if not message.photo and not message.video:
+        logger.warning(f"Admin {user_id}: Invalid poster input (not photo or video).")
         # Delete user's invalid input immediately
         try:
             await message.delete()
             if ask_message_id:
                 await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
         except Exception as e:
-            logger.warning(f"Could not delete invalid input/prompt: {e}")
+            logger.warning(f"Admin {user_id}: Could not delete invalid input/prompt for poster: {e}")
         await client.send_message(user_id, "Please send a **photo or video** for the poster.")
         temp_admin_data[user_id]["state"] = "IDLE" # Reset state
         temp_admin_data[user_id].pop("ask_message_id", None)
@@ -1396,13 +1475,15 @@ async def process_poster_input(client: Client, message: Message, level: str):
         if ask_message_id:
             await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
         await message.delete() # Delete user's input message
+        logger.info(f"Admin {user_id}: Deleted prompt and user input messages for poster.")
     except Exception as e:
-        logger.warning(f"Could not delete prompt/user message: {e}")
+        logger.warning(f"Admin {user_id}: Could not delete prompt/user message for poster input: {e}")
 
     processing_msg = await client.send_message(
         chat_id=user_id,
         text="Uploading poster... Please wait."
     )
+    logger.info(f"Admin {user_id}: Sent 'Uploading poster' message.")
 
     new_poster_file_id = await download_and_upload_poster(client, message=message)
 
@@ -1412,42 +1493,47 @@ async def process_poster_input(client: Client, message: Message, level: str):
             try:
                 await processing_msg.edit_text("Series poster updated successfully.")
             except (MessageIdInvalid, FloodWait) as e:
-                logger.warning(f"Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
+                logger.warning(f"Admin {user_id}: Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
                 await client.send_message(user_id, "Series poster updated successfully.")
             new_main_msg_id = await send_main_series_message(client, user_id, get_series_by_key(series_key), main_message_id)
             if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
             temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
+            logger.info(f"Admin {user_id}: Series poster updated to {new_poster_file_id}.")
         elif level == "language":
             add_or_update_language(series_key, language_name, new_poster_file_id)
             try:
                 await processing_msg.edit_text("Language poster updated successfully.")
             except (MessageIdInvalid, FloodWait) as e:
-                logger.warning(f"Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
+                logger.warning(f"Admin {user_id}: Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
                 await client.send_message(user_id, "Language poster updated successfully.")
             new_main_msg_id = await send_language_management_message(client, user_id, series_key, main_message_id)
             if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
             temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
+            logger.info(f"Admin {user_id}: Language '{language_name}' poster updated to {new_poster_file_id}.")
         elif level == "season":
             add_or_update_season(series_key, language_name, season_name, new_poster_file_id)
             try:
                 await processing_msg.edit_text("Season poster updated successfully.")
             except (MessageIdInvalid, FloodWait) as e:
-                logger.warning(f"Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
+                logger.warning(f"Admin {user_id}: Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
                 await client.send_message(user_id, "Season poster updated successfully.")
             new_main_msg_id = await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
             if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
             temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
+            logger.info(f"Admin {user_id}: Season '{season_name}' poster updated to {new_poster_file_id}.")
     else:
+        logger.error(f"Admin {user_id}: Failed to upload new poster for level '{level}'.")
         try:
             await processing_msg.edit_text("Failed to upload new poster.")
         except (MessageIdInvalid, FloodWait) as e:
-            logger.warning(f"Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
+            logger.warning(f"Admin {user_id}: Failed to edit processing message (ID: {processing_msg.id}): {e}. Sending new message.")
             await client.send_message(user_id, "Failed to upload new poster.")
 
     # Clean up temp data for poster
     temp_admin_data[user_id].pop("current_language", None)
     temp_admin_data[user_id].pop("current_season", None)
     temp_admin_data[user_id].pop("ask_message_id", None)
+    logger.info(f"Admin {user_id}: Cleaned up poster temp data.")
 
 @Client.on_callback_query(filters.regex(r"^edit_series_details:") & filters.user(ADMINS))
 async def edit_series_details_callback(client: Client, callback_query: CallbackQuery):
@@ -1455,8 +1541,10 @@ async def edit_series_details_callback(client: Client, callback_query: CallbackQ
     series_key = callback_query.data.split(":")[1]
     main_message_id = temp_admin_data[user_id].get("main_message_id")
     series_data = get_series_by_key(series_key)
+    logger.info(f"Admin {user_id}: Initiating edit series details for '{series_key}'.")
 
     if not series_data:
+        logger.error(f"Admin {user_id}: Series '{series_key}' not found for editing details.")
         await callback_query.answer("Series not found.", show_alert=True)
         return
 
@@ -1478,35 +1566,41 @@ async def edit_series_details_callback(client: Client, callback_query: CallbackQ
             text=text,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"back_to_series:{series_key}")]])
         )
+        logger.info(f"Admin {user_id}: Edited message with series details prompt.")
     except (MessageIdInvalid, FloodWait) as e:
-        logger.warning(f"Failed to edit series details prompt (ID: {main_message_id}): {e}. Sending a new one.")
+        logger.warning(f"Admin {user_id}: Failed to edit series details prompt (ID: {main_message_id}): {e}. Sending a new one.")
         new_msg = await client.send_message(
             chat_id=user_id,
             text=text,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"back_to_series:{series_key}")]])
         )
         temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
+        logger.info(f"Admin {user_id}: Sent new message with series details prompt. New ID: {new_msg.id}")
     except Exception as e:
-        logger.error(f"An unexpected error occurred editing series details prompt: {e}")
+        logger.error(f"Admin {user_id}: An unexpected error occurred editing series details prompt: {e}")
         await client.send_message(user_id, "Error updating series details display. Please try again.")
 
     temp_admin_data[user_id]["state"] = "EDITING_SERIES_TEXT"
     temp_admin_data[user_id]["current_series_key"] = series_key
+    logger.info(f"Admin {user_id}: Set state to EDITING_SERIES_TEXT for series '{series_key}'.")
 
 async def process_edit_series_text(client: Client, message: Message, input_text: str):
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
     main_message_id = temp_admin_data[user_id].get("main_message_id")
+    logger.info(f"Admin {user_id}: Processing edit series text input for '{series_key}'. Input: '{input_text}'.")
 
     if not series_key:
+        logger.error(f"Admin {user_id}: Series key not found in session for editing series text.")
         await message.reply("Error: Series key not found in session.")
         return
 
     # Delete the user's input message
     try:
         await message.delete()
+        logger.info(f"Admin {user_id}: Deleted user's input message for series text edit.")
     except Exception as e:
-        logger.warning(f"Could not delete user's input message: {e}")
+        logger.warning(f"Admin {user_id}: Could not delete user's input message for series text edit: {e}")
 
     updates = {}
     lines = input_text.split('\n')
@@ -1523,10 +1617,11 @@ async def process_edit_series_text(client: Client, message: Message, input_text:
         try:
             confirmation_msg = await message.reply("Series details updated successfully.")
         except Exception as e:
-            logger.warning(f"Failed to send confirmation message: {e}")
+            logger.warning(f"Admin {user_id}: Failed to send confirmation message: {e}")
 
         for field, value in updates.items():
             update_series_field(series_key, field, value)
+            logger.info(f"Admin {user_id}: Updated field '{field}' to '{value}' for series '{series_key}'.")
         
         if confirmation_msg:
             asyncio.create_task(confirmation_msg.delete()) # Delete confirmation after 5 seconds
@@ -1535,66 +1630,81 @@ async def process_edit_series_text(client: Client, message: Message, input_text:
         try:
             confirmation_msg = await message.reply("No valid fields to update found in your message.")
         except Exception as e:
-            logger.warning(f"Failed to send confirmation message: {e}")
+            logger.warning(f"Admin {user_id}: Failed to send confirmation message (no valid fields): {e}")
         if confirmation_msg:
             asyncio.create_task(confirmation_msg.delete()) # Delete confirmation after 5 seconds
+    logger.info(f"Admin {user_id}: Series details update process completed for '{series_key}'.")
 
     series_data = get_series_by_key(series_key)
     # Re-send/edit the main series message
     new_main_msg_id = await send_main_series_message(client, user_id, series_data, main_message_id)
     if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
     temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
+    logger.info(f"Admin {user_id}: Returned to series details view after editing.")
 
 @Client.on_callback_query(filters.regex(r"^delete_language:") & filters.user(ADMINS))
 async def delete_language_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     _, series_key, language_name = callback_query.data.split(":")
     main_message_id = temp_admin_data[user_id].get("main_message_id")
+    logger.info(f"Admin {user_id}: Deleting language '{language_name}' from series '{series_key}'.")
 
     if delete_language(series_key, language_name):
         await callback_query.answer(f"Language '{language_name}' deleted.", show_alert=True)
+        logger.info(f"Admin {user_id}: Language '{language_name}' successfully deleted.")
     else:
         await callback_query.answer(f"Failed to delete language '{language_name}'.", show_alert=True)
+        logger.error(f"Admin {user_id}: Failed to delete language '{language_name}'.")
     
     new_main_msg_id = await send_language_management_message(client, user_id, series_key, main_message_id)
     if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
     temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
+    logger.info(f"Admin {user_id}: Returned to language management after deletion.")
 
 @Client.on_callback_query(filters.regex(r"^delete_season:") & filters.user(ADMINS))
 async def delete_season_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     _, series_key, language_name, season_name = callback_query.data.split(":")
     main_message_id = temp_admin_data[user_id].get("main_message_id")
+    logger.info(f"Admin {user_id}: Deleting season '{season_name}' from language '{language_name}', series '{series_key}'.")
 
     if delete_season(series_key, language_name, season_name):
         await callback_query.answer(f"Season '{season_name}' deleted.", show_alert=True)
+        logger.info(f"Admin {user_id}: Season '{season_name}' successfully deleted.")
     else:
         await callback_query.answer(f"Failed to delete season '{season_name}'.", show_alert=True)
+        logger.error(f"Admin {user_id}: Failed to delete season '{season_name}'.")
     
     new_main_msg_id = await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
     if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
     temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
+    logger.info(f"Admin {user_id}: Returned to season management after deletion.")
 
 @Client.on_callback_query(filters.regex(r"^delete_quality:") & filters.user(ADMINS))
 async def delete_quality_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     _, series_key, language_name, season_name, quality_name = callback_query.data.split(":")
     main_message_id = temp_admin_data[user_id].get("main_message_id")
+    logger.info(f"Admin {user_id}: Deleting quality '{quality_name}' from season '{season_name}', language '{language_name}', series '{series_key}'.")
 
     if delete_quality(series_key, language_name, season_name, quality_name):
         await callback_query.answer(f"Quality '{quality_name}' deleted.", show_alert=True)
+        logger.info(f"Admin {user_id}: Quality '{quality_name}' successfully deleted.")
     else:
         await callback_query.answer(f"Failed to delete quality '{quality_name}'.", show_alert=True)
+        logger.error(f"Admin {user_id}: Failed to delete quality '{quality_name}'.")
     
     new_main_msg_id = await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
     if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
     temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
+    logger.info(f"Admin {user_id}: Returned to quality management after deletion.")
 
 @Client.on_callback_query(filters.regex(r"^publish_series:") & filters.user(ADMINS))
 async def publish_series_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     series_key = callback_query.data.split(":")[1]
     main_message_id = temp_admin_data[user_id].get("main_message_id")
+    logger.info(f"Admin {user_id}: Initiating publish series confirmation for '{series_key}'.")
 
     try:
         await client.edit_message_text(
@@ -1606,8 +1716,9 @@ async def publish_series_callback(client: Client, callback_query: CallbackQuery)
                 [InlineKeyboardButton("No, Cancel", callback_data=f"back_to_series:{series_key}")]
             ])
         )
+        logger.info(f"Admin {user_id}: Edited message with publish confirmation prompt.")
     except (MessageIdInvalid, FloodWait) as e:
-        logger.warning(f"Failed to edit publish confirmation message (ID: {main_message_id}): {e}. Sending a new one.")
+        logger.warning(f"Admin {user_id}: Failed to edit publish confirmation message (ID: {main_message_id}): {e}. Sending a new one.")
         new_msg = await client.send_message(
             chat_id=user_id,
             text="Do you want to publish this series? NOTE: Once you publish this series, you can't edit it anymore. All the empty groups will be removed automatically.",
@@ -1617,56 +1728,69 @@ async def publish_series_callback(client: Client, callback_query: CallbackQuery)
             ])
         )
         temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
+        logger.info(f"Admin {user_id}: Sent new message with publish confirmation prompt. New ID: {new_msg.id}")
     except Exception as e:
-        logger.error(f"An unexpected error occurred editing publish confirmation message: {e}")
+        logger.error(f"Admin {user_id}: An unexpected error occurred editing publish confirmation message: {e}")
         await client.send_message(user_id, "Error with publish confirmation. Please try again.")
 
     temp_admin_data[user_id]["state"] = "AWAITING_PUBLISH_CONFIRMATION"
+    logger.info(f"Admin {user_id}: Set state to AWAITING_PUBLISH_CONFIRMATION for series '{series_key}'.")
 
 @Client.on_callback_query(filters.regex(r"^confirm_publish:") & filters.user(ADMINS))
 async def confirm_publish_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     series_key = callback_query.data.split(":")[1]
     main_message_id = temp_admin_data[user_id].get("main_message_id")
+    logger.info(f"Admin {user_id}: Confirming publish for series '{series_key}'.")
 
-    if publish_series(series_key):
+    publish_success = publish_series(series_key)
+    if publish_success:
+        logger.info(f"Admin {user_id}: Series '{series_key}' successfully published via DB function.")
         try:
             await client.edit_message_text(
                 chat_id=user_id,
                 message_id=main_message_id,
                 text="Published Successfully! This series is now live and cannot be edited via this UI."
             )
+            logger.info(f"Admin {user_id}: Edited message to 'Published Successfully'.")
         except (MessageIdInvalid, FloodWait) as e:
-            logger.warning(f"Failed to edit final publish message (ID: {main_message_id}): {e}. Sending a new one.")
+            logger.warning(f"Admin {user_id}: Failed to edit final publish message (ID: {main_message_id}): {e}. Sending a new one.")
             new_msg = await client.send_message(
                 chat_id=user_id,
                 text="Published Successfully! This series is now live and cannot be edited via this UI."
             )
             temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
+            logger.info(f"Admin {user_id}: Sent new message 'Published Successfully'. New ID: {new_msg.id}")
         except Exception as e:
-            logger.error(f"An unexpected error occurred editing final publish message: {e}")
+            logger.error(f"Admin {user_id}: An unexpected error occurred editing final publish message: {e}")
             new_msg = await client.send_message(user_id, "Published Successfully! (But failed to update message).")
             temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
+            logger.info(f"Admin {user_id}: Sent new message 'Published Successfully' after unexpected error. New ID: {new_msg.id}")
             
         temp_admin_data.pop(user_id, None) # Clear session data for this admin
+        logger.info(f"Admin {user_id}: Cleared session data after successful publish.")
     else:
+        logger.error(f"Admin {user_id}: Failed to publish series '{series_key}' via DB function.")
         try:
             await client.edit_message_text(
                 chat_id=user_id,
                 message_id=main_message_id,
                 text="Failed to publish series. Please try again."
             )
+            logger.info(f"Admin {user_id}: Edited message to 'Failed to publish'.")
         except (MessageIdInvalid, FloodWait) as e:
-            logger.warning(f"Failed to edit failed-publish message (ID: {main_message_id}): {e}. Sending a new one.")
+            logger.warning(f"Admin {user_id}: Failed to edit failed-publish message (ID: {main_message_id}): {e}. Sending a new one.")
             new_msg = await client.send_message(
                 chat_id=user_id,
                 text="Failed to publish series. Please try again."
             )
             temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
+            logger.info(f"Admin {user_id}: Sent new message 'Failed to publish'. New ID: {new_msg.id}")
         except Exception as e:
-            logger.error(f"An unexpected error occurred editing failed-publish message: {e}")
+            logger.error(f"Admin {user_id}: An unexpected error occurred editing failed-publish message: {e}")
             new_msg = await client.send_message(user_id, "Failed to publish series. (But failed to update message).")
             temp_admin_data[user_id]["main_message_id"] = new_msg.id # Update stored message ID
+            logger.info(f"Admin {user_id}: Sent new message 'Failed to publish' after unexpected error. New ID: {new_msg.id}")
 
         # Re-send the main series message if publishing failed
         series_data = get_series_by_key(series_key)
@@ -1674,11 +1798,14 @@ async def confirm_publish_callback(client: Client, callback_query: CallbackQuery
             new_main_msg_id = await send_main_series_message(client, user_id, series_data, temp_admin_data[user_id]["main_message_id"])
             if new_main_msg_id: temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
             temp_admin_data[user_id]["state"] = "SERIES_DETAILS_VIEW"
+            logger.info(f"Admin {user_id}: Returned to series details view after failed publish.")
         else:
+            logger.error(f"Admin {user_id}: Series data for '{series_key}' not found after failed publish attempt. Clearing session.")
             await client.send_message(user_id, "Series data not found after failed publish attempt. Please check logs.")
             temp_admin_data.pop(user_id, None) # Clear session if series data is completely lost
 
 
+# --- User-Facing Handlers ---
 
 import re
 import pyrogram 
@@ -1710,6 +1837,7 @@ async def DeleteMessage(msg):
     await asyncio.sleep(AUTO_DELETE_TIME) # Messages will be deleted after AUTO_DELETE_TIME
     try:
         await msg.delete()
+        logger.info(f"Message {msg.id} deleted after {AUTO_DELETE_TIME} seconds.")
     except Exception as e:
         logger.warning(f"Failed to delete message {msg.id}: {e}")
 
@@ -1721,21 +1849,30 @@ def chunk_buttons(buttons, chunk_size=3):
 
 @Client.on_message(filters.text & (filters.private | filters.group))
 async def handle_message(client, message):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    logger.info(f"User {user_id} in chat {chat_id}: Received message: '{message.text}'")
+
     # First, check for global filters
     glob_handled = await global_filters(client, message)
     if not glob_handled:
+        logger.info(f"User {user_id} in chat {chat_id}: No global filter matched. Proceeding to series filter.")
         # If no global filter matched, proceed to series filter
         await series_filter(client, message)
+    else:
+        logger.info(f"User {user_id} in chat {chat_id}: Message handled by global filter.")
 
 async def global_filters(client, message, text=False):
     group_id = message.chat.id
     name = text or message.text 
     reply_id = message.reply_to_message.id if message.reply_to_message else message.id 
     keywords = await get_gfilters("gfilters")
+    logger.info(f"Checking global filters for '{name}' in chat {group_id}. Found {len(keywords)} keywords.")
     
     for keyword in reversed(sorted(keywords, key=len)):
         pattern = r"( |^|[\\W])" + re.escape(keyword) + r"( |$|[\\W])"
         if re.search(pattern, name, flags=re.IGNORECASE):
+            logger.info(f"Global filter matched keyword: '{keyword}' for '{name}'.")
             reply_text, btn, alert, fileid = await find_gfilter("gfilters", keyword)
             if reply_text:
                 reply_text = reply_text.replace("\\n", "\n").replace("\\t", "\t")
@@ -1773,18 +1910,26 @@ async def global_filters(client, message, text=False):
                         reply_markup=InlineKeyboardMarkup(button),
                         reply_to_message_id=reply_id
                     )
+                logger.info(f"Global filter '{keyword}' successfully sent response in chat {group_id}.")
                 return True # Global filter handled the message
             except Exception as e:
-                logger.exception(e)
+                logger.exception(f"Error sending global filter response for '{keyword}' in chat {group_id}: {e}")
                 return False # Error occurred, but still considered handled
+    logger.info(f"No global filter matched for '{name}' in chat {group_id}.")
     return False # No global filter matched
 
 async def series_filter(client, message):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
     text = message.text.strip()
+    logger.info(f"User {user_id} in chat {chat_id}: Running series filter for query: '{text}'.")
+
     series_list_data = get_series() # Get all series documents
+    logger.info(f"User {user_id} in chat {chat_id}: Retrieved {len(series_list_data)} total series from DB.")
     
     # Filter for published series only
     published_series = [s for s in series_list_data if s.get('published', False)]
+    logger.info(f"User {user_id} in chat {chat_id}: Found {len(published_series)} published series.")
 
     series_keys = [s['_id'] for s in published_series]
     series_titles = [s['title'] for s in published_series]
@@ -1795,10 +1940,12 @@ async def series_filter(client, message):
     for s in published_series:
         if text.lower() == s['_id'].lower() or text.lower() == s['title'].lower():
             series_data = s
+            logger.info(f"User {user_id} in chat {chat_id}: Exact match found for '{text}': {s.get('title')}.")
             break
     
     # If no exact match, try close matches using titles for user-friendly search
     if not series_data:
+        logger.info(f"User {user_id} in chat {chat_id}: No exact match. Attempting fuzzy search for '{text}'.")
         # Use fuzzy matching on titles for better user experience with spaces/typos
         best_match_title = None
         highest_score = 0
@@ -1808,6 +1955,8 @@ async def series_filter(client, message):
                 highest_score = score
                 best_match_title = title
         
+        logger.info(f"User {user_id} in chat {chat_id}: Best fuzzy match: '{best_match_title}' with score {highest_score}.")
+
         if best_match_title and highest_score >= 0.6: # Threshold for a "good enough" match
             # Find all close matches above a certain threshold
             close_matches_titles = [
@@ -1817,6 +1966,8 @@ async def series_filter(client, message):
             # Sort by similarity score (descending)
             close_matches_titles.sort(key=lambda x: difflib.SequenceMatcher(None, text.lower(), x.lower()).ratio(), reverse=True)
             
+            logger.info(f"User {user_id} in chat {chat_id}: Found {len(close_matches_titles)} close matches: {close_matches_titles}.")
+
             buttons = []
             for match_title in close_matches_titles[:5]: # Limit to top 5 suggestions
                 matched_series = next((s for s in published_series if s['title'] == match_title), None)
@@ -1832,23 +1983,34 @@ async def series_filter(client, message):
                 reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.from_user.id
                 requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
                 asyncio.create_task(DeleteMessage(etho))
+                logger.info(f"User {user_id} in chat {chat_id}: Sent spell check suggestions.")
                 return
+        logger.info(f"User {user_id} in chat {chat_id}: No good fuzzy match found for '{text}'.")
 
     if series_data:
+        logger.info(f"User {user_id} in chat {chat_id}: Sending series details for '{series_data.get('title')}'.")
         await send_series_details_to_user(client, message, series_data)
+    else:
+        logger.info(f"User {user_id} in chat {chat_id}: No series found for query '{text}'.")
 
 async def send_series_details_to_user(client, message, series_data, edit_message=None):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    logger.info(f"User {user_id} in chat {chat_id}: Preparing to send series details for '{series_data.get('title')}'.")
+
     languages = series_data.get("languages", [])
     
     # Filter out languages with no seasons
     languages = [lang for lang in languages if lang.get('seasons')]
+    logger.info(f"User {user_id} in chat {chat_id}: Found {len(languages)} languages with seasons for '{series_data.get('title')}'.")
 
     if not languages:
+        logger.warning(f"User {user_id} in chat {chat_id}: No languages available for series '{series_data.get('title')}'.")
         if edit_message:
             try:
                 await edit_message.edit_text("No languages available for this series yet.")
             except (MessageIdInvalid, FloodWait) as e:
-                logger.warning(f"Failed to edit message (ID: {edit_message.id}): {e}. Sending new message.")
+                logger.warning(f"User {user_id} in chat {chat_id}: Failed to edit message (ID: {edit_message.id}): {e}. Sending new message.")
                 new_msg = await client.send_message(message.chat.id, "No languages available for this series yet.")
                 requestor[f"{new_msg.chat.id}•{new_msg.id}"] = message.from_user.id # Update requestor for new message
         else:
@@ -1865,6 +2027,7 @@ async def send_series_details_to_user(client, message, series_data, edit_message
     )
     
     poster_to_use = get_specific_poster(series_data['_id']) or NO_POSTER_FOUND_IMG
+    logger.info(f"User {user_id} in chat {chat_id}: Using poster: {poster_to_use}.")
     
     buttons = []
     for lang in languages:
@@ -1880,14 +2043,16 @@ async def send_series_details_to_user(client, message, series_data, edit_message
                 reply_markup=reply_markup
             )
             etho = edit_message
+            logger.info(f"User {user_id} in chat {chat_id}: Edited message with series details and languages.")
         else:
             etho = await message.reply_photo(photo=poster_to_use, caption=reply_text, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
+            logger.info(f"User {user_id} in chat {chat_id}: Sent new message with series details and languages.")
         
         reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.from_user.id
         requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
         asyncio.create_task(DeleteMessage(etho))
-    except pyrogram.errors.MediaEmpty:
-        logger.error(f"MediaEmpty error for poster: {poster_to_use}. Falling back to NO_POSTER_FOUND_IMG.")
+    except MediaEmpty:
+        logger.error(f"User {user_id} in chat {chat_id}: MediaEmpty error for poster: {poster_to_use}. Falling back to NO_POSTER_FOUND_IMG.")
         try:
             if edit_message:
                 await edit_message.edit_media(
@@ -1895,29 +2060,36 @@ async def send_series_details_to_user(client, message, series_data, edit_message
                     reply_markup=reply_markup
                 )
                 etho = edit_message
+                logger.info(f"User {user_id} in chat {chat_id}: Edited message with series details and languages (fallback poster).")
             else:
                 etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG, caption=reply_text, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
+                logger.info(f"User {user_id} in chat {chat_id}: Sent new message with series details and languages (fallback poster).")
             
             reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.from_user.id
             requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
             asyncio.create_task(DeleteMessage(etho))
         except (MessageIdInvalid, FloodWait) as e:
-            logger.warning(f"Failed to edit/send message after MediaEmpty fallback (ID: {edit_message.id if edit_message else 'N/A'}): {e}. Sending new message.")
+            logger.warning(f"User {user_id} in chat {chat_id}: Failed to edit/send message after MediaEmpty fallback (ID: {edit_message.id if edit_message else 'N/A'}): {e}. Sending new message.")
+            new_msg = await client.send_message(message.chat.id, "An error occurred while fetching series details (poster issue).")
+            requestor[f"{new_msg.chat.id}•{new_msg.id}"] = message.from_user.id
+            asyncio.create_task(DeleteMessage(new_msg))
+        except Exception as e:
+            logger.error(f"User {user_id} in chat {chat_id}: Another error after MediaEmpty fallback: {e}")
             new_msg = await client.send_message(message.chat.id, "An error occurred while fetching series details (poster issue).")
             requestor[f"{new_msg.chat.id}•{new_msg.id}"] = message.from_user.id
             asyncio.create_task(DeleteMessage(new_msg))
     except (MessageIdInvalid, FloodWait) as e:
-        logger.warning(f"Failed to edit message (ID: {edit_message.id if edit_message else 'N/A'}): {e}. Sending new message.")
+        logger.warning(f"User {user_id} in chat {chat_id}: Failed to edit message (ID: {edit_message.id if edit_message else 'N/A'}): {e}. Sending new message.")
         new_msg = await client.send_message(message.chat.id, "An error occurred while fetching series details.")
         requestor[f"{new_msg.chat.id}•{new_msg.id}"] = message.from_user.id
         asyncio.create_task(DeleteMessage(new_msg))
     except Exception as e:
-        logger.error(f"Error sending series details to user: {e}")
+        logger.error(f"User {user_id} in chat {chat_id}: Error sending series details to user: {e}")
         if edit_message:
             try:
                 await edit_message.edit_text("An error occurred while fetching series details.")
             except (MessageIdInvalid, FloodWait) as e:
-                logger.warning(f"Failed to edit message (ID: {edit_message.id}): {e}. Sending new message.")
+                logger.warning(f"User {user_id} in chat {chat_id}: Failed to edit message (ID: {edit_message.id}): {e}. Sending new message.")
                 new_msg = await client.send_message(message.chat.id, "An error occurred while fetching series details.")
                 requestor[f"{new_msg.chat.id}•{new_msg.id}"] = message.from_user.id
                 asyncio.create_task(DeleteMessage(new_msg))
@@ -1934,6 +2106,7 @@ async def cb_handler(client, query: CallbackQuery):
     clicked_user = query.from_user.id
     chat_id = query.message.chat.id
     message_id = query.message.id
+    logger.info(f"User {clicked_user} in chat {chat_id}: Received callback query: '{data}'.")
 
     # Determine who initiated the request for group chats
     reply_msg = query.message.reply_to_message  
@@ -1942,9 +2115,11 @@ async def cb_handler(client, query: CallbackQuery):
         requested_user = reply_msg.from_user.id
     elif not requested_user: # Fallback for direct messages or if requestor dict is empty
         requested_user = clicked_user
+    logger.info(f"User {clicked_user} in chat {chat_id}: Request initiated by user {requested_user}.")
 
     # Prevent other users from interacting with a specific user's request in groups
     if chat_id < 0 and requested_user and clicked_user != requested_user:
+        logger.warning(f"User {clicked_user} in chat {chat_id}: Not their request. Requested by {requested_user}.")
         await query.answer("Not your request!", show_alert=True)
         return
 
@@ -1952,9 +2127,11 @@ async def cb_handler(client, query: CallbackQuery):
     if data == "close_data":
         await query.message.delete()
         await query.answer("Closed.")
+        logger.info(f"User {clicked_user} in chat {chat_id}: Closed message.")
     elif data == "gfiltersdeleteallconfirm":
         await del_allg(query.message, 'gfilters')
         await query.answer("Dᴏɴᴇ !")
+        logger.info(f"User {clicked_user} in chat {chat_id}: Confirmed global filters deletion.")
     elif data == "gfiltersdeleteallcancel":
         try:
             await query.message.reply_to_message.delete()
@@ -1962,12 +2139,14 @@ async def cb_handler(client, query: CallbackQuery):
             pass
         await query.message.delete()
         await query.answer("Pʀᴏᴄᴇss Cᴀɴᴄᴇʟʟᴇᴅ !")
+        logger.info(f"User {clicked_user} in chat {chat_id}: Cancelled global filters deletion.")
 
     # --- Global Filter Alert Callbacks ---
     elif data.startswith("gfilteralert:"):
         await handle_gfilter_alert(query)
     elif data.startswith("alertmessage:"): # Assuming this is for local filters, not global
         await query.answer("This alert is not configured.", show_alert=True)
+        logger.info(f"User {clicked_user} in chat {chat_id}: Received unconfigured alertmessage callback.")
 
     # --- File Sending Callbacks ---
     elif data.startswith("b:"): # Deep link for files
@@ -1992,9 +2171,12 @@ async def cb_handler(client, query: CallbackQuery):
 # --- Specialized Callback Handlers ---
 
 async def handle_gfilter_alert(query: CallbackQuery):
+    user_id = query.from_user.id
+    chat_id = query.message.chat.id
     parts = query.data.split(":")
     i = parts[1]
     keyword = parts[2]
+    logger.info(f"User {user_id} in chat {chat_id}: Handling global filter alert for keyword '{keyword}', index {i}.")
     reply_text, btn, alerts, fileid = await find_gfilter('gfilters', keyword)
     if alerts is not None:
         # alerts are stored as a string representation of a list, so eval it
@@ -2002,16 +2184,20 @@ async def handle_gfilter_alert(query: CallbackQuery):
         alert = alerts[int(i)]
         alert = alert.replace("\\n", "\n").replace("\\t", "\t")
         await query.answer(alert, show_alert=True)
+        logger.info(f"User {user_id} in chat {chat_id}: Displayed alert for '{keyword}'.")
     else:
         await query.answer("No alert message found.", show_alert=True)
+        logger.warning(f"User {user_id} in chat {chat_id}: No alert message found for '{keyword}'.")
 
 async def handle_file_request(client: Client, query: CallbackQuery, file_identifier: str, ident: str = None, is_deep_link: bool = False):
     user_id = query.from_user.id
     chat_id = query.message.chat.id
+    logger.info(f"User {user_id} in chat {chat_id}: Handling file request for '{file_identifier}'. Deep link: {is_deep_link}.")
     
     # Check force subscribe channels (REQ_CHANNEL_ONE, REQ_CHANNEL_TWO)
     force_sub_buttons = await create_request_forcesub_buttons(user_id)
     if force_sub_buttons:
+        logger.info(f"User {user_id} in chat {chat_id}: Force subscription required.")
         await query.answer("Please join channels below to get files!", show_alert=True)
         await client.send_message(
             chat_id=user_id,
@@ -2023,6 +2209,7 @@ async def handle_file_request(client: Client, query: CallbackQuery, file_identif
 
     # Check AUTH_CHANNEL (if configured)
     if AUTH_CHANNEL and not await is_subscribed(client, userid=user_id):
+        logger.info(f"User {user_id} in chat {chat_id}: AUTH_CHANNEL subscription required.")
         try:
             invite_link = await client.create_chat_invite_link(int(AUTH_CHANNEL))
             btn = [[InlineKeyboardButton("❆ Jᴏɪɴ Oᴜʀ Bᴀᴄᴋ-Uᴘ Cʜᴀɴɴᴇʟ ❆", url=invite_link.invite_link)]]
@@ -2035,7 +2222,7 @@ async def handle_file_request(client: Client, query: CallbackQuery, file_identif
             )
             return
         except Exception as e:
-            logger.error(f"Error checking AUTH_CHANNEL or creating invite link: {e}")
+            logger.error(f"User {user_id} in chat {chat_id}: Error checking AUTH_CHANNEL or creating invite link: {e}")
             await query.answer("An error occurred with channel verification. Please try again later.", show_alert=True)
             return
 
@@ -2051,6 +2238,7 @@ async def handle_file_request(client: Client, query: CallbackQuery, file_identif
             
             # Convert raw_channel_id back to Pyrogram format
             channel_id_pyrogram = int(f"-100{raw_channel_id}")
+            logger.info(f"User {user_id} in chat {chat_id}: Attempting to copy messages from {channel_id_pyrogram} ({start_msg_id}-{end_msg_id}).")
             
             # Fetch messages from the DB channel
             copied_messages = []
@@ -2063,7 +2251,7 @@ async def handle_file_request(client: Client, query: CallbackQuery, file_identif
                         copied_messages.append(copied_msg)
                         await asyncio.sleep(0.5) # Small delay
                 except Exception as e:
-                    logger.error(f"Error copying message {current_msg_id} from {channel_id_pyrogram}: {e}")
+                    logger.error(f"User {user_id} in chat {chat_id}: Error copying message {current_msg_id} from {channel_id_pyrogram}: {e}")
                 current_msg_id += 1
             
             if copied_messages:
@@ -2073,10 +2261,13 @@ async def handle_file_request(client: Client, query: CallbackQuery, file_identif
                 )
                 asyncio.create_task(delete_file(copied_messages, client, delete_data))
                 await query.answer('Files sent to your PM!', show_alert=True)
+                logger.info(f"User {user_id} in chat {chat_id}: Successfully sent {len(copied_messages)} files to PM.")
             else:
                 await query.answer('Failed to retrieve files. They might have been deleted or are inaccessible.', show_alert=True)
+                logger.warning(f"User {user_id} in chat {chat_id}: Failed to retrieve files for '{file_identifier}'.")
         else:
             await query.answer('Invalid file link.', show_alert=True)
+            logger.warning(f"User {user_id} in chat {chat_id}: Invalid deep link format: '{file_identifier}'.")
     else:
         # This is a direct file_id from inline query results (not from crazy_db)
         # This part assumes a get_file_details function exists elsewhere (e.g., in utils or another plugin)
@@ -2093,6 +2284,7 @@ async def handle_file_request(client: Client, query: CallbackQuery, file_identif
         
         # For now, if not a deep link, assume it's an invalid file_identifier or needs a different lookup
         await query.answer("Direct file sending not fully implemented for this type of file_identifier.", show_alert=True)
+        logger.warning(f"User {user_id} in chat {chat_id}: Direct file sending attempted for unhandled identifier type: '{file_identifier}'.")
         return
 
         # settings = await get_settings(chat_id) # Get chat settings
@@ -2129,10 +2321,15 @@ async def handle_file_request(client: Client, query: CallbackQuery, file_identif
 
 
 async def handle_user_series_selection(client: Client, query: CallbackQuery, series_key: str):
+    user_id = query.from_user.id
+    chat_id = query.message.chat.id
+    logger.info(f"User {user_id} in chat {chat_id}: User selected series '{series_key}'.")
     series_data = get_series_by_key(series_key)
     if series_data and series_data.get('published', False):
         await send_series_details_to_user(client, query.message, series_data, edit_message=query.message)
+        logger.info(f"User {user_id} in chat {chat_id}: Sent series details for '{series_key}'.")
     else:
+        logger.warning(f"User {user_id} in chat {chat_id}: Series '{series_key}' not found or not published for user selection.")
         try:
             await query.message.edit_text(
                 "Series not found or not published.",
@@ -2140,21 +2337,26 @@ async def handle_user_series_selection(client: Client, query: CallbackQuery, ser
                 parse_mode=enums.ParseMode.HTML
             )
         except (MessageIdInvalid, FloodWait) as e:
-            logger.warning(f"Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
+            logger.warning(f"User {user_id} in chat {chat_id}: Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
             new_msg = await client.send_message(query.message.chat.id, "Series not found or not published.")
             requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
             asyncio.create_task(DeleteMessage(new_msg))
     await query.answer() # Answer the callback query
 
 async def handle_user_language_selection(client: Client, query: CallbackQuery, series_key: str, language_name: str):
+    user_id = query.from_user.id
+    chat_id = query.message.chat.id
+    logger.info(f"User {user_id} in chat {chat_id}: User selected language '{language_name}' for series '{series_key}'.")
     series_data = get_series_by_key(series_key)
 
     if series_data and series_data.get('published', False):
         current_lang = next((lang for lang in series_data.get("languages", []) if lang["name"].lower() == language_name.lower()), None)
         seasons = current_lang.get("seasons", []) if current_lang else []
         seasons = [s for s in seasons if s.get('qualities')] # Filter out seasons with no qualities
+        logger.info(f"User {user_id} in chat {chat_id}: Found {len(seasons)} seasons with qualities for language '{language_name}'.")
 
         if not seasons:
+            logger.warning(f"User {user_id} in chat {chat_id}: No seasons available for language '{language_name}'.")
             await query.answer("No seasons available for this language yet.", show_alert=True)
             return
 
@@ -2168,6 +2370,7 @@ async def handle_user_language_selection(client: Client, query: CallbackQuery, s
         )
         
         poster_to_use = get_specific_poster(series_data['_id'], language_name=language_name) or NO_POSTER_FOUND_IMG
+        logger.info(f"User {user_id} in chat {chat_id}: Using poster: {poster_to_use} for language '{language_name}'.")
         
         buttons = []
         for season in seasons:
@@ -2182,8 +2385,9 @@ async def handle_user_language_selection(client: Client, query: CallbackQuery, s
                 media=InputMediaPhoto(media=poster_to_use, caption=reply_text, parse_mode=enums.ParseMode.HTML),
                 reply_markup=reply_markup
             )
-        except pyrogram.errors.MediaEmpty:
-            logger.error(f"MediaEmpty error for poster: {poster_to_use} during edit. Falling back to NO_POSTER_FOUND_IMG.")
+            logger.info(f"User {user_id} in chat {chat_id}: Edited message with language details and seasons.")
+        except MediaEmpty:
+            logger.error(f"User {user_id} in chat {chat_id}: MediaEmpty error for poster: {poster_to_use} during edit. Falling back to NO_POSTER_FOUND_IMG.")
             try:
                 await query.message.edit_media(
                     media=InputMediaPhoto(
@@ -2193,26 +2397,33 @@ async def handle_user_language_selection(client: Client, query: CallbackQuery, s
                     ),
                     reply_markup=reply_markup
                 )
+                logger.info(f"User {user_id} in chat {chat_id}: Edited message with language details and seasons (fallback poster).")
             except (MessageIdInvalid, FloodWait) as e:
-                logger.warning(f"Failed to edit message after MediaEmpty fallback (ID: {query.message.id}): {e}. Sending new message.")
+                logger.warning(f"User {user_id} in chat {chat_id}: Failed to edit message after MediaEmpty fallback (ID: {query.message.id}): {e}. Sending new message.")
+                new_msg = await client.send_message(query.message.chat.id, "An error occurred while fetching language details (poster issue).")
+                requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
+                asyncio.create_task(DeleteMessage(new_msg))
+            except Exception as e:
+                logger.error(f"User {user_id} in chat {chat_id}: Another error after MediaEmpty fallback: {e}")
                 new_msg = await client.send_message(query.message.chat.id, "An error occurred while fetching language details (poster issue).")
                 requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
                 asyncio.create_task(DeleteMessage(new_msg))
         except (MessageIdInvalid, FloodWait) as e:
-            logger.warning(f"Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
+            logger.warning(f"User {user_id} in chat {chat_id}: Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
             new_msg = await client.send_message(query.message.chat.id, "An error occurred while fetching language details.")
             requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
             asyncio.create_task(DeleteMessage(new_msg))
         except Exception as e:
-            logger.error(f"Error editing message media for language details: {e}")
+            logger.error(f"User {user_id} in chat {chat_id}: Error editing message media for language details: {e}")
             try:
                 await query.message.edit_text("An error occurred while fetching language details.")
             except (MessageIdInvalid, FloodWait) as e:
-                logger.warning(f"Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
+                logger.warning(f"User {user_id} in chat {chat_id}: Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
                 new_msg = await client.send_message(query.message.chat.id, "An error occurred while fetching language details.")
                 requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
                 asyncio.create_task(DeleteMessage(new_msg))
     else:
+        logger.warning(f"User {user_id} in chat {chat_id}: Series '{series_key}' not found or not published for language selection.")
         try:
             await query.message.edit_text(
                 "Series not found or not published.",
@@ -2220,13 +2431,16 @@ async def handle_user_language_selection(client: Client, query: CallbackQuery, s
                 parse_mode=enums.ParseMode.HTML
             )
         except (MessageIdInvalid, FloodWait) as e:
-            logger.warning(f"Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
+            logger.warning(f"User {user_id} in chat {chat_id}: Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
             new_msg = await client.send_message(query.message.chat.id, "Series not found or not published.")
             requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
             asyncio.create_task(DeleteMessage(new_msg))
     await query.answer() # Answer the callback query
 
 async def handle_user_season_selection(client: Client, query: CallbackQuery, series_key: str, language_name: str, season_name: str):
+    user_id = query.from_user.id
+    chat_id = query.message.chat.id
+    logger.info(f"User {user_id} in chat {chat_id}: User selected season '{season_name}' for language '{language_name}', series '{series_key}'.")
     series_data = get_series_by_key(series_key)
 
     if series_data and series_data.get('published', False):
@@ -2234,8 +2448,10 @@ async def handle_user_season_selection(client: Client, query: CallbackQuery, ser
         current_season = next((s for s in current_lang.get("seasons", []) if s["name"].lower() == season_name.lower()), None) if current_lang else None
         qualities = current_season.get("qualities", []) if current_season else []
         qualities = [q for q in qualities if q.get('link_key')] # Filter out qualities with no links
+        logger.info(f"User {user_id} in chat {chat_id}: Found {len(qualities)} qualities with links for season '{season_name}'.")
 
         if not qualities:
+            logger.warning(f"User {user_id} in chat {chat_id}: No qualities available for season '{season_name}'.")
             await query.answer("No qualities available for this season yet.", show_alert=True)
             return
 
@@ -2250,12 +2466,13 @@ async def handle_user_season_selection(client: Client, query: CallbackQuery, ser
         )
         
         poster_to_use = get_specific_poster(series_key, language_name=language_name, season_name=season_name) or NO_POSTER_FOUND_IMG
+        logger.info(f"User {user_id} in chat {chat_id}: Using poster: {poster_to_use} for season '{season_name}'.")
         
         buttons = []
         for quality in qualities:
             buttons.append(InlineKeyboardButton(quality['name'], callback_data=f"b:{quality['link_key']}"))
         
-        buttons_chunked = chunk_buttons(buttons, chunk_size=3) # Changed chunk_size to 3
+        buttons_chunked = chunk_buttons(buttons, chunk_size=3) # Apply chunking
         buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"user_lang:{series_key}:{language_name}")]) # Back to season selection
         reply_markup = InlineKeyboardMarkup(buttons_chunked)
         
@@ -2264,8 +2481,9 @@ async def handle_user_season_selection(client: Client, query: CallbackQuery, ser
                 media=InputMediaPhoto(media=poster_to_use, caption=reply_text, parse_mode=enums.ParseMode.HTML),
                 reply_markup=reply_markup
             )
-        except pyrogram.errors.MediaEmpty:
-            logger.error(f"MediaEmpty error for poster: {poster_to_use} during edit. Falling back to NO_POSTER_FOUND_IMG.")
+            logger.info(f"User {user_id} in chat {chat_id}: Edited message with season details and qualities.")
+        except MediaEmpty:
+            logger.error(f"User {user_id} in chat {chat_id}: MediaEmpty error for poster: {poster_to_use} during edit. Falling back to NO_POSTER_FOUND_IMG.")
             try:
                 await query.message.edit_media(
                     media=InputMediaPhoto(
@@ -2275,26 +2493,33 @@ async def handle_user_season_selection(client: Client, query: CallbackQuery, ser
                     ),
                     reply_markup=reply_markup
                 )
+                logger.info(f"User {user_id} in chat {chat_id}: Edited message with season details and qualities (fallback poster).")
             except (MessageIdInvalid, FloodWait) as e:
-                logger.warning(f"Failed to edit message after MediaEmpty fallback (ID: {query.message.id}): {e}. Sending new message.")
+                logger.warning(f"User {user_id} in chat {chat_id}: Failed to edit message after MediaEmpty fallback (ID: {query.message.id}): {e}. Sending new message.")
+                new_msg = await client.send_message(query.message.chat.id, "An error occurred while fetching season details (poster issue).")
+                requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
+                asyncio.create_task(DeleteMessage(new_msg))
+            except Exception as e:
+                logger.error(f"User {user_id} in chat {chat_id}: Another error after MediaEmpty fallback: {e}")
                 new_msg = await client.send_message(query.message.chat.id, "An error occurred while fetching season details (poster issue).")
                 requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
                 asyncio.create_task(DeleteMessage(new_msg))
         except (MessageIdInvalid, FloodWait) as e:
-            logger.warning(f"Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
+            logger.warning(f"User {user_id} in chat {chat_id}: Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
             new_msg = await client.send_message(query.message.chat.id, "An error occurred while fetching season details.")
             requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
             asyncio.create_task(DeleteMessage(new_msg))
         except Exception as e:
-            logger.error(f"Error editing message media for season details: {e}")
+            logger.error(f"User {user_id} in chat {chat_id}: Error editing message media for season details: {e}")
             try:
                 await query.message.edit_text("An error occurred while fetching season details.")
             except (MessageIdInvalid, FloodWait) as e:
-                logger.warning(f"Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
+                logger.warning(f"User {user_id} in chat {chat_id}: Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
                 new_msg = await client.send_message(query.message.chat.id, "An error occurred while fetching season details.")
                 requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
                 asyncio.create_task(DeleteMessage(new_msg))
     else:
+        logger.warning(f"User {user_id} in chat {chat_id}: Series '{series_key}' not found or not published for season selection.")
         try:
             await query.message.edit_text(
                 "Series not found or not published.",
@@ -2302,7 +2527,7 @@ async def handle_user_season_selection(client: Client, query: CallbackQuery, ser
                 parse_mode=enums.ParseMode.HTML
             )
         except (MessageIdInvalid, FloodWait) as e:
-            logger.warning(f"Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
+            logger.warning(f"User {user_id} in chat {chat_id}: Failed to edit message (ID: {query.message.id}): {e}. Sending new message.")
             new_msg = await client.send_message(query.message.chat.id, "Series not found or not published.")
             requestor[f"{new_msg.chat.id}•{new_msg.id}"] = query.from_user.id
             asyncio.create_task(DeleteMessage(new_msg))
