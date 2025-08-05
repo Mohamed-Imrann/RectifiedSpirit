@@ -11,303 +11,286 @@ db = client[DATABASE_NAME]
 series_collection = db.series
 
 def add_series(series_data):
-  """Adds a new series document. Returns True on success, False on duplicate key error."""
-  try:
-      series_collection.insert_one(series_data)
-      logger.info(f"Series '{series_data.get('title', 'N/A')}' added successfully.")
-      return True
-  except errors.DuplicateKeyError:
-      logger.warning(f"Series with _id '{series_data.get('_id', 'N/A')}' already exists. Skipping insertion.")
-      return False
-  except Exception as e:
-      logger.error(f"Error adding series '{series_data.get('title', 'N/A')}': {e}")
-      return False
+    """Adds a new series document. Returns True on success, False on duplicate key error."""
+    try:
+        series_collection.insert_one(series_data)
+        logger.info(f"Series '{series_data.get('title', 'N/A')}' added successfully.")
+        return True
+    except errors.DuplicateKeyError:
+        logger.warning(f"Series with _id '{series_data.get('_id', 'N/A')}' already exists. Skipping insertion.")
+        return False
+    except Exception as e:
+        logger.error(f"Error adding series '{series_data.get('title', 'N/A')}': {e}")
+        return False
 
 def get_series():
-  """Returns a list of all series documents."""
-  return list(series_collection.find({}))
+    """Returns a list of all series documents."""
+    return list(series_collection.find({}))
 
 def get_series_by_key(series_key):
-  """Retrieves a single series document by its key (which is _id)."""
-  return series_collection.find_one({"_id": series_key})
+    """Retrieves a single series document by its key (which is _id)."""
+    return series_collection.find_one({"_id": series_key})
 
 def update_series(series_key, update_data):
-  """Updates a series document."""
-  try:
-      result = series_collection.update_one({"_id": series_key}, {"$set": update_data})
-      logger.info(f"Update series '{series_key}' result: Matched={result.matched_count}, Modified={result.modified_count}")
-      return result.modified_count > 0
-  except Exception as e:
-      logger.error(f"Error updating series '{series_key}': {e}")
-      return False
+    """Updates a series document."""
+    try:
+        result = series_collection.update_one({"_id": series_key}, {"$set": update_data})
+        return result.modified_count > 0
+    except Exception as e:
+        logger.error(f"Error updating series '{series_key}': {e}")
+        return False
 
 def delete_series(series_key):
-  """Deletes a series document."""
-  try:
-      result = series_collection.delete_one({"_id": series_key})
-      return result.deleted_count > 0
-  except Exception as e:
-      logger.error(f"Error deleting series '{series_key}': {e}")
-      return False
+    """Deletes a series document."""
+    try:
+        result = series_collection.delete_one({"_id": series_key})
+        return result.deleted_count > 0
+    except Exception as e:
+        logger.error(f"Error deleting series '{series_key}': {e}")
+        return False
 
 def delete_all_series():
-  """Deletes all series documents."""
-  try:
-      result = series_collection.delete_many({})
-      return result.deleted_count > 0
-  except Exception as e:
-      logger.error(f"Error deleting all series: {e}")
-      return False
+    """Deletes all series documents."""
+    try:
+        result = series_collection.delete_many({})
+        return result.deleted_count > 0
+    except Exception as e:
+        logger.error(f"Error deleting all series: {e}")
+        return False
 
 def update_series_field(series_key, field, value):
-  """Updates a top-level field in a series document."""
-  try:
-      result = series_collection.update_one({"_id": series_key}, {"$set": {field: value}})
-      logger.info(f"Update series field '{field}' for '{series_key}' result: Matched={result.matched_count}, Modified={result.modified_count}")
-      return result.modified_count > 0
-  except Exception as e:
-      logger.error(f"Error updating series field '{field}' for '{series_key}': {e}")
-      return False
+    """Updates a top-level field in a series document."""
+    try:
+        result = series_collection.update_one({"_id": series_key}, {"$set": {field: value}})
+        return result.modified_count > 0
+    except Exception as e:
+        logger.error(f"Error updating series field '{field}' for '{series_key}': {e}")
+        return False
 
 def add_or_update_language(series_key, language_name, poster_file_id=None):
-  """Adds a new language or updates its poster for a series."""
-  series = get_series_by_key(series_key)
-  if not series:
-      logger.warning(f"Series '{series_key}' not found for adding/updating language '{language_name}'.")
-      return False
+    """Adds a new language or updates its poster for a series."""
+    series = get_series_by_key(series_key)
+    if not series:
+        return False
 
-  languages = series.get("languages", [])
-  found = False
-  for lang in languages:
-      if lang["name"].lower() == language_name.lower():
-          if poster_file_id:
-              lang["poster_file_id"] = poster_file_id
-          found = True
-          break
-  
-  if not found:
-      new_language = {"name": language_name, "seasons": []}
-      if poster_file_id:
-          new_language["poster_file_id"] = poster_file_id
-      languages.append(new_language)
-  
-  return update_series(series_key, {"languages": languages})
+    languages = series.get("languages", [])
+    found = False
+    for lang in languages:
+        if lang["name"].lower() == language_name.lower():
+            if poster_file_id:
+                lang["poster_file_id"] = poster_file_id
+            found = True
+            break
+    
+    if not found:
+        new_language = {"name": language_name, "seasons": []}
+        if poster_file_id:
+            new_language["poster_file_id"] = poster_file_id
+        languages.append(new_language)
+    
+    return update_series(series_key, {"languages": languages})
 
 def get_languages(series_key):
-  """Returns a list of language names for a series."""
-  series = series_collection.find_one({"_id": series_key})
-  return series.get("languages", []) if series else []
+    """Returns a list of language names for a series."""
+    series = series_collection.find_one({"_id": series_key})
+    return series.get("languages", []) if series else []
 
 def delete_language(series_key, language_name):
-  """Deletes a language and all its nested data from a series."""
-  series = get_series_by_key(series_key)
-  if not series:
-      logger.warning(f"Series '{series_key}' not found for deleting language '{language_name}'.")
-      return False
-  
-  languages = series.get("languages", [])
-  updated_languages = [lang for lang in languages if lang["name"].lower() != language_name.lower()]
-  
-  return update_series(series_key, {"languages": updated_languages})
+    """Deletes a language and all its nested data from a series."""
+    series = get_series_by_key(series_key)
+    if not series:
+        return False
+    
+    languages = series.get("languages", [])
+    updated_languages = [lang for lang in languages if lang["name"].lower() != language_name.lower()]
+    
+    return update_series(series_key, {"languages": updated_languages})
 
 def add_or_update_season(series_key, language_name, season_name, poster_file_id=None):
-  """Adds a new season or updates its poster for a specific language."""
-  series = get_series_by_key(series_key)
-  if not series:
-      logger.warning(f"Series '{series_key}' not found for adding/updating season '{season_name}' in language '{language_name}'.")
-      return False
+    """Adds a new season or updates its poster for a specific language."""
+    series = get_series_by_key(series_key)
+    if not series:
+        return False
 
-  languages = series.get("languages", [])
-  for lang in languages:
-      if lang["name"].lower() == language_name.lower():
-          seasons = lang.get("seasons", [])
-          found = False
-          for season in seasons:
-              if season["name"].lower() == season_name.lower():
-                  if poster_file_id:
-                      season["poster_file_id"] = poster_file_id
-                  found = True
-                  break
-          if not found:
-              new_season = {"name": season_name, "qualities": []}
-              if poster_file_id:
-                  new_season["poster_file_id"] = poster_file_id
-              seasons.append(new_season)
-          lang["seasons"] = seasons
-          break
-  
-  return update_series(series_key, {"languages": languages})
+    languages = series.get("languages", [])
+    for lang in languages:
+        if lang["name"].lower() == language_name.lower():
+            seasons = lang.get("seasons", [])
+            found = False
+            for season in seasons:
+                if season["name"].lower() == season_name.lower():
+                    if poster_file_id:
+                        season["poster_file_id"] = poster_file_id
+                    found = True
+                    break
+            if not found:
+                new_season = {"name": season_name, "qualities": []}
+                if poster_file_id:
+                    new_season["poster_file_id"] = poster_file_id
+                seasons.append(new_season)
+            lang["seasons"] = seasons
+            break
+    
+    return update_series(series_key, {"languages": languages})
 
 def get_seasons(series_key, language_name):
-  """Returns a list of season names for a specific language."""
-  series = series_collection.find_one({"_id": series_key})
-  if series:
-      for lang in series.get("languages", []):
-          if lang["name"].lower() == language_name.lower():
-              return lang.get("seasons", [])
-  return []
+    """Returns a list of season names for a specific language."""
+    series = series_collection.find_one({"_id": series_key})
+    if series:
+        for lang in series.get("languages", []):
+            if lang["name"].lower() == language_name.lower():
+                return lang.get("seasons", [])
+    return []
 
 def delete_season(series_key, language_name, season_name):
-  """Deletes a season and all its nested data from a specific language."""
-  series = get_series_by_key(series_key)
-  if not series:
-      logger.warning(f"Series '{series_key}' not found for deleting season '{season_name}' in language '{language_name}'.")
-      return False
-  
-  languages = series.get("languages", [])
-  for lang in languages:
-      if lang["name"].lower() == language_name.lower():
-          seasons = lang.get("seasons", [])
-          updated_seasons = [season for season in seasons if season["name"].lower() != season_name.lower()]
-          lang["seasons"] = updated_seasons
-          return update_series(series_key, {"languages": languages})
-  return False
+    """Deletes a season and all its nested data from a specific language."""
+    series = get_series_by_key(series_key)
+    if not series:
+        return False
+    
+    languages = series.get("languages", [])
+    for lang in languages:
+        if lang["name"].lower() == language_name.lower():
+            seasons = lang.get("seasons", [])
+            updated_seasons = [season for season in seasons if season["name"].lower() != season_name.lower()]
+            lang["seasons"] = updated_seasons
+            return update_series(series_key, {"languages": languages})
+    return False
 
 def add_or_update_quality(series_key, language_name, season_name, quality_name, link_key, codec=None):
-  """Adds a new quality or updates its link/codec for a specific season."""
-  series = get_series_by_key(series_key)
-  if not series:
-      logger.warning(f"Series '{series_key}' not found for adding/updating quality '{quality_name}' in language '{language_name}', season '{season_name}'.")
-      return False
+    """Adds a new quality or updates its link/codec for a specific season."""
+    series = get_series_by_key(series_key)
+    if not series:
+        return False
 
-  languages = series.get("languages", [])
-  for lang in languages:
-      if lang["name"].lower() == language_name.lower():
-          seasons = lang.get("seasons", [])
-          for season in seasons:
-              if season["name"].lower() == season_name.lower():
-                  qualities = season.get("qualities", [])
-                  found = False
-                  for quality in qualities:
-                      if quality["name"].lower() == quality_name.lower():
-                          quality["link_key"] = link_key
-                          if codec:
-                              quality["codec"] = codec
-                          found = True
-                          break
-                  if not found:
-                      new_quality = {"name": quality_name, "link_key": link_key}
-                      if codec:
-                          new_quality["codec"] = codec
-                      qualities.append(new_quality)
-                  season["qualities"] = qualities
-                  break
-          lang["seasons"] = seasons
-          break
-  
-  return update_series(series_key, {"languages": languages})
+    languages = series.get("languages", [])
+    for lang in languages:
+        if lang["name"].lower() == language_name.lower():
+            seasons = lang.get("seasons", [])
+            for season in seasons:
+                if season["name"].lower() == season_name.lower():
+                    qualities = season.get("qualities", [])
+                    found = False
+                    for quality in qualities:
+                        if quality["name"].lower() == quality_name.lower():
+                            quality["link_key"] = link_key
+                            if codec:
+                                quality["codec"] = codec
+                            found = True
+                            break
+                    if not found:
+                        new_quality = {"name": quality_name, "link_key": link_key}
+                        if codec:
+                            new_quality["codec"] = codec
+                        qualities.append(new_quality)
+                    season["qualities"] = qualities
+                    break
+            lang["seasons"] = seasons
+            break
+    
+    return update_series(series_key, {"languages": languages})
 
 def get_qualities(series_key, language_name, season_name):
-  """Returns a list of quality names for a specific season."""
-  series = series_collection.find_one({"_id": series_key})
-  if series:
-      for lang in series.get("languages", []):
-          if lang["name"].lower() == language_name.lower():
-              for season in lang.get("seasons", []):
-                  if season["name"].lower() == season_name.lower():
-                      return season.get("qualities", [])
-  return []
+    """Returns a list of quality names for a specific season."""
+    series = series_collection.find_one({"_id": series_key})
+    if series:
+        for lang in series.get("languages", []):
+            if lang["name"].lower() == language_name.lower():
+                for season in lang.get("seasons", []):
+                    if season["name"].lower() == season_name.lower():
+                        return season.get("qualities", [])
+    return []
 
 def get_quality_link(series_key, language_name, season_name, quality_name):
-  """Returns the link_key for a specific quality."""
-  series = series_collection.find_one({"_id": series_key})
-  if series:
-      for lang in series.get("languages", []):
-          if lang["name"].lower() == language_name.lower():
-              for season in lang.get("seasons", []):
-                  if season["name"].lower() == season_name.lower():
-                      for quality in season.get("qualities", []):
-                          if quality["name"].lower() == quality_name.lower():
-                              return quality.get("link_key")
-  return None
+    """Returns the link_key for a specific quality."""
+    series = series_collection.find_one({"_id": series_key})
+    if series:
+        for lang in series.get("languages", []):
+            if lang["name"].lower() == language_name.lower():
+                for season in lang.get("seasons", []):
+                    if season["name"].lower() == season_name.lower():
+                        for quality in season.get("qualities", []):
+                            if quality["name"].lower() == quality_name.lower():
+                                return quality.get("link_key")
+    return None
 
 def delete_quality(series_key, language_name, season_name, quality_name):
-  """Deletes a quality from a specific season."""
-  series = get_series_by_key(series_key)
-  if not series:
-      logger.warning(f"Series '{series_key}' not found for deleting quality '{quality_name}' in language '{language_name}', season '{season_name}'.")
-      return False
-  
-  languages = series.get("languages", [])
-  for lang in languages:
-      if lang["name"].lower() == language_name.lower():
-          seasons = lang.get("seasons", [])
-          for season in seasons:
-              if season["name"].lower() == season_name.lower():
-                  qualities = season.get("qualities", [])
-                  updated_qualities = [quality for quality in qualities if quality["name"].lower() != quality_name.lower()]
-                  season["qualities"] = updated_qualities
-                  return update_series(series_key, {"languages": languages})
-          lang["seasons"] = seasons
-          break
-  return False
+    """Deletes a quality from a specific season."""
+    series = get_series_by_key(series_key)
+    if not series:
+        return False
+    
+    languages = series.get("languages", [])
+    for lang in languages:
+        if lang["name"].lower() == language_name.lower():
+            seasons = lang.get("seasons", [])
+            for season in seasons:
+                if season["name"].lower() == season_name.lower():
+                    qualities = season.get("qualities", [])
+                    updated_qualities = [quality for quality in qualities if quality["name"].lower() != quality_name.lower()]
+                    season["qualities"] = updated_qualities
+                    return update_series(series_key, {"languages": languages})
+            lang["seasons"] = seasons
+            break
+    return False
 
 def get_poster_file_id(series_key):
-  """
-  Retrieves the poster file ID or URL for a given series key.
-  Assumes the 'poster_file_id' field in the series document can store either.
-  """
-  series = series_collection.find_one({"_id": series_key})
-  return series.get("poster_file_id") if series else None
+    """
+    Retrieves the poster file ID or URL for a given series key.
+    Assumes the 'poster_file_id' field in the series document can store either.
+    """
+    series = series_collection.find_one({"_id": series_key})
+    return series.get("poster_file_id") if series else None
 
 def update_poster_file_id(series_key, file_id):
-  """Updates the poster file_id for a series."""
-  return update_series_field(series_key, "poster_file_id", file_id)
+    """Updates the poster file_id for a series."""
+    return update_series_field(series_key, "poster_file_id", file_id)
 
 def publish_series(series_key):
-  """Sets the series as published and removes empty groups.
-  This function overwrites the entire series document with the cleaned data,
-  effectively updating all fields, including links and structure."""
-  series = get_series_by_key(series_key)
-  # Clean up empty languages, seasons, qualities
-  cleaned_languages = []
-  for lang in series.get("languages", []):
-      cleaned_seasons = []
-      for season in lang.get("seasons", []):
-          cleaned_qualities = [q for q in season.get("qualities", []) if q.get("link_key")]
-          if cleaned_qualities:
-              season["qualities"] = cleaned_qualities
-              cleaned_seasons.append(season)
-          else:
-              logger.info(f"Removing empty quality group in season '{season.get('name')}' for series '{series_key}'.")
-      if cleaned_seasons:
-          lang["seasons"] = cleaned_seasons
-          cleaned_languages.append(lang)
-      else:
-          logger.info(f"Removing empty season group in language '{lang.get('name')}' for series '{series_key}'.")
-  
-  series["languages"] = cleaned_languages
-  series["published"] = True
-  
-  logger.info(f"Attempting to publish series '{series_key}' with cleaned data.")
-  result = update_series(series_key, series)
-  if result:
-      logger.info(f"Series '{series_key}' successfully published.")
-  else:
-      logger.error(f"Failed to update series '{series_key}' to published state in DB.")
-  return result
+    """Sets the series as published and removes empty groups."""
+    series = get_series_by_key(series_key)
+    if not series:
+        return False
+
+    # Clean up empty languages, seasons, qualities
+    cleaned_languages = []
+    for lang in series.get("languages", []):
+        cleaned_seasons = []
+        for season in lang.get("seasons", []):
+            cleaned_qualities = [q for q in season.get("qualities", []) if q.get("link_key")]
+            if cleaned_qualities:
+                season["qualities"] = cleaned_qualities
+                cleaned_seasons.append(season)
+        if cleaned_seasons:
+            lang["seasons"] = cleaned_seasons
+            cleaned_languages.append(lang)
+    
+    series["languages"] = cleaned_languages
+    series["published"] = True
+    
+    return update_series(series_key, series)
 
 # New function to get the most specific poster for a user view
 def get_specific_poster(series_key, language_name=None, season_name=None):
-  series = series_collection.find_one({"_id": series_key})
-  if not series:
-      return None
+    series = series_collection.find_one({"_id": series_key})
+    if not series:
+        return None
 
-  # Check for season-specific poster
-  if language_name and season_name:
-      for lang in series.get("languages", []):
-          if lang["name"].lower() == language_name.lower():
-              for season in lang.get("seasons", []):
-                  if season["name"].lower() == season_name.lower():
-                      if season.get("poster_file_id"):
-                          return season["poster_file_id"]
+    # Check for season-specific poster
+    if language_name and season_name:
+        for lang in series.get("languages", []):
+            if lang["name"].lower() == language_name.lower():
+                for season in lang.get("seasons", []):
+                    if season["name"].lower() == season_name.lower():
+                        if season.get("poster_file_id"):
+                            return season["poster_file_id"]
 
-  # Check for language-specific poster
-  if language_name:
-      for lang in series.get("languages", []):
-          if lang["name"].lower() == language_name.lower():
-              if lang.get("poster_file_id"):
-                  return lang["poster_file_id"]
-  
-  # Fallback to series-level poster
-  return series.get("poster_file_id")
+    # Check for language-specific poster
+    if language_name:
+        for lang in series.get("languages", []):
+            if lang["name"].lower() == language_name.lower():
+                if lang.get("poster_file_id"):
+                    return lang["poster_file_id"]
+    
+    # Fallback to series-level poster
+    return series.get("poster_file_id")
