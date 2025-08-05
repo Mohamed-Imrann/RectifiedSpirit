@@ -35,6 +35,7 @@ def update_series(series_key, update_data):
     """Updates a series document."""
     try:
         result = series_collection.update_one({"_id": series_key}, {"$set": update_data})
+        logger.info(f"Update series '{series_key}' result: Matched={result.matched_count}, Modified={result.modified_count}")
         return result.modified_count > 0
     except Exception as e:
         logger.error(f"Error updating series '{series_key}': {e}")
@@ -62,6 +63,7 @@ def update_series_field(series_key, field, value):
     """Updates a top-level field in a series document."""
     try:
         result = series_collection.update_one({"_id": series_key}, {"$set": {field: value}})
+        logger.info(f"Update series field '{field}' for '{series_key}' result: Matched={result.matched_count}, Modified={result.modified_count}")
         return result.modified_count > 0
     except Exception as e:
         logger.error(f"Error updating series field '{field}' for '{series_key}': {e}")
@@ -71,6 +73,7 @@ def add_or_update_language(series_key, language_name, poster_file_id=None):
     """Adds a new language or updates its poster for a series."""
     series = get_series_by_key(series_key)
     if not series:
+        logger.warning(f"Series '{series_key}' not found for adding/updating language '{language_name}'.")
         return False
 
     languages = series.get("languages", [])
@@ -99,6 +102,7 @@ def delete_language(series_key, language_name):
     """Deletes a language and all its nested data from a series."""
     series = get_series_by_key(series_key)
     if not series:
+        logger.warning(f"Series '{series_key}' not found for deleting language '{language_name}'.")
         return False
     
     languages = series.get("languages", [])
@@ -110,6 +114,7 @@ def add_or_update_season(series_key, language_name, season_name, poster_file_id=
     """Adds a new season or updates its poster for a specific language."""
     series = get_series_by_key(series_key)
     if not series:
+        logger.warning(f"Series '{series_key}' not found for adding/updating season '{season_name}' in language '{language_name}'.")
         return False
 
     languages = series.get("languages", [])
@@ -146,6 +151,7 @@ def delete_season(series_key, language_name, season_name):
     """Deletes a season and all its nested data from a specific language."""
     series = get_series_by_key(series_key)
     if not series:
+        logger.warning(f"Series '{series_key}' not found for deleting season '{season_name}' in language '{language_name}'.")
         return False
     
     languages = series.get("languages", [])
@@ -161,6 +167,7 @@ def add_or_update_quality(series_key, language_name, season_name, quality_name, 
     """Adds a new quality or updates its link/codec for a specific season."""
     series = get_series_by_key(series_key)
     if not series:
+        logger.warning(f"Series '{series_key}' not found for adding/updating quality '{quality_name}' in language '{language_name}', season '{season_name}'.")
         return False
 
     languages = series.get("languages", [])
@@ -218,6 +225,7 @@ def delete_quality(series_key, language_name, season_name, quality_name):
     """Deletes a quality from a specific season."""
     series = get_series_by_key(series_key)
     if not series:
+        logger.warning(f"Series '{series_key}' not found for deleting quality '{quality_name}' in language '{language_name}', season '{season_name}'.")
         return False
     
     languages = series.get("languages", [])
@@ -250,6 +258,7 @@ def publish_series(series_key):
     """Sets the series as published and removes empty groups."""
     series = get_series_by_key(series_key)
     if not series:
+        logger.error(f"Attempted to publish series '{series_key}' but it was not found.")
         return False
 
     # Clean up empty languages, seasons, qualities
@@ -261,14 +270,24 @@ def publish_series(series_key):
             if cleaned_qualities:
                 season["qualities"] = cleaned_qualities
                 cleaned_seasons.append(season)
+            else:
+                logger.info(f"Removing empty quality group in season '{season.get('name')}' for series '{series_key}'.")
         if cleaned_seasons:
             lang["seasons"] = cleaned_seasons
             cleaned_languages.append(lang)
+        else:
+            logger.info(f"Removing empty season group in language '{lang.get('name')}' for series '{series_key}'.")
     
     series["languages"] = cleaned_languages
     series["published"] = True
     
-    return update_series(series_key, series)
+    logger.info(f"Attempting to publish series '{series_key}' with cleaned data.")
+    result = update_series(series_key, series)
+    if result:
+        logger.info(f"Series '{series_key}' successfully published.")
+    else:
+        logger.error(f"Failed to update series '{series_key}' to published state in DB.")
+    return result
 
 # New function to get the most specific poster for a user view
 def get_specific_poster(series_key, language_name=None, season_name=None):
