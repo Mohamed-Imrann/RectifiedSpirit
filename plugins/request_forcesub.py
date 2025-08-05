@@ -1,50 +1,48 @@
+#!/usr/bin/env python3
+# 8:43PM 2024-05-29
+# ebiza.t.me
+from pyrogram import Client, filters, enums
+from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, ChatJoinRequest
+from info import ADMINS, REQ_CHANNEL_ONE, REQ_CHANNEL_TWO
+from Script import script
 import asyncio
-import logging
-from pyrogram import Client
-from pyrogram.errors import UserNotParticipant
-from pyrogram.types import InlineKeyboardButton
-from info import REQ_CHANNEL_ONE, REQ_CHANNEL_TWO
+from info import CUSTOM_FILE_CAPTION
+from database.request_forcesub_db import add_req_one, add_req_two, is_requested_one, is_requested_two
+from utils import get_size, temp
 
+
+# utils ---> 609, plugins.commands ---> 97
+import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-async def create_request_forcesub_buttons(user_id: int):
-    buttons = []
-    
-    if REQ_CHANNEL_ONE:
-        try:
-            channel_one_id = int(REQ_CHANNEL_ONE)
-            async with Client("temp_client", bot_token=Client.BOT_TOKEN) as temp_client: # Use a temporary client instance
-                user_status = await temp_client.get_chat_member(channel_one_id, user_id)
-                if user_status.status in ["left", "kicked", "banned"]:
-                    invite_link = await temp_client.create_chat_invite_link(channel_one_id)
-                    buttons.append([InlineKeyboardButton("Channel 1", url=invite_link.invite_link)])
-        except UserNotParticipant:
-            try:
-                async with Client("temp_client", bot_token=Client.BOT_TOKEN) as temp_client:
-                    invite_link = await temp_client.create_chat_invite_link(channel_one_id)
-                    buttons.append([InlineKeyboardButton("Channel 1", url=invite_link.invite_link)])
-            except Exception as e:
-                logger.error(f"Error creating invite link for REQ_CHANNEL_ONE: {e}")
-        except Exception as e:
-            logger.error(f"Error checking REQ_CHANNEL_ONE: {e}")
+async def create_request_forcesub_buttons(user_id:int):
+    #logger.info(f"Creating forcesub buttons for user {user_id}")
+    btn = []
+    if temp.LINK_ONE and user_id not in ADMINS and not await is_requested_one(user_id):
+        btn.append([InlineKeyboardButton("🎗 Jᴏɪɴ Cʜᴀɴɴᴇʟ 1 🎗", url=temp.LINK_ONE)])
+    if temp.LINK_TWO and user_id not in ADMINS and not await is_requested_two(user_id):
+        #logger.info("Adding Channel 2 button")
+        btn.append([InlineKeyboardButton("🎗 Jᴏɪɴ Cʜᴀɴɴᴇʟ 2 🎗", url=temp.LINK_TWO)])
+    if btn:
+        #logger.info("Returning forcesub buttons")
+        return btn
+    else:
+        #logger.info("No forcesub buttons needed")
+        return None
 
-    if REQ_CHANNEL_TWO:
+@Client.on_chat_join_request(filters.chat(REQ_CHANNEL_ONE) | filters.chat(REQ_CHANNEL_TWO))
+async def handle_join_request(bot: Client, join_req: ChatJoinRequest):
+    #logger.info(f"Handling join request for user {join_req.from_user.id} in chat {join_req.chat.id}")
+    if join_req.chat.id == REQ_CHANNEL_ONE:
         try:
-            channel_two_id = int(REQ_CHANNEL_TWO)
-            async with Client("temp_client", bot_token=Client.BOT_TOKEN) as temp_client: # Use a temporary client instance
-                user_status = await temp_client.get_chat_member(channel_two_id, user_id)
-                if user_status.status in ["left", "kicked", "banned"]:
-                    invite_link = await temp_client.create_chat_invite_link(channel_two_id)
-                    buttons.append([InlineKeyboardButton("Channel 2", url=invite_link.invite_link)])
-        except UserNotParticipant:
-            try:
-                async with Client("temp_client", bot_token=Client.BOT_TOKEN) as temp_client:
-                    invite_link = await temp_client.create_chat_invite_link(channel_two_id)
-                    buttons.append([InlineKeyboardButton("Channel 2", url=invite_link.invite_link)])
-            except Exception as e:
-                logger.error(f"Error creating invite link for REQ_CHANNEL_TWO: {e}")
+            #logger.info("Adding to req_one DB")
+            await add_req_one(join_req.from_user.id)
         except Exception as e:
-            logger.error(f"Error checking REQ_CHANNEL_TWO: {e}")
-            
-    return buttons if buttons else None
+            logger.error(f"Error adding to req_one: {e}")
+    elif join_req.chat.id == REQ_CHANNEL_TWO:
+        try:
+            #logger.info("Adding to req_two DB")
+            await add_req_two(join_req.from_user.id)
+        except Exception as e:
+            logger.error(f"Error adding to req_two: {e}")
