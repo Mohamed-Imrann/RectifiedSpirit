@@ -489,7 +489,7 @@ async def new_series_command(client: Client, message: Message):
         return
 
     temp_msg = await message.reply_photo(
-        photo=NO_POSTER_FOUND_IMG, # Temporary placeholder
+        photo="https://envs.sh/EMw.jpg", # Temporary placeholder
         caption="Searching TMDB and IMDb, please wait..."
     )
     
@@ -660,7 +660,7 @@ async def edit_series_command(client: Client, message: Message):
 
     # Proceed to load the series for editing
     temp_msg = await message.reply_photo(
-        photo=get_poster_file_id(series_data['_id']) or NO_POSTER_FOUND_IMG,
+        photo=get_poster_file_id(series_data['_id']) or "https://envs.sh/EMw.jpg",
         caption=f"Loading series details for <code>{series_data.get('title', 'N/A')}</code>...",
         parse_mode=enums.ParseMode.HTML
     )
@@ -681,7 +681,7 @@ async def edit_series_command(client: Client, message: Message):
 async def seriview_command(client: Client, message: Message):
     user_id = message.from_user.id
     all_series = get_series()
-
+    print(all_series)
     if not all_series:
         await message.reply("No series found in the database.")
         return
