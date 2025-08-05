@@ -259,10 +259,6 @@ def publish_series(series_key):
   This function overwrites the entire series document with the cleaned data,
   effectively updating all fields, including links and structure."""
   series = get_series_by_key(series_key)
-  if not series:
-      logger.error(f"Attempted to publish series '{series_key}' but it was not found.")
-      return False
-
   # Clean up empty languages, seasons, qualities
   cleaned_languages = []
   for lang in series.get("languages", []):
