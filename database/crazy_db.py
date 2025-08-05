@@ -8,7 +8,7 @@ logger.setLevel(logging.INFO)
 
 client = MongoClient(DATABASE_URI)
 db = client[DATABASE_NAME]
-series_collection = db.series
+series_collection = db.tseries
 
 def add_series(series_data):
     """Adds a new series document. Returns True on success, False on duplicate key error."""
