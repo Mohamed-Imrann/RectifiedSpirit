@@ -520,6 +520,7 @@ def _clear_user_state(user_id: int):
 async def _update_main_message(client, user_id: int):
   user_state = _get_user_state(user_id)
   if not user_state or not user_state.get('main_msg_id'):
+      logger.warning(f"User {user_id}: No active main message ID found in state for update.")
       return
 
   series_data = user_state.get('series_data', {})
@@ -585,8 +586,9 @@ async def _update_main_message(client, user_id: int):
           media=media,
           reply_markup=reply_markup
       )
+      logger.info(f"User {user_id}: Main message updated successfully for step {current_step}.")
   except MediaEmpty:
-      logger.warning(f"MediaEmpty error for poster: {poster_url}. Using placeholder.")
+      logger.warning(f"User {user_id}: MediaEmpty error for poster: {poster_url}. Using placeholder.")
       media = InputMediaPhoto(media=NO_POSTER_FOUND_IMG[0], caption=text, parse_mode=enums.ParseMode.MARKDOWN)
       await client.edit_message_media(
           chat_id=user_id,
@@ -595,7 +597,8 @@ async def _update_main_message(client, user_id: int):
           reply_markup=reply_markup
       )
   except Exception as e:
-      logger.error(f"Error updating main message for user {user_id}: {e}")
+      logger.error(f"User {user_id}: Error updating main message for step {current_step}: {e}")
+      # Fallback to editing text if media update fails for any other reason
       await client.edit_message_text(
           chat_id=user_id,
           message_id=main_msg_id,
