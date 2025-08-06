@@ -1,30 +1,28 @@
 import logging
-from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid, ChatWriteForbidden, MessageNotModified, ChannelPrivate, ChannelInvalid, MessageIdInvalid
-from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, NO_POSTER_FOUND_IMG
+from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid
+from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, AUTO_DELETE_TIME, AUTO_DELETE_MSG, NO_POSTER_FOUND_IMG
 from imdb import Cinemagoer 
 import asyncio
-from pyrogram.types import Message, InlineKeyboardButton
+from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, InputMediaPhoto
 from pyrogram import enums
-from typing import Union
+from typing import Union, List
 import re
 import os
 from datetime import datetime
-from typing import List
 from database.users_chats_db import db
 from bs4 import BeautifulSoup
 import requests
-from pyrogram.errors.exceptions.bad_request_400 import UserNotParticipant
-import difflib # Import difflib for find_most_similar_title
+from pyrogram.errors.exceptions.bad_request_400 import UserNotParticipant, MediaEmpty
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 BTN_URL_REGEX = re.compile(
-  r"(\[([^\[]+?)\]$$(buttonurl|buttonalert):(?:/{0,2})(.+?)(:same)?$$)"
+  r"(\[([^\[]+?)\]$$(buttonurl|buttonalert):(?:/\{0,2\})(.+?)(:same)?$$)"
 )
 temp_requests = {}
 AUTO_DEL_SUCCESS_MSG = """Your File Has Been Deleted To Avoid BOT Copyright.\nYou Can Request Again If You Want!🫵🏻"""
-AUTO_DELETE_TIME = 600
 imdb = Cinemagoer() 
 
 BANNED = {}
@@ -46,16 +44,7 @@ class temp(object):
   LINK_ONE = None
   LINK_TWO = None
   SETTINGS = {}
-
-def find_most_similar_title(query, search_results):
-  """Finds the most similar title from IMDb search results."""
-  titles = [movie.get('title', '').lower() for movie in search_results]
-  matches = difflib.get_close_matches(query.lower(), titles, n=1, cutoff=0.6)
-  if matches:
-      for movie in search_results:
-          if movie.get('title', '').lower() == matches[0]:
-              return movie
-  return None
+  USER_DATA = {} # New: To store admin UI state
 
 async def is_subscribed(bot, query=None, userid=None):
   try:
@@ -75,92 +64,30 @@ async def is_subscribed(bot, query=None, userid=None):
 
 async def get_message_id(client, message):
   if message.forward_from_chat:
-      # Forwarded message from channel
-      channel_id = str(message.forward_from_chat.id)
-      raw_id = abs(int(channel_id.replace("-100", "")))
-      if raw_id in RAW_DB_CHANNEL:
+      # Forwarded message case
+      channel_id = str(message.forward_from_chat.id) 
+      if channel_id in map(str, DB_CHANNEL):
           return channel_id, message.forward_from_message_id
-      return 0, 0
+      else:
+          return 0, 0
 
   elif message.text:
-      # Direct link
       pattern = r"https://t.me/(?:c/)?(\d+)/(\d+)"
       matches = re.match(pattern, message.text)
       if not matches:
           return 0, 0
 
-      extracted_raw_channel_id = int(matches.group(1))
+      extracted_channel_id = matches.group(1)
       msg_id = int(matches.group(2))
       
-      if extracted_raw_channel_id in RAW_DB_CHANNEL:
-          pyrogram_channel_id = f"-100{extracted_raw_channel_id}"
-          return pyrogram_channel_id, msg_id
+      if extracted_channel_id in map(str, RAW_DB_CHANNEL): 
+          return extracted_channel_id, msg_id
+      else:
+          return 0, 0
+
+  else:
       return 0, 0
 
-  elif message.chat and str(message.chat.id).startswith("-100"):
-      # Directly sent message from a channel (e.g., via bot API, not forwarded)
-      channel_id = str(message.chat.id)
-      raw_id = abs(int(channel_id.replace("-100", "")))
-      if raw_id in RAW_DB_CHANNEL:
-          return channel_id, message.id
-      return 0, 0
-
-  return 0, 0
-
-async def get_messages_in_range(client, source_channel_id, start_msg_id, end_msg_id, target_channel_id):
-  """
-  Copies messages from a source channel to a target channel within a message ID range.
-  Returns a list of the copied messages in the target channel.
-  """
-  copied_messages = []
-  current_msg_id = start_msg_id
-  
-  logger.info(f"Attempting to copy messages from source_channel_id: {source_channel_id} (type: {type(source_channel_id)}) "
-              f"from msg_id: {start_msg_id} to {end_msg_id} "
-              f"to target_channel_id: {target_channel_id} (type: {type(target_channel_id)})")
-
-  while current_msg_id <= end_msg_id:
-      try:
-          msg = await client.get_messages(chat_id=source_channel_id, message_ids=current_msg_id)
-          if not msg:
-              logger.warning(f"Message {current_msg_id} not found in source channel {source_channel_id}. Skipping.")
-              current_msg_id += 1
-              continue
-
-          try:
-              copied_msg = await msg.copy(chat_id=target_channel_id)
-              copied_messages.append(copied_msg)
-              logger.info(f"Successfully copied message {current_msg_id} to {target_channel_id} as {copied_msg.id}")
-              await asyncio.sleep(0.5) # Small delay to avoid flood limits
-          except ChatWriteForbidden:
-              logger.error(f"Bot cannot write to target channel {target_channel_id}. Check permissions.")
-              return [] # Critical error, stop copying
-          except MessageNotModified:
-              logger.warning(f"Message {current_msg_id} was not modified when copying to {target_channel_id}. Skipping.")
-          except FloodWait as e:
-              logger.warning(f"FloodWait: Sleeping for {e.value} seconds before retrying message {current_msg_id}")
-              await asyncio.sleep(e.value)
-              continue # Retry current message after delay
-          except Exception as e:
-              logger.error(f"Error copying message {current_msg_id} from {source_channel_id} to {target_channel_id}: {e}")
-              # Decide whether to continue or break on error. For now, continue.
-              pass
-      except ChannelPrivate:
-          logger.error(f"Source channel {source_channel_id} is private and bot is not a member or admin.")
-          return []
-      except ChannelInvalid:
-          logger.error(f"Source channel ID {source_channel_id} is invalid.")
-          return []
-      except FloodWait as e:
-          logger.warning(f"FloodWait on get_messages: Sleeping for {e.value} seconds before retrying message {current_msg_id}")
-          await asyncio.sleep(e.value)
-          continue # Retry current message after delay
-      except Exception as e:
-          logger.error(f"Error getting message {current_msg_id} from {source_channel_id}: {e}")
-          # Decide whether to continue or break on error. For now, continue.
-          pass
-      current_msg_id += 1
-  return copied_messages
 
 async def get_messages(client, channel_id, message_ids):
   messages = []
@@ -190,16 +117,9 @@ async def delete_file(messages, client, process):
           await asyncio.sleep(e.x)
           print(f"The attempt to delete the media {msg.id} was unsuccessful: {e}")
 
-async def delete_messages_from_user_chat(client, user_id, message_ids):
-  """Deletes a list of messages from a user's private chat."""
-  try:
-      await client.delete_messages(chat_id=user_id, message_ids=message_ids)
-      logger.info(f"Successfully deleted messages {message_ids} from user {user_id} chat.")
-  except Exception as e:
-      logger.error(f"Failed to delete messages {message_ids} from user {user_id} chat: {e}")
+  await process.edit_text(AUTO_DEL_SUCCESS_MSG)
 
-
-def get_poster(query, bulk=False, id=False, file=None):
+async def get_poster(query, bulk=False, id=False, file=None):
   if not id:
       query = (query.strip()).lower()
       title = query
@@ -263,7 +183,7 @@ def get_poster(query, bulk=False, id=False, file=None):
       "languages": list_to_str(movie.get("languages")),
       "director": list_to_str(movie.get("director")),
       "writer":list_to_str(movie.get("writer")),
-      "producer":list_to_str(movie.get("producer")) ,
+      "producer":list_to_str(movie.get("producer")),
       "composer":list_to_str(movie.get("composer")) ,
       "cinematographer":list_to_str(movie.get("cinematographer")),
       "music_team": list_to_str(movie.get("music department")),
@@ -271,7 +191,7 @@ def get_poster(query, bulk=False, id=False, file=None):
       'release_date': date,
       'year': movie.get('year'),
       'genres': list_to_str(movie.get("genres")),
-      'poster': movie.get('full-size cover url') or NO_POSTER_FOUND_IMG, # Ensure a fallback poster
+      'poster': movie.get('full-size cover url'),
       'plot': plot,
       'rating': str(movie.get("rating")),
       'url':f'https://www.imdb.com/title/tt{movieid}'
@@ -566,7 +486,7 @@ def parser(text, keyword):
 def remove_escapes(text: str) -> str:
   res = ""
   is_escaped = False
-  for counter in range(len(text)): # Corrected range function usage
+  for counter in range(len(text)): # Corrected: len(text) instead of (text)
       if is_escaped:
           res += text[counter]
           is_escaped = False
@@ -586,3 +506,243 @@ def humanbytes(size):
       size /= power
       n += 1
   return str(round(size, 2)) + " " + Dic_powerN[n] + 'B'
+
+def _get_user_state(user_id: int):
+  return temp.USER_DATA.get(user_id, {})
+
+def _set_user_state(user_id: int, state: dict):
+  temp.USER_DATA[user_id] = state
+
+def _clear_user_state(user_id: int):
+  if user_id in temp.USER_DATA:
+      del temp.USER_DATA[user_id]
+
+async def _update_main_message(client, user_id: int):
+  user_state = _get_user_state(user_id)
+  if not user_state or not user_state.get('main_msg_id'):
+      return
+
+  series_data = user_state.get('series_data', {})
+  current_step = user_state.get('current_step')
+  main_msg_id = user_state['main_msg_id']
+
+  text = ""
+  poster_url = series_data.get('poster_url', NO_POSTER_FOUND_IMG[0])
+  reply_markup = await _generate_admin_buttons(user_id)
+
+  if current_step == 'SELECT_TMDB':
+      text = "Please select a series from the results below:"
+  elif current_step == 'EDIT_SERIES' or current_step == 'PUBLISH_CONFIRM':
+      title = series_data.get('title', 'N/A')
+      released_on = series_data.get('released_on', 'N/A')
+      genre = series_data.get('genre', 'N/A')
+      rating = series_data.get('rating', 'N/A')
+      media_type = series_data.get('media_type', 'N/A').upper()
+      tmdb_id = series_data.get('tmdb_id', 'N/A')
+      
+      text = (
+          f"**Title:** `{title}`\n"
+          f"**Released On:** `{released_on}`\n"
+          f"**Genre:** `{genre}`\n"
+          f"**Rating:** `{rating}`\n"
+          f"**Media Type:** `{media_type}`\n"
+          f"**TMDB ID:** `{tmdb_id}`\n\n"
+      )
+      if current_step == 'PUBLISH_CONFIRM':
+          text += "Do you want to publish this series? NOTE: Once you publish this series, you can't edit it anymore. All the empty groups will be removed automatically."
+      else:
+          text += "Click below buttons to add Languages, Poster, or Publish."
+  elif current_step == 'MANAGE_LANGUAGES':
+      text = "Select any Language group to add new Season/Part group inside them. Or click '+' button to add new Language group."
+  elif current_step == 'MANAGE_SEASONS':
+      lang_key = user_state.get('current_language_key')
+      lang_name = series_data.get('languages', {}).get(lang_key, {}).get('name', 'N/A')
+      text = f"**Language:** `{lang_name}`\n\nSelect any Seasons group to add new Quality group into them. Or click '+' button to add new Seasons group."
+  elif current_step == 'MANAGE_QUALITIES':
+      lang_key = user_state.get('current_language_key')
+      season_key = user_state.get('current_season_key')
+      lang_name = series_data.get('languages', {}).get(lang_key, {}).get('name', 'N/A')
+      season_name = series_data.get('languages', {}).get(lang_key, {}).get('seasons', {}).get(season_key, {}).get('name', 'N/A')
+      text = f"**Language:** `{lang_name}`\n**Season:** `{season_name}`\n\nSelect any Quality group to add new files into them. Or click '+' button to add new Quality group."
+  elif current_step == 'ADD_FILES_START':
+      lang_key = user_state.get('current_language_key')
+      season_key = user_state.get('current_season_key')
+      quality_key = user_state.get('current_quality_key')
+      lang_name = series_data.get('languages', {}).get(lang_key, {}).get('name', 'N/A')
+      season_name = series_data.get('languages', {}).get(lang_key, {}).get('seasons', {}).get(season_key, {}).get('name', 'N/A')
+      quality_name = series_data.get('languages', {}).get(lang_key, {}).get('seasons', {}).get(season_key, {}).get('qualities', {}).get(quality_key, {}).get('name', 'N/A')
+      text = f"**Language:** `{lang_name}`\n**Season:** `{season_name}`\n**Quality:** `{quality_name}`\n\nForward me the first file (with tag) for this quality."
+
+  try:
+      if poster_url and poster_url != NO_POSTER_FOUND_IMG[0]:
+          media = InputMediaPhoto(media=poster_url, caption=text, parse_mode=enums.ParseMode.MARKDOWN)
+      else:
+          media = InputMediaPhoto(media=NO_POSTER_FOUND_IMG[0], caption=text, parse_mode=enums.ParseMode.MARKDOWN)
+      
+      await client.edit_message_media(
+          chat_id=user_id,
+          message_id=main_msg_id,
+          media=media,
+          reply_markup=reply_markup
+      )
+  except MediaEmpty:
+      logger.warning(f"MediaEmpty error for poster: {poster_url}. Using placeholder.")
+      media = InputMediaPhoto(media=NO_POSTER_FOUND_IMG[0], caption=text, parse_mode=enums.ParseMode.MARKDOWN)
+      await client.edit_message_media(
+          chat_id=user_id,
+          message_id=main_msg_id,
+          media=media,
+          reply_markup=reply_markup
+      )
+  except Exception as e:
+      logger.error(f"Error updating main message for user {user_id}: {e}")
+      await client.edit_message_text(
+          chat_id=user_id,
+          message_id=main_msg_id,
+          text=text,
+          reply_markup=reply_markup,
+          parse_mode=enums.ParseMode.MARKDOWN
+      )
+
+async def _generate_admin_buttons(user_id: int):
+  user_state = _get_user_state(user_id)
+  current_step = user_state.get('current_step')
+  series_data = user_state.get('series_data', {})
+  buttons = []
+
+  if current_step == 'SELECT_TMDB':
+      # Buttons generated dynamically by the command handler
+      pass
+  elif current_step == 'EDIT_SERIES':
+      buttons.append([
+          InlineKeyboardButton("Language", callback_data=f"admin_series:{user_id}:manage_languages"),
+          InlineKeyboardButton("Poster", callback_data=f"admin_series:{user_id}:add_poster")
+      ])
+      buttons.append([InlineKeyboardButton("Publish", callback_data=f"admin_series:{user_id}:publish_confirm")])
+  elif current_step == 'MANAGE_LANGUAGES':
+      languages = series_data.get('languages', {})
+      for lang_key, lang_data in languages.items():
+          buttons.append([InlineKeyboardButton(lang_data['name'], callback_data=f"admin_series:{user_id}:select_language:{lang_key}")])
+      buttons.append([InlineKeyboardButton("+ Language", callback_data=f"admin_series:{user_id}:add_language")])
+      buttons.append([InlineKeyboardButton("Back", callback_data=f"admin_series:{user_id}:edit_series")])
+  elif current_step == 'MANAGE_SEASONS':
+      lang_key = user_state.get('current_language_key')
+      seasons = series_data.get('languages', {}).get(lang_key, {}).get('seasons', {})
+      for season_key, season_data in seasons.items():
+          buttons.append([InlineKeyboardButton(season_data['name'], callback_data=f"admin_series:{user_id}:select_season:{lang_key}:{season_key}")])
+      buttons.append([InlineKeyboardButton("+ Season", callback_data=f"admin_series:{user_id}:add_season:{lang_key}")])
+      buttons.append([InlineKeyboardButton(f"Delete '{series_data['languages'][lang_key]['name']}' Group", callback_data=f"admin_series:{user_id}:delete_lang:{lang_key}")])
+      buttons.append([InlineKeyboardButton("Back", callback_data=f"admin_series:{user_id}:manage_languages")])
+  elif current_step == 'MANAGE_QUALITIES':
+      lang_key = user_state.get('current_language_key')
+      season_key = user_state.get('current_season_key')
+      qualities = series_data.get('languages', {}).get(lang_key, {}).get('seasons', {}).get(season_key, {}).get('qualities', {})
+      for qual_key, qual_data in qualities.items():
+          buttons.append([InlineKeyboardButton(qual_data['name'], callback_data=f"admin_series:{user_id}:select_quality:{lang_key}:{season_key}:{qual_key}")])
+      buttons.append([InlineKeyboardButton("+ Quality", callback_data=f"admin_series:{user_id}:add_quality:{lang_key}:{season_key}")])
+      buttons.append([InlineKeyboardButton(f"Delete '{series_data['languages'][lang_key]['seasons'][season_key]['name']}' Group", callback_data=f"admin_series:{user_id}:delete_seas:{lang_key}:{season_key}")])
+      buttons.append([InlineKeyboardButton("Back", callback_data=f"admin_series:{user_id}:manage_seasons")])
+  elif current_step == 'ADD_FILES_START' or current_step == 'ADD_FILES_END' or current_step == 'ADD_FILES_CODEC':
+      lang_key = user_state.get('current_language_key')
+      season_key = user_state.get('current_season_key')
+      quality_key = user_state.get('current_quality_key')
+      
+      # If files are already linked, show a link to them
+      file_link_key = series_data.get('languages', {}).get(lang_key, {}).get('seasons', {}).get(season_key, {}).get('qualities', {}).get(quality_key, {}).get('file_link_key')
+      if file_link_key:
+          # Assuming file_link_key is like "get_channelid_firstmsg_lastmsg"
+          parts = file_link_key.split('_')
+          if len(parts) == 4:
+              channel_id = parts[1] # This is the raw channel ID
+              first_msg_id = int(parts[2])
+              # Construct a direct link to the first message
+              link = f"https://t.me/c/{channel_id}/{first_msg_id}"
+              buttons.append([InlineKeyboardButton("Go to Files", url=link)])
+      
+      buttons.append([InlineKeyboardButton(f"Delete '{series_data['languages'][lang_key]['seasons'][season_key]['qualities'][quality_key]['name']}' Group", callback_data=f"admin_series:{user_id}:delete_qual:{lang_key}:{season_key}:{quality_key}")])
+      buttons.append([InlineKeyboardButton("Back", callback_data=f"admin_series:{user_id}:manage_qualities")])
+  elif current_step == 'PUBLISH_CONFIRM':
+      buttons.append([
+          InlineKeyboardButton("Yes", callback_data=f"admin_series:{user_id}:publish_yes"),
+          InlineKeyboardButton("No", callback_data=f"admin_series:{user_id}:publish_no")
+      ])
+
+  return InlineKeyboardMarkup(buttons)
+
+def _generate_reply_keyboard(options: List[str], row_width: int = 3):
+  keyboard_buttons = []
+  for i in range(0, len(options), row_width):
+      row = [KeyboardButton(text) for text in options[i:i+row_width]]
+      keyboard_buttons.append(row)
+  return ReplyKeyboardMarkup(keyboard_buttons, resize_keyboard=True, one_time_keyboard=True)
+
+async def _save_series_to_db(series_data: dict):
+  from database.crazy_db import add_series, delete_quality_files_from_episodes
+  from pymongo import MongoClient
+  from info import DATABASE_URI
+
+  mongo_client = MongoClient(DATABASE_URI)
+  db = mongo_client["file_database"]
+  episodes_collection = db["episodes"]
+
+  series_key = series_data['key']
+
+  # Clean up empty languages, seasons, qualities
+  cleaned_languages = {}
+  for lang_key, lang_data in series_data.get('languages', {}).items():
+      cleaned_seasons = {}
+      for season_key, season_data in lang_data.get('seasons', {}).items():
+          cleaned_qualities = {}
+          for qual_key, qual_data in season_data.get('qualities', {}).items():
+              if qual_data.get('file_link_key'): # Only keep qualities with linked files
+                  cleaned_qualities[qual_key] = qual_data
+              else:
+                  # If quality has no files, ensure it's deleted from episodes collection if it existed
+                  await delete_quality_files_from_episodes(qual_data.get('file_link_key'))
+          if cleaned_qualities: # Only keep seasons with qualities
+              season_data['qualities'] = cleaned_qualities
+              cleaned_seasons[season_key] = season_data
+          else:
+              # Delete files associated with this season if it becomes empty
+              for qual_key, qual_data in season_data.get('qualities', {}).items():
+                  await delete_quality_files_from_episodes(qual_data.get('file_link_key'))
+
+      if cleaned_seasons: # Only keep languages with seasons
+          lang_data['seasons'] = cleaned_seasons
+          cleaned_languages[lang_key] = lang_data
+      else:
+          # Delete files associated with this language if it becomes empty
+          for season_key, season_data in lang_data.get('seasons', {}).items():
+              for qual_key, qual_data in season_data.get('qualities', {}).items():
+                  await delete_quality_files_from_episodes(qual_data.get('file_link_key'))
+
+  series_data['languages'] = cleaned_languages
+
+  # Save the cleaned series data to crazy_db
+  await add_series(series_data)
+
+  # Save file links to episodes collection
+  for lang_key, lang_data in series_data.get('languages', {}).items():
+      for season_key, season_data in lang_data.get('seasons', {}).items():
+          for qual_key, qual_data in season_data.get('qualities', {}).items():
+              file_link_key = qual_data.get('file_link_key')
+              if file_link_key and qual_data.get('files_to_add'):
+                  # This means files were just added in this session
+                  episodes_collection.update_one(
+                      {"file_link_key": file_link_key},
+                      {"$set": {
+                          "files": qual_data['files_to_add'],
+                          "channel_id": qual_data.get('channel_id'),
+                          "first_msg_id": qual_data.get('first_msg_id'),
+                          "last_msg_id": qual_data.get('last_msg_id')
+                      }},
+                      upsert=True
+                  )
+              elif file_link_key:
+                  # Ensure existing file_link_key is still valid in episodes collection
+                  # (no need to re-save if files_to_add is empty, implies no change)
+                  pass
+              else:
+                  logger.warning(f"Quality {qual_key} for {series_key} has no file_link_key during publish.")
+
+  logger.info(f"Series '{series_data['title']}' published successfully.")
