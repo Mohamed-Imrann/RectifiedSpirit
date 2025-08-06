@@ -21,6 +21,7 @@ import hashlib
 import requests
 import uuid
 import logging
+import json # Added for json.dumps in view_user_state
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -172,6 +173,21 @@ async def cancel_admin_flow(client, message: Message):
   else:
       await message.reply_text("No active admin operation to cancel.")
 
+@Client.on_message(filters.command('viewstate') & filters.user(ADMINS))
+async def view_user_state(client, message: Message):
+    user_id = message.from_user.id
+    user_state = _get_user_state(user_id)
+    if user_state:
+        state_str = json.dumps(user_state, indent=2, default=str) # default=str to handle non-JSON serializable objects
+        if len(state_str) > 4096:
+            with io.BytesIO(state_str.encode()) as f:
+                f.name = "user_state.json"
+                await message.reply_document(f, caption="Your current admin UI state:")
+        else:
+            await message.reply_text(f"Your current admin UI state:\n```json\n{state_str}\n```", parse_mode=enums.ParseMode.MARKDOWN)
+    else:
+        await message.reply_text("No active admin UI state found for you.")
+
 @Client.on_callback_query(filters.regex(r"^admin_series:") & filters.user(ADMINS))
 async def admin_series_callback_handler(client, query):
   user_id = query.from_user.id
@@ -189,6 +205,7 @@ async def admin_series_callback_handler(client, query):
       return
 
   action = data_parts[2]
+  logger.info(f"User {user_id}: Callback action received: {action}")
 
   if action == 'select_tmdb':
       tmdb_id = data_parts[3]
@@ -410,8 +427,11 @@ async def admin_reply_handler(client, message: Message):
   user_id = message.from_user.id
   user_state = _get_user_state(user_id)
 
+  logger.info(f"User {user_id}: Reply handler triggered. Current step: {user_state.get('current_step')}, Reply to message ID: {message.reply_to_message.id}, Expected ask_msg_id: {user_state.get('ask_msg_id')}")
+
   if not user_state or user_state.get('ask_msg_id') != message.reply_to_message.id:
       # Not a reply to the bot's current "ask" message
+      logger.info(f"User {user_id}: Reply not to expected ask message. Ignoring.")
       return
 
   current_step = user_state.get('current_step')
@@ -419,9 +439,11 @@ async def admin_reply_handler(client, message: Message):
   
   # Delete the bot's "ask" message and the user's reply
   try:
-      await client.delete_messages(user_id, [user_state['ask_msg_id'], message.id])
+      if user_state.get('ask_msg_id'):
+          await client.delete_messages(user_id, [user_state['ask_msg_id'], message.id])
+          logger.info(f"User {user_id}: Deleted ask_msg_id {user_state['ask_msg_id']} and user reply {message.id}.")
   except Exception as e:
-      logger.warning(f"Could not delete ask/reply messages: {e}")
+      logger.warning(f"User {user_id}: Could not delete ask/reply messages: {e}")
   user_state['ask_msg_id'] = None # Clear ask_msg_id after handling
 
   if current_step == 'EDIT_SERIES':
@@ -437,6 +459,7 @@ async def admin_reply_handler(client, message: Message):
 
   elif current_step == 'ADD_LANGUAGE':
       lang_name = message.text.strip()
+      logger.info(f"User {user_id}: ADD_LANGUAGE step. Received language name: '{lang_name}'")
       if not lang_name:
           await message.reply_text("Language name cannot be empty. Please try again.")
           return
@@ -455,10 +478,12 @@ async def admin_reply_handler(client, message: Message):
       _set_user_state(user_id, user_state)
       await _update_main_message(client, user_id)
       await message.reply_text(f"Language '{lang_name}' added successfully!", reply_markup=ReplyKeyboardRemove())
+      logger.info(f"User {user_id}: Language '{lang_name}' added and state updated.")
 
   elif current_step == 'ADD_SEASON':
       lang_key = user_state['current_language_key']
       season_name = message.text.strip()
+      logger.info(f"User {user_id}: ADD_SEASON step. Received season name: '{season_name}' for lang_key: {lang_key}")
       if not season_name:
           await message.reply_text("Season name cannot be empty. Please try again.")
           return
@@ -477,11 +502,13 @@ async def admin_reply_handler(client, message: Message):
       _set_user_state(user_id, user_state)
       await _update_main_message(client, user_id)
       await message.reply_text(f"Season '{season_name}' added successfully!", reply_markup=ReplyKeyboardRemove())
+      logger.info(f"User {user_id}: Season '{season_name}' added and state updated.")
 
   elif current_step == 'ADD_QUALITY':
       lang_key = user_state['current_language_key']
       season_key = user_state['current_season_key']
       quality_name = message.text.strip()
+      logger.info(f"User {user_id}: ADD_QUALITY step. Received quality name: '{quality_name}' for lang_key: {lang_key}, season_key: {season_key}")
       if not quality_name:
           await message.reply_text("Quality name cannot be empty. Please try again.")
           return
@@ -505,13 +532,16 @@ async def admin_reply_handler(client, message: Message):
       _set_user_state(user_id, user_state)
       await _update_main_message(client, user_id)
       await message.reply_text(f"Quality '{quality_name}' added successfully!", reply_markup=ReplyKeyboardRemove())
+      logger.info(f"User {user_id}: Quality '{quality_name}' added and state updated.")
 
   elif current_step == 'ADD_FILES_START':
+      logger.info(f"User {user_id}: ADD_FILES_START step. Message media: {message.media}")
       if not message.media:
           await message.reply_text("Please forward a file, not text.")
           return
       
       channel_id, f_msg_id = await get_message_id(client, message)
+      logger.info(f"User {user_id}: First file info - Channel ID: {channel_id}, Message ID: {f_msg_id}")
       if not channel_id or not f_msg_id:
           await message.reply_text("This message/link is not from a valid DB Channel. Please forward with quotes or send a valid link.")
           return
@@ -530,13 +560,16 @@ async def admin_reply_handler(client, message: Message):
       user_state['ask_msg_id'] = ask_msg.id
       _set_user_state(user_id, user_state)
       await message.reply_text("Waiting for last file...")
+      logger.info(f"User {user_id}: First file received, asking for last file.")
 
   elif current_step == 'ADD_FILES_END':
+      logger.info(f"User {user_id}: ADD_FILES_END step. Message media: {message.media}")
       if not message.media:
           await message.reply_text("Please forward a file, not text.")
           return
       
       s_channel_id, s_msg_id = await get_message_id(client, message)
+      logger.info(f"User {user_id}: Last file info - Channel ID: {s_channel_id}, Message ID: {s_msg_id}")
       if not s_channel_id or not s_msg_id:
           await message.reply_text("This message/link is not from a valid DB Channel. Please forward with quotes or send a valid link.")
           return
@@ -557,9 +590,11 @@ async def admin_reply_handler(client, message: Message):
       user_state['ask_msg_id'] = ask_msg.id
       _set_user_state(user_id, user_state)
       await message.reply_text("Waiting for codec...")
+      logger.info(f"User {user_id}: Last file received, asking for codec.")
 
   elif current_step == 'ADD_FILES_CODEC':
       codec = message.text.strip()
+      logger.info(f"User {user_id}: ADD_FILES_CODEC step. Received codec: '{codec}'")
       if not codec:
           await message.reply_text("Codec cannot be empty. Please try again.")
           return
@@ -576,6 +611,7 @@ async def admin_reply_handler(client, message: Message):
       # Fetch messages from DB_CHANNEL
       message_ids_range = list(range(first_msg_id, last_msg_id + 1))
       fetched_messages = await get_messages(client, channel_id, message_ids_range)
+      logger.info(f"User {user_id}: Fetched {len(fetched_messages)} messages from {channel_id} from {first_msg_id} to {last_msg_id}.")
       
       files_to_save = []
       for msg in fetched_messages:
@@ -609,13 +645,16 @@ async def admin_reply_handler(client, message: Message):
 
       await processing_msg.edit_text("Files added to Database Successfully!", reply_markup=ReplyKeyboardRemove())
       await _update_main_message(client, user_id)
+      logger.info(f"User {user_id}: Files linked and state updated for quality '{quality_key}'.")
       
   elif current_step == 'ADD_POSTER':
+      logger.info(f"User {user_id}: ADD_POSTER step. Message photo: {message.photo}")
       if not message.photo:
           await message.reply_text("Please send a photo for the poster.")
           return
       
       download_location = await message.download(file_name=os.path.join(TMP_DOWNLOAD_DIRECTORY, f"{user_id}_poster.jpg"))
+      logger.info(f"User {user_id}: Poster downloaded to {download_location}")
       
       try:
           with open(download_location, "rb") as file:
@@ -625,6 +664,7 @@ async def admin_reply_handler(client, message: Message):
                   files={"image": file}
               )
               response_data = response.json()
+          logger.info(f"User {user_id}: ImgBB upload response: {response_data}")
           
           if response.status_code == 200 and "data" in response_data:
               poster_url = response_data["data"]["url"]
@@ -633,15 +673,18 @@ async def admin_reply_handler(client, message: Message):
               _set_user_state(user_id, user_state)
               await _update_main_message(client, user_id)
               await message.reply_text("Poster updated successfully!", reply_markup=ReplyKeyboardRemove())
+              logger.info(f"User {user_id}: Poster updated to {poster_url}.")
           else:
               error_message = response_data.get("error", {}).get("message", "Unknown error")
               await message.reply_text(f"Failed to upload poster: {error_message}", reply_markup=ReplyKeyboardRemove())
+              logger.error(f"User {user_id}: ImgBB upload failed: {error_message}")
       except Exception as e:
-          logger.error(f"Error uploading poster: {e}")
-          await message.reply_text(f"Error: {e}", reply_markup=ReplyKeyboardRemove())
+          logger.error(f"User {user_id}: Error uploading poster: {e}")
+          await message.reply_text(f"An error occurred during poster upload: {e}", reply_markup=ReplyKeyboardRemove())
       finally:
           if os.path.exists(download_location):
               os.remove(download_location)
+              logger.info(f"User {user_id}: Deleted temporary poster file: {download_location}")
       
       user_state['current_step'] = 'EDIT_SERIES' # Go back to edit series
       _set_user_state(user_id, user_state)
