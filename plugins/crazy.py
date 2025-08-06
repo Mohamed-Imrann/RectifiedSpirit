@@ -486,7 +486,7 @@ async def new_series_command(client: Client, message: Message):
   query = message.text.split(None, 1)[1] if len(message.text.split(None, 1)) > 1 else None
 
   if not query:
-      await message.reply("Usage: `/newseries <series_title>`")
+      await message.reply("Usage: `/newseries series_title`")
       return
 
   temp_msg = await message.reply_photo(
@@ -551,7 +551,7 @@ async def clone_series_command(client: Client, message: Message):
   args = message.text.split(None, 2) # Split into command, original_name, new_name
 
   if len(args) < 3:
-      await message.reply("Usage: `/cloneseries <original_series_name_or_key> <new_series_title>`")
+      await message.reply("Usage: `/cloneseries original_series_name_or_key new_series_title`")
       return
 
   original_query = args[1].strip()
@@ -600,7 +600,7 @@ async def edit_series_command(client: Client, message: Message):
   query = message.text.split(None, 1)[1] if len(message.text.split(None, 1)) > 1 else None
 
   if not query:
-      await message.reply("Usage: `/editseries <series_title_or_key>`")
+      await message.reply("Usage: `/editseries series_title_or_key`")
       return
 
   # Try direct lookup by key (lower and replace spaces/hyphens for consistency)
@@ -700,7 +700,7 @@ async def seriview_command(client: Client, message: Message):
           InlineKeyboardButton(f"Edit {title}", callback_data=f"local_series_select:{series_key}")
       ])
   
-  reply_markup = InlineKeyboardMarkup(chunk_buttons(buttons, chunk_size=1)) # One button per row for readability
+  reply_markup = InlineKeyboardMarkup(chunk_buttons(buttons, chunk_size=2)) # One button per row for readability
 
   await message.reply_text(
       text=text,
