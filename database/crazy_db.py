@@ -358,5 +358,88 @@ def publish_series(series_key: str):
         logger.error(f"Error publishing series '{series_key}': {e}")
         return False
 
-# No need for get_specific_poster as poster retrieval is now hierarchical in the UI functions
-# and uses get_poster_file_id for the top level.
+# ... (existing imports and functions)
+
+def get_series_name(series_key: str):
+    """Retrieves a series document by its _id with a simplified structure for the user interface."""
+    series = series_collection.find_one({"_id": series_key})
+    if not series:
+        return None
+    
+    # Simplify the structure for the user interface
+    simplified = {
+        'key': series['_id'],
+        'title': series.get('title', 'N/A'),
+        'released_on': series.get('released_on', 'N/A'),
+        'genre': series.get('genre', 'N/A'),
+        'rating': series.get('rating', 'N/A'),
+        'media_type': series.get('media_type', 'N/A'),
+        'poster_url': series.get('poster_file_id'),
+        'languages': {}
+    }
+    
+    # Simplify languages structure
+    for lang in series.get('languages', []):
+        lang_key = lang['name'].lower().replace(" ", "_")
+        simplified['languages'][lang_key] = {
+            'name': lang['name'],
+            'poster_url': lang.get('poster_file_id'),
+            'seasons': {}
+        }
+        
+        # Simplify seasons structure
+        for season in lang.get('seasons', []):
+            season_key = season['name'].lower().replace(" ", "_")
+            simplified['languages'][lang_key]['seasons'][season_key] = {
+                'name': season['name'],
+                'poster_url': season.get('poster_file_id'),
+                'qualities': {}
+            }
+            
+            # Simplify qualities structure
+            for quality in season.get('qualities', []):
+                quality_key = quality['name'].lower().replace(" ", "_")
+                simplified['languages'][lang_key]['seasons'][season_key]['qualities'][quality_key] = {
+                    'name': quality['name'],
+                    'file_link_key': quality.get('link_key'),
+                    'codec': quality.get('codec')
+                }
+    
+    return simplified
+
+def get_poster_manuel(series_key: str):
+    """Retrieves the poster URL for a series."""
+    series = series_collection.find_one({"_id": series_key}, {"poster_file_id": 1})
+    return series.get("poster_file_id") if series else None
+
+def get_links_for_quality(file_link_key: str):
+    """Retrieves the file links for a quality from the episodes collection."""
+    if not file_link_key:
+        return [], None, None, None
+    
+    # Parse the link_key to get channel_id and message IDs
+    try:
+        parts = file_link_key.split('_')
+        if len(parts) < 2:
+            return [], None, None, None
+        
+        channel_id = parts[0]
+        first_msg_id = int(parts[1])
+        last_msg_id = int(parts[-1])
+        
+        # Get all messages in the range
+        files_to_send = []
+        for msg_id in range(first_msg_id, last_msg_id + 1):
+            file_data = episodes_collection.find_one({"file_link_key": file_link_key, "message_id": msg_id})
+            if file_data:
+                files_to_send.append({
+                    "file_id": file_data.get("file_id"),
+                    "caption": file_data.get("caption", "")
+                })
+        
+        return files_to_send, channel_id, first_msg_id, last_msg_id
+    except Exception as e:
+        logger.error(f"Error getting links for quality {file_link_key}: {e}")
+        return [], None, None, None
+
+# ... (rest of the existing code)
