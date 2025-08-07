@@ -7,7 +7,7 @@ from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
 from info import ADMINS, SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG
 from database.crazy_db import (
-  get_series, get_series_name, get_poster_manuel, get_links_for_quality
+  get_series, get_series_by_key as get_series_name, get_poster_manuel, get_links_for_quality
 )
 from database.gfilters_mdb import (
   find_gfilter,
