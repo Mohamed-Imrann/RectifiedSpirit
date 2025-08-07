@@ -1364,7 +1364,7 @@ logger.setLevel(logging.INFO)
 temp_admin_data = {}
 
 # Dictionary to hold locks for admin users
-admin_locks: Dict[int, asyncio.RLock] = {}
+admin_locks: Dict[int, asyncio.Lock] = {}
 
 # Dictionary to track user requests for series selection
 user_requestor = {}
