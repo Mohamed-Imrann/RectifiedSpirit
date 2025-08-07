@@ -1375,9 +1375,9 @@ TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
 # Helper to get or create a lock for an admin user
-def get_admin_lock(user_id: int) -> asyncio.RLock:
+def get_admin_lock(user_id: int) -> asyncio.Lock:
     if user_id not in admin_locks:
-        admin_locks[user_id] = asyncio.RLock()
+        admin_locks[user_id] = asyncio.Lock()
     return admin_locks[user_id]
 
 # Helper function to delete a message after a delay
@@ -2101,7 +2101,7 @@ logger.setLevel(logging.INFO)
 temp_admin_data = {}
 
 # Dictionary to hold locks for admin users
-admin_locks: Dict[int, asyncio.RLock] = {}
+admin_locks: Dict[int, asyncio.Lock] = {}
 
 # Dictionary to track user requests for series selection
 user_requestor = {}
@@ -2112,9 +2112,9 @@ TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
 # Helper to get or create a lock for an admin user
-def get_admin_lock(user_id: int) -> asyncio.RLock:
+def get_admin_lock(user_id: int) -> asyncio.Lock:
     if user_id not in admin_locks:
-        admin_locks[user_id] = asyncio.RLock()
+        admin_locks[user_id] = asyncio.Lock()
     return admin_locks[user_id]
 
 # Helper function to delete a message after a delay
@@ -2838,7 +2838,7 @@ logger.setLevel(logging.INFO)
 temp_admin_data = {}
 
 # Dictionary to hold locks for admin users
-admin_locks: Dict[int, asyncio.RLock] = {}
+admin_locks: Dict[int, asyncio.Lock] = {}
 
 # Dictionary to track user requests for series selection
 user_requestor = {}
@@ -2849,9 +2849,9 @@ TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
 # Helper to get or create a lock for an admin user
-def get_admin_lock(user_id: int) -> asyncio.RLock:
+def get_admin_lock(user_id: int) -> asyncio.Lock:
     if user_id not in admin_locks:
-        admin_locks[user_id] = asyncio.RLock()
+        admin_locks[user_id] = asyncio.Lock()
     return admin_locks[user_id]
 
 # Helper function to delete a message after a delay
@@ -3575,7 +3575,7 @@ logger.setLevel(logging.INFO)
 temp_admin_data = {}
 
 # Dictionary to hold locks for admin users
-admin_locks: Dict[int, asyncio.RLock] = {}
+admin_locks: Dict[int, asyncio.Lock] = {}
 
 # Dictionary to track user requests for series selection
 user_requestor = {}
@@ -3586,9 +3586,9 @@ TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
 # Helper to get or create a lock for an admin user
-def get_admin_lock(user_id: int) -> asyncio.RLock:
+def get_admin_lock(user_id: int) -> asyncio.Lock:
     if user_id not in admin_locks:
-        admin_locks[user_id] = asyncio.RLock()
+        admin_locks[user_id] = asyncio.Lock()
     return admin_locks[user_id]
 
 # Helper function to delete a message after a delay
@@ -4312,7 +4312,7 @@ logger.setLevel(logging.INFO)
 temp_admin_data = {}
 
 # Dictionary to hold locks for admin users
-admin_locks: Dict[int, asyncio.RLock] = {}
+admin_locks: Dict[int, asyncio.Lock] = {}
 
 # Dictionary to track user requests for series selection
 user_requestor = {}
@@ -4323,9 +4323,9 @@ TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
 # Helper to get or create a lock for an admin user
-def get_admin_lock(user_id: int) -> asyncio.RLock:
+def get_admin_lock(user_id: int) -> asyncio.Lock:
     if user_id not in admin_locks:
-        admin_locks[user_id] = asyncio.RLock()
+        admin_locks[user_id] = asyncio.Lock()
     return admin_locks[user_id]
 
 # Helper function to delete a message after a delay
@@ -5049,7 +5049,7 @@ logger.setLevel(logging.INFO)
 temp_admin_data = {}
 
 # Dictionary to hold locks for admin users
-admin_locks: Dict[int, asyncio.RLock] = {}
+admin_locks: Dict[int, asyncio.Lock] = {}
 
 # Dictionary to track user requests for series selection
 user_requestor = {}
@@ -5060,9 +5060,9 @@ TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
 # Helper to get or create a lock for an admin user
-def get_admin_lock(user_id: int) -> asyncio.RLock:
+def get_admin_lock(user_id: int) -> asyncio.Lock:
     if user_id not in admin_locks:
-        admin_locks[user_id] = asyncio.RLock()
+        admin_locks[user_id] = asyncio.Lock()
     return admin_locks[user_id]
 
 # Helper function to delete a message after a delay
@@ -5797,9 +5797,9 @@ TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
 # Helper to get or create a lock for an admin user
-def get_admin_lock(user_id: int) -> asyncio.RLock:
+def get_admin_lock(user_id: int) -> asyncio.Lock:
     if user_id not in admin_locks:
-        admin_locks[user_id] = asyncio.RLock()
+        admin_locks[user_id] = asyncio.Lock()
     return admin_locks[user_id]
 
 # Helper function to delete a message after a delay
@@ -6523,7 +6523,7 @@ logger.setLevel(logging.INFO)
 temp_admin_data = {}
 
 # Dictionary to hold locks for admin users
-admin_locks: Dict[int, asyncio.RLock] = {}
+admin_locks: Dict[int, asyncio.Lock] = {}
 
 # Dictionary to track user requests for series selection
 user_requestor = {}
@@ -6534,9 +6534,9 @@ TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
 # Helper to get or create a lock for an admin user
-def get_admin_lock(user_id: int) -> asyncio.RLock:
+def get_admin_lock(user_id: int) -> asyncio.Lock:
     if user_id not in admin_locks:
-        admin_locks[user_id] = asyncio.RLock()
+        admin_locks[user_id] = asyncio.Lock()
     return admin_locks[user_id]
 
 # Helper function to delete a message after a delay
