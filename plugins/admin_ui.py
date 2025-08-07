@@ -5564,7 +5564,7 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             current_level_data = series.get("languages", {}).get(lang_key, {}).get("seasons", {})
             lang_name = series.get("languages", {}).get(lang_key, {}).get("name", "N/A")
             for key, data_item in current_level_data.items():
-                buttons.append(InlineKeyboardButton(data_item['name'], callback_data=f"user_series:{series_key}:{lang_key}:{key}"))
+                buttons.append(InlineKeyboardButton(data_item['name'], calladminata=f"user_series:{series_key}:{lang_key}:{key}"))
             text = base_text + f"○ **Language:** `{lang_name}`\n\nSelect the season you need...!"
             back_callback = f"user_series:{series_key}"
 
@@ -5786,7 +5786,7 @@ logger.setLevel(logging.INFO)
 temp_admin_data = {}
 
 # Dictionary to hold locks for admin users
-admin_locks: Dict[int, asyncio.RLock] = {}
+admin_locks: Dict[int, asyncio.Lock] = {}
 
 # Dictionary to track user requests for series selection
 user_requestor = {}
