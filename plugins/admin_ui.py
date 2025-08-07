@@ -5328,7 +5328,7 @@ async def download_and_upload_poster(client: Client, poster_url: str = None, mes
             download_path = await client.download_media(message.photo.file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
         elif message and message.video and message.video.thumbs and message.video.thumbs[0].file_id:
             # Use user-provided video thumbnail
-            download_path = await client.download_media(message.video.thumbs[0].file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
+            download_path = await client.download_media(message.video.thufminata.file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
         else:
             logger.warning("No valid poster source (URL, photo, or video thumbnail) provided.")
             return None
@@ -5564,7 +5564,7 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             current_level_data = series.get("languages", {}).get(lang_key, {}).get("seasons", {})
             lang_name = series.get("languages", {}).get(lang_key, {}).get("name", "N/A")
             for key, data_item in current_level_data.items():
-                buttons.append(InlineKeyboardButton(data_item['name'], calladminata=f"user_series:{series_key}:{lang_key}:{key}"))
+                buttons.append(InlineKeyboardButton(data_item['name'], callback_data=f"user_series:{series_key}:{lang_key}:{key}"))
             text = base_text + f"○ **Language:** `{lang_name}`\n\nSelect the season you need...!"
             back_callback = f"user_series:{series_key}"
 
