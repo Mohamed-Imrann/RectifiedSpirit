@@ -42,19 +42,8 @@ class Bot(Client):
         )
 
     async def start(self, **kwargs):
-        await super().start()
-        me = await self.get_me()
-        temp.ME = me.id
-        temp.U_NAME = me.username
-        temp.B_NAME = me.first_name
-        self.username = '@' + me.username
-        logging.info(f"{me.first_name} 𝖶𝗂𝗍𝗁 𝖥𝗈𝗋 𝖯𝗒𝗋𝗈𝗀𝗋𝖺𝗆 v{__version__} (Layer {layer}) 𝖲𝗍𝖺𝗋𝗍𝖾𝖽 𝖮𝗇 @{me.username}")
-        app = web.AppRunner(await web_server())
-        await app.setup()
-        bind_address = "0.0.0.0"
-        await web.TCPSite(app, bind_address, PORT).start()
         if REQ_CHANNEL_ONE is None or REQ_CHANNEL_TWO is None:
-            with open("./dynamic.env", "wt+", encoding="utf-8") as f:
+            with open("./dynamic.env", "wt+") as f:
                 if REQ_CHANNEL_ONE is None:
                     req1 = await JoinReqs().get_fsub_chat1()
                     req1 = req1['chat_id'] if req1 else False
@@ -69,10 +58,19 @@ class Bot(Client):
                 else:
                     f.write(f"REQ_CHANNEL_TWO={REQ_CHANNEL_TWO}\n")
                     
-            logging.info("Loading REQ_CHANNEL_ONE and REQ_CHANNEL_TWO from database if needed...")
-            os.execl(sys.executable, sys.executable, "bot.py")
+            os.execl(sys.executable, sys.executable, "main.py")
             return
-
+        await super().start()
+        me = await self.get_me()
+        temp.ME = me.id
+        temp.U_NAME = me.username
+        temp.B_NAME = me.first_name
+        self.username = '@' + me.username
+        logging.info(f"{me.first_name} 𝖶𝗂𝗍𝗁 𝖥𝗈𝗋 𝖯𝗒𝗋𝗈𝗀𝗋𝖺𝗆 v{__version__} (Layer {layer}) 𝖲𝗍𝖺𝗋𝗍𝖾𝖽 𝖮𝗇 @{me.username}")
+        app = web.AppRunner(await web_server())
+        await app.setup()
+        bind_address = "0.0.0.0"
+        await web.TCPSite(app, bind_address, PORT).start()
         if REQ_CHANNEL_ONE:
             try: temp.LINK_ONE = (await self.create_chat_invite_link(chat_id=REQ_CHANNEL_ONE, creates_join_request=True)).invite_link 
             except Exception as a:
