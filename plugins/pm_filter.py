@@ -111,91 +111,94 @@ async def global_filters(client, message, text=False):
   else:
       return False
 
-async def series_filter(client, message):
-  text = message.text.strip()
-  series_infos = get_series()
-  series_keys = [series['key'] for series in series_infos]
-  series_names = [series['title'] for series in series_infos]
+# ... (existing imports and functions)
 
-  series_key = None
-  
-  # Try exact match by key first
-  if text.lower().replace(" ", "").replace("-", "") in series_keys:
-      series_key = text.lower().replace(" ", "").replace("-", "")
-  else:
-      # Try exact match by title
-      for s_info in series_infos:
-          if s_info['title'].lower() == text.lower():
-              series_key = s_info['key']
-              break
-      
-      if not series_key:
-          # Try close matches for titles
-          close_matches = find_close_matches(text, series_names)
-          if not close_matches:
-              # Fallback to starts-with if no close matches
-              first_word = text.split()[0]
-              close_matches = [name for name in series_names if name.lower().startswith(first_word.lower())]
-          
-          if close_matches:
-              buttons = []
-              for match in close_matches:
-                  s_info = next((s for s in series_infos if s['title'] == match), None)
-                  if s_info:
-                      buttons.append(InlineKeyboardButton(match, callback_data=f"user_series:{s_info['key']}"))
-              
-              if buttons:
-                  buttons_chunked = chunk_buttons(buttons, chunk_size=1)
-                  reply_markup = InlineKeyboardMarkup(buttons_chunked)
-                  etho = await message.reply_photo(photo=random.choice(SPELL_CHECK_IMAGE), caption="<b>Choose Your Series:</b>", reply_markup=reply_markup)
-                  reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
-                  requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
-                  asyncio.create_task(DeleteMessage(etho))
-                  return
+async def series_filter(client: Client, message: Message):
+    text = message.text.strip()
+    series_infos = get_series()
+    series_keys = [series['key'] for series in series_infos]
+    series_names = [series['title'] for series in series_infos]
 
-  if series_key:
-      series = get_series_name(series_key)
-      if not series:
-          return
+    series_key = None
+    
+    # Try exact match by key first
+    if text.lower().replace(" ", "").replace("-", "") in series_keys:
+        series_key = text.lower().replace(" ", "").replace("-", "")
+    else:
+        # Try exact match by title
+        for s_info in series_infos:
+            if s_info['title'].lower() == text.lower():
+                series_key = s_info['key']
+                break
+        
+        if not series_key:
+            # Try close matches for titles
+            close_matches = find_close_matches(text, series_names)
+            if not close_matches:
+                # Fallback to starts-with if no close matches
+                first_word = text.split()[0]
+                close_matches = [name for name in series_names if name.lower().startswith(first_word.lower())]
+            
+            if close_matches:
+                buttons = []
+                for match in close_matches:
+                    s_info = next((s for s in series_infos if s['title'] == match), None)
+                    if s_info:
+                        buttons.append(InlineKeyboardButton(match, callback_data=f"user_series:{s_info['key']}"))
+                
+                if buttons:
+                    buttons_chunked = chunk_buttons(buttons, chunk_size=1)
+                    reply_markup = InlineKeyboardMarkup(buttons_chunked)
+                    etho = await message.reply_photo(photo=random.choice(SPELL_CHECK_IMAGE), caption="<b>Choose Your Series:</b>", reply_markup=reply_markup)
+                    reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
+                    requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
+                    asyncio.create_task(DeleteMessage(etho))
+                    return
 
-      languages = series.get("languages", {})
-      
-      reply_text = (
-          f"○ **Title:** `{series['title']}`\n"
-          f"○ **Released On:** `{series['released_on']}`\n"
-          f"○ **Genre:** `{series['genre']}`\n"
-          f"○ **Rating:** `{series['rating']}`\n"
-          f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`\n\n"
-          "Select the language you need...!"
-      )
-      poster_url = get_movie_poster(series_key)
-      
-      buttons = []
-      for lang_key, lang_data in languages.items():
-          buttons.append(InlineKeyboardButton(lang_data['name'], callback_data=f"user_series:{series_key}:{lang_key}"))
-      
-      buttons_chunked = chunk_buttons(buttons, chunk_size=2)
-      reply_markup = InlineKeyboardMarkup(buttons_chunked)
-      
-      try:
-          if poster_url:
-              etho = await message.reply_photo(photo=poster_url, caption=reply_text, reply_markup=reply_markup)
-          else:
-              etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG[0], caption=reply_text, reply_markup=reply_markup)
-          
-          reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
-          requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
-          asyncio.create_task(DeleteMessage(etho))
-          logger.info("Series filter message sent.")
-      except pyrogram.errors.MediaEmpty:
-          logger.warning(f"MediaEmpty error for poster: {poster_url}. Using placeholder.")
-          etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG[0], caption=reply_text, reply_markup=reply_markup)
-          reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
-          requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
-          asyncio.create_task(DeleteMessage(etho))
-      except Exception as e:
-          logger.error(f"Error sending series filter message: {e}")
+    if series_key:
+        series = get_series_name(series_key)
+        if not series:
+            return
 
+        languages = series.get("languages", {})
+        
+        reply_text = (
+            f"○ **Title:** `{series['title']}`\n"
+            f"○ **Released On:** `{series['released_on']}`\n"
+            f"○ **Genre:** `{series['genre']}`\n"
+            f"○ **Rating:** `{series['rating']}`\n"
+            f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`\n\n"
+            "Select the language you need...!"
+        )
+        poster_url = get_movie_poster(series_key)
+        
+        buttons = []
+        for lang_key, lang_data in languages.items():
+            buttons.append(InlineKeyboardButton(lang_data['name'], callback_data=f"user_series:{series_key}:{lang_key}"))
+        
+        buttons_chunked = chunk_buttons(buttons, chunk_size=2)
+        reply_markup = InlineKeyboardMarkup(buttons_chunked)
+        
+        try:
+            if poster_url:
+                etho = await message.reply_photo(photo=poster_url, caption=reply_text, reply_markup=reply_markup)
+            else:
+                etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG[0], caption=reply_text, reply_markup=reply_markup)
+            
+            reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
+            requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
+            asyncio.create_task(DeleteMessage(etho))
+            logger.info("Series filter message sent.")
+        except pyrogram.errors.MediaEmpty:
+            logger.warning(f"MediaEmpty error for poster: {poster_url}. Using placeholder.")
+            etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG[0], caption=reply_text, reply_markup=reply_markup)
+            reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
+            requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
+            asyncio.create_task(DeleteMessage(etho))
+        except Exception as e:
+            logger.error(f"Error sending series filter message: {e}")
+
+# ... (rest of the existing code)
 
 @Client.on_callback_query()
 async def cb_handler(client, query: CallbackQuery):
