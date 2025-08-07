@@ -55,6 +55,7 @@ def get_movie_poster(series_key):
 
 @Client.on_message(filters.text & (filters.private | filters.group))
 async def handle_message(client, message):
+  logger.info('recieved message')
   glob = await global_filters(client, message)
   if glob == False:
       await series_filter(client, message)
