@@ -112,7 +112,8 @@ class Bot(Client):
                     f"Check REQ_CHANNEL_TWO value and make sure bot is admin "
                     f"in channel with invite permission. Current value: {REQ_CHANNEL_TWO}"
                 )
-                logging.info("Bot stopped. Join https://t.me/EbizaSupport for support.")                sys.exit()
+                logging.info("Bot stopped. Join https://t.me/EbizaSupport for support.")                
+                sys.exit()
 
         for admin in ADMINS:
             try:
