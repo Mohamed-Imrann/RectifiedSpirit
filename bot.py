@@ -1,31 +1,29 @@
-import logging
 import logging.config
 import asyncio
-
-logging.config.fileConfig('logging.conf')
-logging.getLogger().setLevel(logging.INFO)
-logging.getLogger("pyrogram").setLevel(logging.ERROR)
-logging.getLogger("imdbpy").setLevel(logging.ERROR)
-logging.getLogger("asyncio").setLevel(logging.CRITICAL -1)
-
-import os 
+import os
 import sys
 from dotenv import load_dotenv
 from pyromod import listen
-
-load_dotenv("./dynamic.env", override=True, encoding="utf-8")
-
-from pyrogram import idle
-from pyrogram import Client, __version__
+from pyrogram import idle, Client, __version__, types
 from pyrogram.raw.all import layer
+from aiohttp import web
+from typing import Union, Optional, AsyncGenerator
+
 from database.users_chats_db import db
 from database.join_reqs import JoinReqs
 from info import *
 from utils import temp
-from typing import Union, Optional, AsyncGenerator
-from pyrogram import types
-from aiohttp import web
 from plugins import web_server
+
+# Logging configuration
+logging.config.fileConfig('logging.conf')
+logging.getLogger().setLevel(logging.INFO)
+logging.getLogger("pyrogram").setLevel(logging.ERROR)
+logging.getLogger("imdbpy").setLevel(logging.ERROR)
+logging.getLogger("asyncio").setLevel(logging.CRITICAL - 1)
+
+# Load environment variables
+load_dotenv("./dynamic.env", override=True, encoding="utf-8")
 
 name = "main"
 
@@ -35,15 +33,16 @@ class Bot(Client):
             name=SESSION,
             api_id=API_ID,
             api_hash=API_HASH,
-            bot_token=BOT_TOKEN, 
+            bot_token=BOT_TOKEN,
             workers=1000,
             plugins={"root": "plugins"},
             sleep_threshold=2,
         )
 
     async def start(self, **kwargs):
+        # Check REQ_CHANNEL_ONE and TWO, update env if needed
         if REQ_CHANNEL_ONE is None or REQ_CHANNEL_TWO is None:
-            with open("./dynamic.env", "wt+") as f:
+            with open("./dynamic.env", "wt+", encoding="utf-8") as f:
                 if REQ_CHANNEL_ONE is None:
                     req1 = await JoinReqs().get_fsub_chat1()
                     req1 = req1['chat_id'] if req1 else False
@@ -57,36 +56,63 @@ class Bot(Client):
                     f.write(f"REQ_CHANNEL_TWO={req2}\n")
                 else:
                     f.write(f"REQ_CHANNEL_TWO={REQ_CHANNEL_TWO}\n")
-                    
+            
+            # Restart the bot after updating the environment
             os.execl(sys.executable, sys.executable, "bot.py")
             return
+        
         await super().start()
         me = await self.get_me()
         temp.ME = me.id
         temp.U_NAME = me.username
         temp.B_NAME = me.first_name
         self.username = '@' + me.username
-        logging.info(f"{me.first_name} 𝖶𝗂𝗍𝗁 𝖥𝗈𝗋 𝖯𝗒𝗋𝗈𝗀𝗋𝖺𝗆 v{__version__} (Layer {layer}) 𝖲𝗍𝖺𝗋𝗍𝖾𝖽 𝖮𝗇 @{me.username}")
+
+        logging.info(
+            f"{me.first_name} With For Pyrogram v{__version__} "
+            f"(Layer {layer}) Started On @{me.username}"
+        )
+
         app = web.AppRunner(await web_server())
         await app.setup()
-        bind_address = "0.0.0.0"
-        await web.TCPSite(app, bind_address, PORT).start()
+        await web.TCPSite(app, "0.0.0.0", PORT).start()
+
+        # Handle force subscription channel 1
         if REQ_CHANNEL_ONE:
-            try: temp.LINK_ONE = (await self.create_chat_invite_link(chat_id=REQ_CHANNEL_ONE, creates_join_request=True)).invite_link 
+            try:
+                temp.LINK_ONE = (
+                    await self.create_chat_invite_link(
+                        chat_id=REQ_CHANNEL_ONE,
+                        creates_join_request=True
+                    )
+                ).invite_link
             except Exception as a:
                 logging.warning(a)
-                logging.warning("Bot can't Export Invite link from Force Sub Channel!")
-                logging.warning(f"Please Double check the REQ_CHANNEL_ONE value and Make sure Bot is Admin in channel with Invite Users via Link Permission, Current Force Sub Channel Value: {REQ_CHANNEL_ONE}")
-                logging.info("\nBot Stopped. Join https://t.me/EbizaSupport for support")
+                logging.warning("Bot can't export invite link from Force Sub Channel!")
+                logging.warning(
+                    f"Check REQ_CHANNEL_ONE value and make sure bot is admin "
+                    f"in channel with invite permission. Current value: {REQ_CHANNEL_ONE}"
+                )
+                logging.info("Bot stopped. Join https://t.me/EbizaSupport for support.")
                 sys.exit()
+
+        # Handle force subscription channel 2
         if REQ_CHANNEL_TWO:
-            try: temp.LINK_TWO = (await self.create_chat_invite_link(chat_id=REQ_CHANNEL_TWO, creates_join_request=True)).invite_link 
+            try:
+                temp.LINK_TWO = (
+                    await self.create_chat_invite_link(
+                        chat_id=REQ_CHANNEL_TWO,
+                        creates_join_request=True
+                    )
+                ).invite_link
             except Exception as b:
                 logging.warning(b)
-                logging.warning("Bot can't Export Invite link from Force Sub Channel!")
-                logging.warning(f"Please Double check the REQ_CHANNEL_TWO value and Make sure Bot is Admin in channel with Invite Users via Link Permission, Current Force Sub Channel Value: {REQ_CHANNEL_TWO}")
-                logging.info("\nBot Stopped. Join https://t.me/EbizaSupport for support")
-                sys.exit()
+                logging.warning("Bot can't export invite link from Force Sub Channel!")
+                logging.warning(
+                    f"Check REQ_CHANNEL_TWO value and make sure bot is admin "
+                    f"in channel with invite permission. Current value: {REQ_CHANNEL_TWO}"
+                )
+                logging.info("Bot stopped. Join https://t.me/EbizaSupport for support.")                sys.exit()
 
         for admin in ADMINS:
             try:
