@@ -4,7 +4,7 @@
 import re
 import pyrogram 
 from pyrogram import Client, filters, enums
-from pyrogram.types import Message, KimportKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
 from info import ADMINS, SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG
 from database.crazy_db import (
   get_series, get_series_name, get_poster_manuel, get_links_for_quality
