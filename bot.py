@@ -58,7 +58,7 @@ class Bot(Client):
                 else:
                     f.write(f"REQ_CHANNEL_TWO={REQ_CHANNEL_TWO}\n")
                     
-            os.execl(sys.executable, sys.executable, "main.py")
+            os.execl(sys.executable, sys.executable, "bot.py")
             return
         await super().start()
         me = await self.get_me()
