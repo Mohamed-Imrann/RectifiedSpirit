@@ -1665,9 +1665,9 @@ async def download_and_upload_poster(client: Client, poster_url: str = None, mes
 
 # Message handlers
 @Client.on_message(filters.text & (filters.private | filters.group))
-async def handle_message(client: Client, message: Message):
+async def handlefhhffg_message(client: Client, message: Message):
     user_id = message.from_user.id
-    
+    logger.info("ok")
     # If the message is in a group, apply global and series filters
     if message.chat.type != enums.ChatType.PRIVATE:
         glob = await global_filters(client, message)
