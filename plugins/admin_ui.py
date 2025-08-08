@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 # Global variables
 temp_admin_data: Dict[int, Dict[str, Any]] = {}
-admin_locks: Dict[int, asyncio.RLock] = {}
+admin_locks: Dict[int, asyncio.Lock] = {}
 imdb = Cinemagoer()
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
@@ -50,7 +50,7 @@ NO_POSTER_FOUND_IMG = "https://envs.sh/esA.jpg"
 def get_admin_lock(user_id: int) -> asyncio.RLock:
     """Get or create a lock for an admin user."""
     if user_id not in admin_locks:
-        admin_locks[user_id] = asyncio.RLock()
+        admin_locks[user_id] = asyncio.Lock()
         logger.info(f"Created new lock for admin user {user_id}")
     return admin_locks[user_id]
 
