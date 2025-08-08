@@ -47,7 +47,7 @@ TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 NO_POSTER_FOUND_IMG = "https://envs.sh/esA.jpg"
 
 # Helper functions
-def get_admin_lock(user_id: int) -> asyncio.RLock:
+def get_admin_lock(user_id: int) -> asyncio.Lock:
     """Get or create a lock for an admin user."""
     if user_id not in admin_locks:
         admin_locks[user_id] = asyncio.Lock()
