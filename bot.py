@@ -43,7 +43,7 @@ class Bot(Client):
   async def start(self, **kwargs):
       await super().start()
       try:
-          await self.load_plugins("plugins")
+          await self.load_plugins()
           logging.info("Plugins loaded successfully!")
       except Exception as e:
           logging.error(f"Error loading plugins: {e}")
