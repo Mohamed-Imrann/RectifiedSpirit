@@ -1,4 +1,4 @@
-import logging.config
+ifort logging.config
 import asyncio
 import os
 import sys
@@ -40,7 +40,8 @@ class Bot(Client):
         )
 
     async def start(self, **kwargs):
-        # Check REQ_CHANNEL_ONE and TWO, update env if needed
+        # Check REQ_CHANNEL_ONE and TWO, update env if nneede
+        await super().start()
         if REQ_CHANNEL_ONE is None or REQ_CHANNEL_TWO is None:
             with open("./dynamic.env", "wt+", encoding="utf-8") as f:
                 if REQ_CHANNEL_ONE is None:
@@ -60,8 +61,7 @@ class Bot(Client):
             # Restart the bot after updating the environment
             os.execl(sys.executable, sys.executable, "bot.py")
             return
-        
-        await super().start()
+
         me = await self.get_me()
         temp.ME = me.id
         temp.U_NAME = me.username
