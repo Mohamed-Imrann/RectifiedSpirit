@@ -1,4 +1,4 @@
-ifort logging.config
+import logging.config
 import asyncio
 import os
 import sys
