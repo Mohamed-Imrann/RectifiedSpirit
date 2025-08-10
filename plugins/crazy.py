@@ -8,7 +8,7 @@ import re
 import shutil
 import os
 from telegraph import upload_file
-from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, IMGBB_API_KEY
+from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, IMGBB_API_KEY, TMDB_API_KEY
 from database.users_chats_db import db
 from database.crazy_db import (
     add_series, add_series_links, delete_series_and_links, delete_all_series_and_links,
@@ -18,6 +18,8 @@ from database.crazy_db import (
 from plugins.get_file_id import get_file_id
 import base64
 import hashlib
+import requests
+import uuid
 
 imdb = Cinemagoer()
 
@@ -107,7 +109,6 @@ async def add_series_command(client, message):
                 add_series_links(f"{series_key}-{language.lower().replace(' ', '')}-{season_name.lower().replace(' ', '')}", links)
 
     await client.send_message(chat_id, f"Series {series_data['title']} added successfully.")
-    
 
 def extract_parts(text):
     parts = []
@@ -134,139 +135,225 @@ def extract_parts(text):
 
     return parts[1:]  # Skip the command itself
 
-
-import uuid
-
 callback_data_store = {}
 
-async def get_postr(query, bulk=False, id=False):
-    if not id:
-        search_results = imdb.search_movie(query)
-        if not search_results:
-            return None
-        if bulk:
-            return search_results[:10]  # Return top 10 results
-        movie = search_results[0]
-        movie_id = movie.movieID
-    else:
-        movie_id = query
+TMDB_BASE_URL = "https://api.themoviedb.org/3"
+TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
-    movie = imdb.get_movie(movie_id)
-    if not movie:
-        return None
-
-    genres = ', '.join(movie.get('genres', [])) if movie.get('genres') else 'N/A'
-    poster = movie.get('full-size cover url', 'N/A')
-    title = movie.get('title', 'N/A')
-    year = movie.get('year', 'N/A')
-    rating = movie.get('rating', 'N/A')
-
-    return {
-        'title': title,
-        'year': year,
-        'genres': genres,
-        'rating': rating,
-        'poster': poster,
-        'imdb_id': movie_id
+async def get_tmdb_info(query, bulk=False, id=False, media_type='tv'):
+    """
+    Enhanced TMDB function similar to get_postr from IMDb version
+    - query: search term or TMDB ID
+    - bulk: return multiple results (like IMDb search)
+    - id: treat query as TMDB ID
+    - media_type: 'tv' or 'movie'
+    """
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {TMDB_API_KEY}"
     }
+
+    try:
+        if not id:
+            # Search mode - similar to IMDb search
+            if bulk:
+                # Return multiple results for selection
+                search_results_tv = []
+                search_results_movie = []
+                
+                # Search TV shows
+                url_tv = f"{TMDB_BASE_URL}/search/tv"
+                response_tv = requests.get(url_tv, headers=headers, params={"query": query})
+                if response_tv.status_code == 200:
+                    data_tv = response_tv.json()
+                    for item in data_tv.get('results', [])[:3]:  # Limit to 3 results
+                        if item.get('name'):
+                            search_results_tv.append({
+                                'title': item.get('name'),
+                                'year': item.get('first_air_date', '').split('-')[0] if item.get('first_air_date') else 'N/A',
+                                'tmdb_id': item.get('id'),
+                                'media_type': 'tv'
+                            })
+                
+                # Search Movies
+                url_movie = f"{TMDB_BASE_URL}/search/movie"
+                response_movie = requests.get(url_movie, headers=headers, params={"query": query})
+                if response_movie.status_code == 200:
+                    data_movie = response_movie.json()
+                    for item in data_movie.get('results', [])[:3]:  # Limit to 3 results
+                        if item.get('title'):
+                            search_results_movie.append({
+                                'title': item.get('title'),
+                                'year': item.get('release_date', '').split('-')[0] if item.get('release_date') else 'N/A',
+                                'tmdb_id': item.get('id'),
+                                'media_type': 'movie'
+                            })
+                
+                # Combine results (TV shows first, then movies)
+                all_results = search_results_tv + search_results_movie
+                return all_results[:5]  # Return max 5 results total
+            
+            else:
+                # Single result mode
+                url = f"{TMDB_BASE_URL}/search/{media_type}"
+                response = requests.get(url, headers=headers, params={"query": query})
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('results'):
+                        first_result = data['results'][0]
+                        tmdb_id = first_result.get('id')
+                        return await get_tmdb_info(tmdb_id, id=True, media_type=media_type)
+                return None
+        else:
+            # ID mode - get full details using TMDB ID
+            url = f"{TMDB_BASE_URL}/{media_type}/{query}"
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Get genres (limit to 3)
+                genres = [g['name'] for g in data.get('genres', [])][:3]
+                
+                # Get poster URL
+                poster_path = data.get('poster_path')
+                poster_url = f"{TMDB_IMAGE_BASE_URL}{poster_path}" if poster_path else 'N/A'
+                
+                # Get title and year based on media type
+                if media_type == 'tv':
+                    title = data.get('name', 'N/A')
+                    year = data.get('first_air_date', '').split('-')[0] if data.get('first_air_date') else 'N/A'
+                else:  # movie
+                    title = data.get('title', 'N/A')
+                    year = data.get('release_date', '').split('-')[0] if data.get('release_date') else 'N/A'
+                
+                return {
+                    'title': title,
+                    'year': year,
+                    'genres': ', '.join(genres) if genres else 'N/A',
+                    'rating': data.get('vote_average', 'N/A'),
+                    'poster': poster_url,
+                    'tmdb_id': data.get('id'),
+                    'media_type': media_type,
+                    'url': f'https://www.themoviedb.org/{media_type}/{data.get("id")}'
+                }
+            return None
+
+    except Exception as e:
+        print(f"TMDB Error: {e}")
+        return None
 
 @Client.on_message(filters.command('quality') & filters.user(ADMINS))
 async def add_quality_link(client: Client, message: Message):
     parts = extract_parts(message.text)
 
     if len(parts) < 5:
-        await message.reply_text(
+        k = await message.reply_text(
             "Please follow the command format:\n\n"
             "/quality \"Series Name\" \"Language\" \"Season Name\" \"Quality\" \"Download Link\""
         )
+        asyncio.create_task(DeleteMessage(k))
         return
 
+    k = await message.reply_text("Processing Request...")
+
     series_name, language, season_name, quality, link = parts
-    series_key = series_name.lower().replace(" ", "")
+    series_key = series_name.lower().replace(" ", "").replace("-", "~")
 
     series = get_series_name(series_key)
     if not series:
-        search_results = await get_postr(series_name, bulk=True)
+        # Search on TMDB (bulk mode for multiple results)
+        search_results = await get_tmdb_info(series_name, bulk=True)
         if not search_results:
-            await message.reply_text("No results found on IMDb for the provided series name.")
+            await k.edit_text("No results found on TMDB for the provided series name.")
             return
 
+        # Create buttons for user to select the correct series
         buttons = []
-        for movie in search_results:
-            movie_title = movie.get('title', 'N/A')
-            movie_year = movie.get('year', 'N/A')
-            imdb_id = movie.movieID
-            
-            # Store data in a local dictionary with a UUID
+        for item in search_results:
+            item_title = item.get('title', 'N/A')
+            item_year = item.get('year', 'N/A')
+            tmdb_id = item.get('tmdb_id')
+            media_type = item.get('media_type')
+
+            # Store data in the callback store
             unique_id = str(uuid.uuid4())
             callback_data_store[unique_id] = {
-                'imdb_id': imdb_id,
+                'tmdb_id': tmdb_id,
                 'language': language,
                 'season_name': season_name,
                 'quality': quality,
-                'link': link
+                'link': link,
+                'media_type': media_type
             }
-            
+
             button = InlineKeyboardButton(
-                text=f"{movie_title} ({movie_year})",
-                callback_data=f"idb#{unique_id}"
+                text=f"{item_title} ({item_year}) - {media_type.upper()}",
+                callback_data=f"tmdb#{unique_id}"
             )
             buttons.append([button])
 
         reply_markup = InlineKeyboardMarkup(buttons)
-
-        etho = await message.reply_text(
-            "Multiple results found. Please select the correct series:",
+        await k.edit_text(
+            f"Multiple results found for '{series_name}'. Please select the correct series:",
             reply_markup=reply_markup
         )
-        asyncio.create_task(DeleteMessage(etho))
+        asyncio.create_task(DeleteMessage(k))
         return
 
+    # If series found in DB, proceed directly
     await continue_add_quality_link(client, message, series_key, language, season_name, quality, link)
 
-@Client.on_callback_query(filters.regex(r"^idb#"))
-async def imdb_selection_callback(client: Client, callback_query):
+@Client.on_callback_query(filters.regex(r"^tmdb#"))
+async def tmdb_selection_callback(client: Client, callback_query):
     data = callback_query.data.split("#")
     unique_id = data[1]
 
-    # Retrieve stored data from the dictionary
     if unique_id not in callback_data_store:
         await callback_query.message.reply("Invalid or expired callback data.")
         return
 
     stored_data = callback_data_store.pop(unique_id)
-    imdb_id = stored_data['imdb_id']
+    tmdb_id = stored_data['tmdb_id']
     language = stored_data['language']
     season_name = stored_data['season_name']
     quality = stored_data['quality']
     link = stored_data['link']
+    media_type = stored_data['media_type']
 
-    movie = await get_postr(imdb_id, id=True)
-    if not movie:
-        await callback_query.message.reply("Failed to retrieve IMDb data.")
+    # Get full details using TMDB ID
+    movie_details = await get_tmdb_info(tmdb_id, id=True, media_type=media_type)
+    if not movie_details:
+        await callback_query.message.reply("Failed to retrieve TMDB data.")
         return
 
-    series_key = movie.get('title').lower().replace(" ", "").replace("-", "~")
+    series_key = movie_details.get('title').lower().replace(" ", "").replace("-", "")
 
     series_data = {
-        'title': movie.get('title', 'N/A'),
-        'released_on': movie.get('year', 'N/A'),
-        'genre': movie.get('genres', 'N/A'),
-        'rating': movie.get('rating', 'N/A'),
-        'key': series_key
+        'title': movie_details.get('title', 'N/A'),
+        'released_on': movie_details.get('year', 'N/A'),
+        'genre': movie_details.get('genres', 'N/A'),
+        'rating': movie_details.get('rating', 'N/A'),
+        'key': series_key,
+        'tmdb_id': tmdb_id,
+        'media_type': media_type
     }
 
     add_series(series_data)
+    
+    # Add poster to database if available
+    if movie_details.get('poster') != 'N/A':
+        add_poster_to_db(series_key, movie_details.get('poster'))
 
-    await callback_query.message.reply_text(
+    msg = await callback_query.message.reply_text(
         f"Series added successfully!\n\n"
-        f"**Title:** {movie.get('title', 'N/A')}\n"
-        f"**Year:** {movie.get('year', 'N/A')}\n"
-        f"**Genres:** {movie.get('genres', 'N/A')}\n"
-        f"**Rating:** {movie.get('rating', 'N/A')}\n"
-        f"**Poster URL:** {movie.get('poster', 'N/A')}"
+        f"**Title:** {movie_details.get('title', 'N/A')}\n"
+        f"**Year:** {movie_details.get('year', 'N/A')}\n"
+        f"**Genres:** {movie_details.get('genres', 'N/A')}\n"
+        f"**Rating:** {movie_details.get('rating', 'N/A')}\n"
+        f"**Media Type:** {media_type.upper()}\n"
+        f"**Poster URL:** {movie_details.get('poster', 'N/A')}"
     )
-
+    asyncio.create_task(DeleteMessage(msg))
     await continue_add_quality_link(client, callback_query.message, series_key, language, season_name, quality, link)
 
 async def continue_add_quality_link(client, message, series_key, language, season_name, quality, link):
@@ -289,7 +376,7 @@ async def continue_add_quality_link(client, message, series_key, language, seaso
 
     add_series_links(link_key, links)
 
-    await message.reply_text(
+    msg = await message.reply_text(
         f"Link added successfully:\n\n"
         f"**Series:** {series_key.replace('-', ' ').title()}\n"
         f"**Language:** {language}\n"
@@ -297,7 +384,7 @@ async def continue_add_quality_link(client, message, series_key, language, seaso
         f"**Quality:** {quality}\n"
         f"**Link:** {link}"
     )
-
+    asyncio.create_task(DeleteMessage(msg))
 
 @Client.on_message(filters.command('seridel') & filters.user(ADMINS))
 async def delete_series_command(client, message):
@@ -308,9 +395,6 @@ async def delete_series_command(client, message):
     series_key = message.command[1]
     delete_series_and_links(series_key)
     await message.reply_text(f"Deleted series and related links with key: {series_key}")
-
-
-
 
 @Client.on_message(filters.command('seriview') & filters.user(ADMINS))
 async def view_all_series_command(client, message):
@@ -336,7 +420,6 @@ async def view_all_series_command(client, message):
     else:
         # Send the reply text
         await message.reply_text(reply_text)
-
 
 @Client.on_message(filters.command('seridelquality') & filters.user(ADMINS))
 async def delete_series_quality_command(client, message):
@@ -371,14 +454,6 @@ async def delete_series_language_command(client, message):
     series_key, language = message.command[1], message.command[2]
     delete_series_language(series_key, language)
     await message.reply_text(f"Deleted language '{language}' and related links for series with key: {series_key}")
-
-import os
-import shutil
-import requests
-from info import TMP_DOWNLOAD_DIRECTORY
-from plugins.get_file_id import get_file_id
-
-IMGBB_API_KEY = "5c789a0958af3fadc1db4fea0796576d"
 
 @Client.on_message(filters.command("addposter") & filters.user(ADMINS))
 async def add_poster(client, message):
@@ -438,7 +513,7 @@ async def add_poster(client, message):
     finally:
         # Clean up downloaded files
         shutil.rmtree(_t, ignore_errors=True)
-        
+
 @Client.on_message(filters.command('stats') & filters.incoming)
 async def get_ststs(bot, message):
     rju = await message.reply('👀')

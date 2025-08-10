@@ -1,13 +1,17 @@
 #Credits Only To Abhishek
 #None Of The People In The Repository Are Coding But Suggestions
 #t.me/Abhishekissac
-
+import re
 import pyrogram 
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
 from info import ADMINS, SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG
 from database.crazy_db import (
     get_series, get_links, get_series_name, get_languages, get_seasons, get_poster_manuel
+)
+from database.gfilters_mdb import (
+    find_gfilter,
+    get_gfilters
 )
 from utils import temp
 from imdb import Cinemagoer
@@ -19,7 +23,7 @@ import random
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.ERROR)
 
-
+requestor = {}
 imdb = Cinemagoer()
 
 async def DeleteMessage(msg):
@@ -61,13 +65,65 @@ def get_movie_poster(series_key):
 
 @Client.on_message(filters.text & (filters.private | filters.group))
 async def handle_message(client, message):
-    await series_filter(client, message)
+    glob = await global_filters(client, message)
+    if glob == False:
+        await series_filter(client, message)
 
+
+async def global_filters(client, message, text=False):
+    group_id = message.chat.id
+    name = text or message.text 
+    reply_id = message.reply_to_message.id if message.reply_to_message else message.id 
+    keywords = await get_gfilters("gfilters")
+    for keyword in reversed(sorted(keywords, key=len)):
+        pattern = r"( |^|[\\W])" + re.escape(keyword) + r"( |$|[\\W])"
+        if re.search(pattern, name, flags=re.IGNORECASE):
+            reply_text, btn, alert, fileid = await find_gfilter("gfilters", keyword)
+            if reply_text:
+                reply_text = reply_text.replace("\\n", "\n").replace("\\t", "\t")
+            
+            try:
+                if fileid == "None":
+                    if btn == "[]":
+                        piroxrk = await client.send_message(
+                            group_id,
+                            reply_text,
+                            disable_web_page_preview=True,
+                            reply_to_message_id=reply_id
+                        )
+                    else:
+                        button = eval(btn)
+                        piroxrk = await client.send_message(
+                            group_id,
+                            reply_text,
+                            disable_web_page_preview=True,
+                            reply_markup=InlineKeyboardMarkup(button),
+                            reply_to_message_id=reply_id
+                        )
+                elif btn == "[]":
+                    piroxrk = await client.send_cached_media(
+                        group_id,
+                        fileid,
+                        caption=reply_text or "",
+                        reply_to_message_id=reply_id
+                    )
+                else:
+                    button = eval(btn)
+                    piroxrk = await message.reply_cached_media(
+                        fileid,
+                        caption=reply_text or "",
+                        reply_markup=InlineKeyboardMarkup(button),
+                        reply_to_message_id=reply_id
+                    )
+            except Exception as e:
+                logger.exception(e)
+            break
+    else:
+        return False
 
 async def series_filter(client, message):
     text = message.text.strip()
     series_infos = get_series()
-    user_id = str(message.from_user.id)
     series_keys = [series['key'] for series in series_infos]
     series_names = [series['title'] for series in series_infos]
 
@@ -86,12 +142,15 @@ async def series_filter(client, message):
         
         if close_matches:
             buttons = [
-                InlineKeyboardButton(match, callback_data=f"spellcheck-{series_infos[series_names.index(match)]['key']}-{user_id}")
+                InlineKeyboardButton(match, callback_data=f"spellcheck-{series_infos[series_names.index(match)]['key']}")
                 for match in close_matches
             ]
-            buttons_chunked = chunk_buttons(buttons, chunk_size=2)
+            buttons_chunked = chunk_buttons(buttons, chunk_size=1)
             reply_markup = InlineKeyboardMarkup(buttons_chunked)
             etho = await message.reply_photo(photo=random.choice(SPELL_CHECK_IMAGE), caption="<b>Choose Your Series:</b>", reply_markup=reply_markup)
+            reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
+            requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
+            asyncio.create_task(DeleteMessage(etho))
             return
 
     if series_name:
@@ -111,141 +170,177 @@ async def series_filter(client, message):
             "Available Languages:\n"
         )
         poster_url = get_movie_poster(series_key)
-        buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}-{lang.lower().replace(' ', '')}-{user_id}") for lang in languages]
+        buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}-{lang.lower().replace(' ', '')}") for lang in languages]
         buttons_chunked = chunk_buttons(buttons, chunk_size=2)
         reply_markup = InlineKeyboardMarkup(buttons_chunked)
         try:
             if poster_url:
                 etho = await message.reply_photo(photo=poster_url, caption=reply_text, reply_markup=reply_markup)
+                reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
+                requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
+                asyncio.create_task(DeleteMessage(etho))
             else:
                 etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG, caption=reply_text, reply_markup=reply_markup)
+                reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
+                requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
+                asyncio.create_task(DeleteMessage(etho))
             logger.info("postertrying")
         except pyrogram.errors.MediaEmpty:
             await alert_admins(client, series_key)
             etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG, caption=reply_text, reply_markup=reply_markup)
+            reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
+            requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
             asyncio.create_task(DeleteMessage(etho))
 
 
 @Client.on_callback_query()
 async def cb_handler(client, query: CallbackQuery):
     data = query.data
-    user_id = str(query.from_user.id)
     parts = data.split("-")
-    if data == "close_data":
-        await query.message.delete()
-    elif data == "pages":
+    clicked_user = query.from_user.id
+    chat_id = query.message.chat.id
+    message_id = query.message.id
+
+    reply_msg = query.message.reply_to_message  
+    if reply_msg and reply_msg.from_user:
+        requested_user = reply_msg.from_user.id
+    else:
+        requested_user = requestor.get(f"{chat_id}•{message_id}")
+    
+    if chat_id < 0 and requested_user and clicked_user != requested_user:
+        await query.answer("Not your request!", show_alert=True)
+        return
+
+    if data == "pages":
         await query.answer()
-    elif data.startswith("gt:"):
-        start_parameter = data.split(":")[1]
+        return
+
+    elif data.startswith("b:"):
         try:
-            teststring = f"https://t.me/{temp.U_NAME}?start={start_parameter}"
-            print(teststring)
-            await query.answer(url=f"https://t.me/{temp.U_NAME}?start={start_parameter}")
+            k = data.split(":")
+            parameter = k[1]
+            url = f"https://t.me/{temp.U_NAME}?start={parameter}"
+            await query.answer(url=url)
         except pyrogram.errors.exceptions.bad_request_400.UrlInvalid:
             await query.answer("Invalid URL provided.", show_alert=True)
-    elif data.startswith("get:"):
-        start_parameter = data.split(":")[1]
-        try:
-            teststringt = f"https://t.me/{temp.U_NAME}?start={start_parameter}"
-            print(teststringt)
-            await query.answer(url=f"https://t.me/{temp.U_NAME}?start={start_parameter}")
-        except pyrogram.errors.exceptions.bad_request_400.UrlInvalid:
-            await query.answer("Invalid URL provided.", show_alert=True)
+
     elif data.startswith("spellcheck-"):
         series_key = parts[1]
-        query_user_id = parts[2]
-        if query_user_id != user_id:
-            await query.answer("Request Yourself", show_alert=True)
-            return
-
         series = get_series_name(series_key)
         if series:
             poster_url = get_movie_poster(series_key)
             languages = series.get("languages", [])
             reply_text = (
-                f"○ <b>Title:</b> <code>{series['title']}</code>\n○ <b>Released On:</b> <code>{series['released_on']}</code>\n○ <b>Genre:</b> <code>{series['genre']}</code>\n○ <b>Rating:</b> <code>{series['rating']}</code>\n\n"
+                f"○ <b>Title:</b> <code>{series['title']}</code>\n"
+                f"○ <b>Released On:</b> <code>{series['released_on']}</code>\n"
+                f"○ <b>Genre:</b> <code>{series['genre']}</code>\n"
+                f"○ <b>Rating:</b> <code>{series['rating']}</code>\n\n"
                 "Available Languages:\n"
             )
-            buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}-{lang.lower().replace(' ', '')}-{user_id}") for lang in languages]
+            buttons = [
+                InlineKeyboardButton(lang, callback_data=f"{series_key}-{lang.lower().replace(' ', '')}") 
+                for lang in languages
+            ]
             buttons_chunked = chunk_buttons(buttons, chunk_size=2)
             reply_markup = InlineKeyboardMarkup(buttons_chunked)
+
             try:
                 if poster_url:
-                    await query.message.edit_media(media=InputMediaPhoto(poster_url), reply_markup=reply_markup)
+                    media = InputMediaPhoto(media=poster_url, caption=reply_text, parse_mode=enums.ParseMode.HTML)
                 else:
-                    await query.message.edit_media(media=InputMediaPhoto(NO_POSTER_FOUND_IMG), reply_markup=reply_markup)
-                await query.message.edit_text(text=reply_text, reply_markup=reply_markup)
-            except pyrogram.errors.MediaEmpty:
-                await alert_admins(client, series_key)
-                await query.message.edit_media(media=InputMediaPhoto(NO_POSTER_FOUND_IMG), reply_markup=reply_markup)
-                await query.message.edit_text(text=reply_text, reply_markup=reply_markup)
-        else:
-            await query.message.edit_text(text="Series not found.", disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
-    else:
-        if len(parts) == 3:
-            series_key, language, query_user_id = parts
-            if query_user_id != user_id:
-                await query.answer("Request Yourself", show_alert=True)
-                return
-
-            series = get_series_name(series_key)
-            if series:
-                seasons = get_seasons(series['key'])
-                reply_text = (
-                    f"○ <b>Title:</b> <code>{series['title'].title()}</code>\n○ <b>Released On:</b> <code>{series['released_on']}</code>\n○ <b>Genre:</b> <code>{series['genre']}</code>\n○ <b>Rating:</b> <code>{series['rating']}</code>\n"
-                    f"<blockquote>▪️<b>Language:</b> <code>{language.title()}</code></blockquote>\n"
-                    "Available Seasons:\n"
-                )
-                
-                buttons = [InlineKeyboardButton(season, callback_data=f"{series_key}-{language}-{season.lower().replace(' ', '')}-{user_id}") for season in seasons]
-                buttons_chunked = chunk_buttons(buttons)
-                buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"spellcheck-{series_key}-{user_id}")])
-                reply_markup = InlineKeyboardMarkup(buttons_chunked)
-                await query.message.edit_text(
-                    text=reply_text,
+                    media = InputMediaPhoto(media=NO_POSTER_FOUND_IMG, caption=reply_text, parse_mode=enums.ParseMode.HTML)
+                    
+                await client.edit_message_media(
+                    chat_id=query.message.chat.id,
+                    message_id=query.message.id,
+                    media=media,
                     reply_markup=reply_markup
                 )
-        elif len(parts) == 4:
-            series_key, language, season, query_user_id = parts
-            if query_user_id != user_id:
-                await query.answer("Request Yourself", show_alert=True)
-                return
+            except pyrogram.errors.MediaEmpty:
+                await alert_admins(client, series_key)
+                media = InputMediaPhoto(
+                    media=NO_POSTER_FOUND_IMG,
+                    caption=reply_text,
+                    parse_mode=enums.ParseMode.HTML
+                )
+                await client.edit_message_media(
+                    chat_id=query.message.chat.id,
+                    message_id=query.message.id,
+                    media=media,
+                    reply_markup=reply_markup
+                )
+        else:
+            await query.message.edit_text(
+                "Series not found.",
+                disable_web_page_preview=True,
+                parse_mode=enums.ParseMode.HTML
+            )
 
-            series = get_series_name(series_key)
-            links = get_links(f"{series_key.lower().replace(' ', '')}-{language}-{season}")
-            if links:
-                buttons = [
-                    InlineKeyboardButton(quality, callback_data=f"gt:{link}")
-                    for quality, link in links.items()
-                ]
-                buttons_chunked = chunk_buttons(buttons, chunk_size=2)
-                if buttons_chunked:
-                    buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"{series_key}-{language}-{user_id}")])
-                    reply_markup = InlineKeyboardMarkup(buttons_chunked)
-                    await query.message.edit_text(
-                        text=(
-                            f"○ <b>Title:</b> <code>{series['title'].title()}</code>\n"
-                            f"○ <b>Released On:</b> <code>{series['released_on']}</code>\n"
-                            f"○ <b>Genre:</b> <code>{series['genre']}</code>\n"
-                            f"○ <b>Rating:</b> <code>{series['rating']}</code>\n"
-                            f"<blockquote><b>▪️Language:</b> <code>{language.title()}</code></blockquote>\n"
-                            f"<blockquote><b>▪️Season:</b> <code>{season.replace('-', ' ').title()}</code></blockquote>\n"
-                            "Select the quality you need...!"
-                        ),
-                        reply_markup=reply_markup,
-                        disable_web_page_preview=True,
-                        parse_mode=enums.ParseMode.HTML
-                    )
-                else:
-                    await query.message.edit_text(
-                        text="No qualities available for this language.",
-                        disable_web_page_preview=True,
-                        parse_mode=enums.ParseMode.HTML
-                    )
-            else:
+    elif len(parts) == 2:
+        series_key, language = parts
+        series = get_series_name(series_key)
+
+        if series:
+            seasons = get_seasons(series['key'])
+            reply_text = (
+                f"○ <b>Title:</b> <code>{series['title'].title()}</code>\n"
+                f"○ <b>Released On:</b> <code>{series['released_on']}</code>\n"
+                f"○ <b>Genre:</b> <code>{series['genre']}</code>\n"
+                f"○ <b>Rating:</b> <code>{series['rating']}</code>\n"
+                f"○ <b>Language:</b> <code>{language.title()}</code>\n"
+                "Available Seasons:\n"
+            )
+            buttons = [
+                InlineKeyboardButton(season, callback_data=f"{series_key}-{language}-{season.lower().replace(' ', '')}") 
+                for season in seasons
+            ]
+            buttons_chunked = chunk_buttons(buttons)
+            buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"spellcheck-{series_key}")])
+            reply_markup = InlineKeyboardMarkup(buttons_chunked)
+            await query.message.edit_text(text=reply_text, reply_markup=reply_markup)
+
+    elif len(parts) == 3:
+        series_key, language, season = parts
+        series = get_series_name(series_key)
+        links = get_links(f"{series_key.lower().replace(' ', '')}-{language}-{season}")
+
+        if links:
+            buttons = [InlineKeyboardButton(quality, callback_data=f"b:{link}") for quality, link in links.items()]
+            buttons_chunked = chunk_buttons(buttons, chunk_size=2)
+            if buttons_chunked:
+                buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"{series_key}-{language}")])
+                reply_markup = InlineKeyboardMarkup(buttons_chunked)
                 await query.message.edit_text(
-                    text="No links found for the selected season and language.",
+                    text=(
+                        f"○ <b>Title:</b> <code>{series['title'].title()}</code>\n"
+                        f"○ <b>Released On:</b> <code>{series['released_on']}</code>\n"
+                        f"○ <b>Genre:</b> <code>{series['genre']}</code>\n"
+                        f"○ <b>Rating:</b> <code>{series['rating']}</code>\n"
+                        f"○ <b>Language:</b> <code>{language.title()}</code>\n"
+                        f"○ <b>Season:</b> <code>{season.replace('-', ' ').title()}</code>\n"
+                        "Select the quality you need...!"
+                    ),
+                    reply_markup=reply_markup,
                     disable_web_page_preview=True,
                     parse_mode=enums.ParseMode.HTML
-)
-    
+                )
+            else:
+                await query.message.edit_text(
+                    text="No qualities found for this season and language.",
+                    disable_web_page_preview=True,
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("Back", callback_data=f"{series_key}-{language}")]]
+                    ),
+                    parse_mode=enums.ParseMode.HTML
+                )
+        else:
+            await query.message.edit_text(
+                text="No links found for the selected season and language.",
+                disable_web_page_preview=True,
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("Back", callback_data=f"{series_key}-{language}")]]
+                ),
+                parse_mode=enums.ParseMode.HTML
+            )
+
+                           
