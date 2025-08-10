@@ -13,7 +13,7 @@ import requests
 from fuzzywuzzy import fuzz # Import fuzzywuzzy
 
 from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, AUTO_DELETE_TIME, AUTO_DELETE_MSG, NO_POSTER_FOUND_IMG
-from database.users_chats_db import db
+from database.crazy_db import episodes_collection # Import the episodes collection
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -30,21 +30,20 @@ SMART_OPEN = '“'
 SMART_CLOSE = '”'
 START_CHAR = ('\'', '"', SMART_OPEN)
 
-class temp(object):
-    START_TIME = 0
-    BANNED_USERS = []
-    BANNED_CHATS = []
-    ME = None
-    CURRENT=int(os.environ.get("SKIP", 2))
-    CANCEL = False
-    MELCOW = {}
-    FILES_IDS = {}
-    U_NAME = None
-    B_NAME = None
-    LINK_ONE = None
-    LINK_TWO = None
-    SETTINGS = {}
-    # USER_DATA removed as state is now managed in plugins/crazy.py
+class Temp(object):
+    """
+    A temporary storage class for bot-related data that needs to persist
+    across different parts of the application during runtime.
+    """
+    ME = None  # Bot's user ID
+    U_NAME = None  # Bot's username
+    B_NAME = None  # Bot's first name
+    LINK_ONE = None # Invite link for REQ_CHANNEL_ONE
+    LINK_TWO = None # Invite link for REQ_CHANNEL_TWO
+    AUTO_DELETE_TIME = AUTO_DELETE_TIME # Time in seconds to auto-delete messages
+    AUTO_DELETE_MSG = "This message will be auto-deleted in {time} seconds to save chat space."
+
+temp = Temp()
 
 async def is_subscribed(bot, query=None, userid=None):
     try:
@@ -89,13 +88,12 @@ async def get_message_id(client, message):
     else:
         return 0, 0
 
-async def get_messages_in_range(client, source_channel_id, first_msg_id, last_msg_id, target_channel_id):
+async def get_messages(client, source_channel_id, message_ids: Union[List[int], range]):
     """
-    Fetches messages from a source channel within a range and copies them to a target channel.
-    Returns a list of the copied messages.
+    Fetches messages from a source channel given a list of message IDs.
+    Returns a list of the fetched messages.
     """
     messages = []
-    copied_messages = []
     
     # Ensure source_channel_id is in Pyrogram's format (-100xxxx)
     if not str(source_channel_id).startswith('-100'):
@@ -103,13 +101,7 @@ async def get_messages_in_range(client, source_channel_id, first_msg_id, last_ms
     else:
         source_channel_id = int(source_channel_id)
 
-    # Ensure target_channel_id is in Pyrogram's format (-100xxxx)
-    if not str(target_channel_id).startswith('-100'):
-        target_channel_id = int(f"-100{target_channel_id}")
-    else:
-        target_channel_id = int(target_channel_id)
-
-    message_ids_to_fetch = list(range(first_msg_id, last_msg_id + 1))
+    message_ids_to_fetch = list(message_ids) # Convert range to list if it's a range
     
     total_fetched = 0
     while total_fetched < len(message_ids_to_fetch):
@@ -124,21 +116,7 @@ async def get_messages_in_range(client, source_channel_id, first_msg_id, last_ms
         except Exception as e:
             logger.error(f"Error fetching messages from {source_channel_id}: {e}")
             break # Exit on unexpected exceptions
-
-    for msg in messages:
-        try:
-            copied_msg = await msg.copy(chat_id=target_channel_id)
-            copied_messages.append(copied_msg)
-            await asyncio.sleep(0.1) # Small delay to avoid flood limits
-        except FloodWait as e:
-            logger.warning(f"FloodWait during copy: Sleeping for {e.x} seconds")
-            await asyncio.sleep(e.x)
-            copied_msg = await msg.copy(chat_id=target_channel_id)
-            copied_messages.append(copied_msg)
-        except Exception as e:
-            logger.error(f"Error copying message {msg.id} to {target_channel_id}: {e}")
-            # Continue to next message even if one fails
-    return copied_messages
+    return messages
 
 async def delete_messages_from_user_chat(client, user_id, message_ids: List[int]):
     """Deletes a list of messages from a user's private chat with the bot."""
@@ -153,7 +131,7 @@ async def delete_messages_from_user_chat(client, user_id, message_ids: List[int]
         logger.error(f"Error deleting messages {message_ids} from user {user_id} chat: {e}")
 
 async def delete_file(messages, client, process):
-    await asyncio.sleep(AUTO_DELETE_TIME)
+    await asyncio.sleep(temp.AUTO_DELETE_TIME)
     for msg in messages:
         try:
             await client.delete_messages(chat_id=msg.chat.id, message_ids=[msg.id])
@@ -314,6 +292,7 @@ def split_list(l, n):
     for i in range(0, len(l), n):
         yield l[i:i + n]  
 
+# Moved get_file_id from plugins/get_file_id.py to here as it's a utility
 def get_file_id(msg: Message):
     if msg.media:
         for message_type in (
@@ -550,3 +529,38 @@ def find_most_similar_title(query: str, titles: List[str]):
             highest_score = score
             best_match = title
     return best_match
+
+async def get_links_for_quality(file_link_key: str):
+    """
+    Retrieves file information from the episodes collection based on a file_link_key.
+    This function is crucial for fetching the actual media files associated with a quality.
+    
+    Args:
+        file_link_key (str): The unique key linking to the file entries in the episodes collection.
+        
+    Returns:
+        tuple: A tuple containing:
+            - list: A list of dictionaries, each containing 'file_id' and 'caption' for the media.
+            - int: Channel ID (placeholder, as it's not directly stored per link_key here).
+            - int: First message ID (placeholder).
+            - int: Last message ID (placeholder).
+    """
+    logger.info(f"Fetching file links for key: {file_link_key}")
+    
+    # Find the document in the episodes_collection using the file_link_key
+    # Assuming each document in episodes_collection has a 'file_link_key' and 'files' field
+    # where 'files' is a list of {'file_id': '...', 'caption': '...'}
+    episode_doc = episodes_collection.find_one({"file_link_key": file_link_key})
+
+    if episode_doc and episode_doc.get("files"):
+        files_to_send = episode_doc["files"]
+        # These values might be stored in the episode_doc or derived,
+        # for now, they are placeholders.
+        channel_id = episode_doc.get("channel_id", 0) 
+        first_msg_id = episode_doc.get("first_msg_id", 0)
+        last_msg_id = episode_doc.get("last_msg_id", 0)
+        logger.info(f"Found {len(files_to_send)} files for link key {file_link_key}")
+        return files_to_send, channel_id, first_msg_id, last_msg_id
+    
+    logger.warning(f"No files found in episodes_collection for link key: {file_link_key}")
+    return [], 0, 0, 0
