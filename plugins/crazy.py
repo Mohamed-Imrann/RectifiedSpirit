@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import asyncio
 import re
 import uuid
@@ -5,8 +8,6 @@ import logging
 import os
 import shutil
 import requests
-import copy
-import io
 import json
 from datetime import datetime
 from typing import Dict, Any, List, Tuple, Optional
@@ -17,7 +18,7 @@ from pyrogram.types import (
     InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 )
 from imdb import Cinemagoer
-from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, TMDB_API_KEY, LOG_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL
+from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, TMDB_API_KEY, LOG_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL, NO_POSTER_FOUND_IMG
 from database.crazy_db import (
     add_series, get_series_by_key, update_series_field, add_or_update_language,
     get_languages, delete_language, add_or_update_season, get_seasons, delete_season,
@@ -25,7 +26,7 @@ from database.crazy_db import (
     get_poster_file_id, update_poster_file_id, publish_series
 )
 from utils import (
-    get_message_id, get_messages as get_messages_in_range, delete_messages_from_user_chat, 
+    get_message_id, get_messages, delete_messages_from_user_chat, 
     get_poster, find_most_similar_title
 )
 from fuzzywuzzy import fuzz
@@ -44,18 +45,15 @@ admin_locks: Dict[int, asyncio.Lock] = {}
 imdb = Cinemagoer()
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
-NO_POSTER_FOUND_IMG = "https://envs.sh/esA.jpg"
 
 # Helper functions
 def get_admin_lock(user_id: int) -> asyncio.Lock:
-    """Get or create a lock for an admin user."""
     if user_id not in admin_locks:
         admin_locks[user_id] = asyncio.Lock()
         logger.info(f"Created new lock for admin user {user_id}")
     return admin_locks[user_id]
 
 async def DeleteMessage(msg):
-    """Delete a message after a delay."""
     await asyncio.sleep(600)
     try:
         await msg.delete()
@@ -63,13 +61,44 @@ async def DeleteMessage(msg):
     except Exception as e:
         logger.warning(f"Failed to delete message {msg.id}: {e}")
 
-def chunk_buttons(buttons, chunk_size=2):
-    """Chunk buttons into rows."""
-    return [buttons[i:i + chunk_size] for i in range(0, len(buttons), chunk_size)]
+def create_dynamic_layout(items, layout_pattern):
+    """
+    Create a dynamic button layout based on a pattern.
+    
+    Args:
+        items: List of items to display
+        layout_pattern: List of strings representing the layout pattern
+                       Each string contains the type and position (e.g., "la1", "lb2", "sa3")
+    
+    Returns:
+        List of lists of InlineKeyboardButton objects
+    """
+    # Create a dictionary to map layout codes to items
+    item_dict = {}
+    for i, item in enumerate(items, 1):
+        item_dict[f"l{i}"] = item
+    
+    # Create the layout
+    layout = []
+    current_row = []
+    
+    for code in layout_pattern:
+        if code in item_dict:
+            current_row.append(InlineKeyboardButton(
+                text=item_dict[code],
+                callback_data=code
+            ))
+        
+        # Add row to layout if it has 3 buttons or is the last item
+        if len(current_row) == 3 or code == layout_pattern[-1]:
+            if current_row:
+                layout.append(current_row)
+                current_row = []
+    
+    return layout
 
 # TMDB and helper functions
 async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
-    """Fetches movie/TV show information from TMDB."""
     logger.info(f"Fetching TMDB info: query={query}, bulk={bulk}, tmdb_id={tmdb_id}, media_type={media_type}")
     headers = {
         "accept": "application/json",
@@ -78,7 +107,6 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
 
     try:
         if tmdb_id:
-            # Fetch details for a specific TMDB ID
             url = f"{TMDB_BASE_URL}/{media_type}/{tmdb_id}"
             logger.info(f"Fetching details from {url}")
             response = requests.get(url, headers=headers)
@@ -109,7 +137,6 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
             logger.info(f"Retrieved details for {title}")
             return result
         else:
-            # Search mode
             search_results = []
             
             # Search TV shows
@@ -118,7 +145,7 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
             response_tv = requests.get(url_tv, headers=headers, params={"query": query})
             response_tv.raise_for_status()
             data_tv = response_tv.json()
-            for item in data_tv.get('results', [])[:5]: # Limit to 5 results
+            for item in data_tv.get('results', [])[:5]:
                 if item.get('name'):
                     search_results.append({
                         'title': item.get('name'),
@@ -134,7 +161,7 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
             response_movie = requests.get(url_movie, headers=headers, params={"query": query})
             response_movie.raise_for_status()
             data_movie = response_movie.json()
-            for item in data_movie.get('results', [])[:5]: # Limit to 5 results
+            for item in data_movie.get('results', [])[:5]:
                 if item.get('title'):
                     search_results.append({
                         'title': item.get('title'),
@@ -145,7 +172,7 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
                     })
             
             logger.info(f"Found {len(search_results)} total results")
-            return search_results[:10] # Return max 10 results total (TV first, then movies)
+            return search_results[:10]
 
     except requests.exceptions.RequestException as e:
         logger.error(f"TMDB API error: {e}")
@@ -155,7 +182,6 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
         return None
 
 async def download_and_upload_poster(client: Client, poster_url: str = None, message: Message = None):
-    """Downloads a poster (from URL or user-provided photo), uploads it to LOG_CHANNEL, and returns its file_id."""
     logger.info("Downloading and uploading poster")
     temp_dir = os.path.join(TMP_DOWNLOAD_DIRECTORY, str(uuid.uuid4()))
     os.makedirs(temp_dir, exist_ok=True)
@@ -164,7 +190,6 @@ async def download_and_upload_poster(client: Client, poster_url: str = None, mes
 
     try:
         if poster_url:
-            # Download from URL
             logger.info(f"Downloading poster from URL: {poster_url}")
             response = requests.get(poster_url, stream=True)
             response.raise_for_status()
@@ -173,11 +198,9 @@ async def download_and_upload_poster(client: Client, poster_url: str = None, mes
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
         elif message and message.photo and message.photo.file_id:
-            # Use user-provided photo
             logger.info("Downloading user-provided photo")
             download_path = await client.download_media(message.photo.file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
         elif message and message.video and message.video.thumbs and message.video.thumbs[0].file_id:
-            # Use user-provided video thumbnail
             logger.info("Downloading user-provided video thumbnail")
             download_path = await client.download_media(message.video.thumbs[0].file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
         else:
@@ -185,12 +208,11 @@ async def download_and_upload_poster(client: Client, poster_url: str = None, mes
             return None
 
         if download_path:
-            # Upload to LOG_CHANNEL
             logger.info("Uploading poster to LOG_CHANNEL")
             sent_msg = await client.send_photo(LOG_CHANNEL, photo=download_path, caption="Series Poster")
             file_id = sent_msg.photo.file_id
             try:
-                await sent_msg.delete() # Delete from log channel to keep it clean
+                await sent_msg.delete()
                 logger.debug("Deleted temporary poster from LOG_CHANNEL")
             except Exception as e:
                 logger.warning(f"Could not delete temporary poster message from LOG_CHANNEL: {e}")
@@ -204,30 +226,30 @@ async def download_and_upload_poster(client: Client, poster_url: str = None, mes
 
 # Admin UI message sending functions
 async def send_series_selection_message(client: Client, user_id: int, query: str, results: list, message_id: int = None):
-    """Sends or edits the series selection message with TMDB/IMDb results."""
     logger.info(f"Sending series selection message to user {user_id}")
     text = f"**Select a series from below:**\n\nSearch query: `{query}`"
     
     buttons = []
-    for item in results:
+    for i, item in enumerate(results, 1):
         unique_id = str(uuid.uuid4())
         temp_admin_data[user_id] = temp_admin_data.get(user_id, {})
         temp_admin_data[user_id][unique_id] = {
             'id': item.get('tmdb_id') if item.get('source') == 'tmdb' else item.get('imdb_id'),
             'media_type': item.get('media_type'),
             'source': item.get('source'),
-            'query': query # Store original query for 'Back' button
+            'query': query
         }
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"{item.get('title', 'N/A')} ({item.get('year', 'N/A')}) - {item.get('source').upper()}",
-                callback_data=f"newui_{item.get('source')}_select:{unique_id}"
-            )
-        ])
+        buttons.append(InlineKeyboardButton(
+            text=f"{item.get('title', 'N/A')} ({item.get('year', 'N/A')}) - {item.get('source').upper()}",
+            callback_data=f"sel_{unique_id}"
+        ))
     
-    buttons.append([InlineKeyboardButton("🔍 Search Again", callback_data="newui_search_again")])
+    buttons.append(InlineKeyboardButton("🔍 Search Again", callback_data="search_again"))
     
-    reply_markup = InlineKeyboardMarkup(buttons)
+    # Create dynamic layout
+    layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
+    layout = create_dynamic_layout(buttons, layout_pattern)
+    reply_markup = InlineKeyboardMarkup(layout)
 
     try:
         if message_id:
@@ -265,7 +287,6 @@ async def send_series_selection_message(client: Client, user_id: int, query: str
         return None
 
 async def send_series_details_message(client: Client, user_id: int, series_data: dict, message_id: int = None):
-    """Sends or edits the series details message with edit options."""
     logger.info(f"Sending series details message to user {user_id}")
     series_key = series_data['_id']
     poster_file_id = get_poster_file_id(series_key) or NO_POSTER_FOUND_IMG
@@ -279,15 +300,18 @@ async def send_series_details_message(client: Client, user_id: int, series_data:
         f"**Media Type:** `{series_data.get('media_type', 'N/A').upper()}`\n\n"
     )
 
+    # Define the layout pattern for series details
+    layout_pattern = ["la1", "la2", "la3", "la4", "la5"]
     buttons = [
-        [InlineKeyboardButton("✏️ Edit Details", callback_data=f"newui_edit_details:{series_key}")],
-        [InlineKeyboardButton("🌐 Languages", callback_data=f"newui_manage_languages:{series_key}")],
-        [InlineKeyboardButton("🖼️ Change Poster", callback_data=f"newui_change_poster:{series_key}")],
-        [InlineKeyboardButton("📤 Publish Series", callback_data=f"newui_publish_series:{series_key}")],
-        [InlineKeyboardButton("⬅️ Back", callback_data="newui_back_to_search")]
+        InlineKeyboardButton("✏️ Edit Details", callback_data="edit_details"),
+        InlineKeyboardButton("🌐 Languages", callback_data="manage_languages"),
+        InlineKeyboardButton("🖼️ Change Poster", callback_data="change_poster"),
+        InlineKeyboardButton("📤 Publish Series", callback_data="publish_series"),
+        InlineKeyboardButton("⬅️ Back", callback_data="back_to_search")
     ]
-
-    reply_markup = InlineKeyboardMarkup(buttons)
+    
+    layout = create_dynamic_layout(buttons, layout_pattern)
+    reply_markup = InlineKeyboardMarkup(layout)
 
     try:
         if message_id:
@@ -325,7 +349,6 @@ async def send_series_details_message(client: Client, user_id: int, series_data:
         return None
 
 async def send_language_management_message(client: Client, user_id: int, series_key: str, message_id: int):
-    """Sends or edits the language management message."""
     logger.info(f"Sending language management message to user {user_id}")
     series_data = get_series_by_key(series_key)
     if not series_data:
@@ -336,21 +359,24 @@ async def send_language_management_message(client: Client, user_id: int, series_
     languages = series_data.get("languages", [])
     
     text = f"**Series:** `{series_data.get('title', 'N/A')}`\n\n"
-    text += "Select any Language group to add new Season/Part group inside them. Or click '+' button to add new Language group.\n\n"
+    text += "Select any Language group to manage. Or click '+' button to add new Language group.\n\n"
 
+    # Create buttons for languages
     buttons = []
     for lang in languages:
-        buttons.append([
-            InlineKeyboardButton(f"{lang['name']} ({len(lang.get('seasons', []))} Seasons)", 
-                              callback_data=f"newui_manage_seasons:{series_key}:{lang['name']}")
-        ])
+        buttons.append(InlineKeyboardButton(
+            f"{lang['name']} ({len(lang.get('seasons', []))} Seasons)", 
+            callback_data=f"la{len(buttons)+1}"
+        ))
     
-    buttons.append([InlineKeyboardButton("+ Language", callback_data=f"newui_add_language:{series_key}")])
-    buttons.append([InlineKeyboardButton("⬅️ Back to Series", callback_data=f"newui_back_to_series:{series_key}")])
+    buttons.append(InlineKeyboardButton("+ Language", callback_data="add_language"))
+    buttons.append(InlineKeyboardButton("⬅️ Back to Series", callback_data="back_to_series"))
 
-    reply_markup = InlineKeyboardMarkup(buttons)
+    # Define the layout pattern
+    layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
+    layout = create_dynamic_layout(buttons, layout_pattern)
+    reply_markup = InlineKeyboardMarkup(layout)
 
-    # Determine which poster to use: series poster
     poster_to_use = series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG
 
     try:
@@ -390,7 +416,6 @@ async def send_language_management_message(client: Client, user_id: int, series_
         return None
 
 async def send_season_management_message(client: Client, user_id: int, series_key: str, language_name: str, message_id: int):
-    """Sends or edits the season management message."""
     logger.info(f"Sending season management message to user {user_id}")
     series_data = get_series_by_key(series_key)
     if not series_data:
@@ -409,24 +434,27 @@ async def send_season_management_message(client: Client, user_id: int, series_ke
     text = (
         f"**Series:** `{series_data.get('title', 'N/A')}`\n"
         f"**Language:** `{language_name}`\n\n"
-        "Select any Seasons group to add new Quality group into them. Or click '+' button to add new Seasons group.\n\n"
+        "Select any Seasons group to manage. Or click '+' button to add new Seasons group.\n\n"
     )
 
+    # Create buttons for seasons
     buttons = []
     for season in seasons:
-        buttons.append([
-            InlineKeyboardButton(f"{season['name']} ({len(season.get('qualities', []))} Qualities)", 
-                              callback_data=f"newui_manage_qualities:{series_key}:{language_name}:{season['name']}")
-        ])
+        buttons.append(InlineKeyboardButton(
+            f"{season['name']} ({len(season.get('qualities', []))} Qualities)", 
+            callback_data=f"sa{len(buttons)+1}"
+        ))
     
-    buttons.append([InlineKeyboardButton("+ Season", callback_data=f"newui_add_season:{series_key}:{language_name}")])
-    buttons.append([InlineKeyboardButton("🖼️ Change Poster for this Language", callback_data=f"newui_change_language_poster:{series_key}:{language_name}")])
-    buttons.append([InlineKeyboardButton(f"🗑️ Delete '{language_name}' Group", callback_data=f"newui_delete_language:{series_key}:{language_name}")])
-    buttons.append([InlineKeyboardButton("⬅️ Back to Languages", callback_data=f"newui_manage_languages:{series_key}")])
+    buttons.append(InlineKeyboardButton("+ Season", callback_data="add_season"))
+    buttons.append(InlineKeyboardButton("🖼️ Change Poster for this Language", callback_data="change_lang_poster"))
+    buttons.append(InlineKeyboardButton(f"🗑️ Delete '{language_name}' Group", callback_data="delete_language"))
+    buttons.append(InlineKeyboardButton("⬅️ Back to Languages", callback_data="back_to_languages"))
 
-    reply_markup = InlineKeyboardMarkup(buttons)
+    # Define the layout pattern
+    layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
+    layout = create_dynamic_layout(buttons, layout_pattern)
+    reply_markup = InlineKeyboardMarkup(layout)
 
-    # Determine which poster to use: language poster, then series poster
     poster_to_use = current_lang.get("poster_file_id") or series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG
 
     try:
@@ -466,7 +494,6 @@ async def send_season_management_message(client: Client, user_id: int, series_ke
         return None
 
 async def send_quality_management_message(client: Client, user_id: int, series_key: str, language_name: str, season_name: str, message_id: int):
-    """Sends or edits the quality management message."""
     logger.info(f"Sending quality management message to user {user_id}")
     series_data = get_series_by_key(series_key)
     if not series_data:
@@ -487,24 +514,27 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
         f"**Series:** `{series_data.get('title', 'N/A')}`\n"
         f"**Language:** `{language_name}`\n"
         f"**Season:** `{season_name}`\n\n"
-        "Select any Quality group to add new files into them. Or click '+' button to add new Quality group.\n\n"
+        "Select any Quality group to manage. Or click '+' button to add new Quality group.\n\n"
     )
 
+    # Create buttons for qualities
     buttons = []
     for quality in qualities:
-        buttons.append([
-            InlineKeyboardButton(f"{quality['name']}", 
-                              callback_data=f"newui_add_files:{series_key}:{language_name}:{season_name}:{quality['name']}")
-        ])
+        buttons.append(InlineKeyboardButton(
+            f"{quality['name']}", 
+            callback_data=f"qa{len(buttons)+1}"
+        ))
     
-    buttons.append([InlineKeyboardButton("+ Quality", callback_data=f"newui_add_quality:{series_key}:{language_name}:{season_name}")])
-    buttons.append([InlineKeyboardButton("🖼️ Change Poster for this Season", callback_data=f"newui_change_season_poster:{series_key}:{language_name}:{season_name}")])
-    buttons.append([InlineKeyboardButton(f"🗑️ Delete '{season_name}' Group", callback_data=f"newui_delete_season:{series_key}:{language_name}:{season_name}")])
-    buttons.append([InlineKeyboardButton("⬅️ Back to Seasons", callback_data=f"newui_manage_seasons:{series_key}:{language_name}")])
+    buttons.append(InlineKeyboardButton("+ Quality", callback_data="add_quality"))
+    buttons.append(InlineKeyboardButton("🖼️ Change Poster for this Season", callback_data="change_season_poster"))
+    buttons.append(InlineKeyboardButton(f"🗑️ Delete '{season_name}' Group", callback_data="delete_season"))
+    buttons.append(InlineKeyboardButton("⬅️ Back to Seasons", callback_data="back_to_seasons"))
 
-    reply_markup = InlineKeyboardMarkup(buttons)
+    # Define the layout pattern
+    layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
+    layout = create_dynamic_layout(buttons, layout_pattern)
+    reply_markup = InlineKeyboardMarkup(layout)
 
-    # Determine which poster to use: season poster, then language poster, then series poster
     poster_to_use = current_season.get("poster_file_id") or current_lang.get("poster_file_id") or series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG
 
     try:
@@ -546,7 +576,6 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
 # Command handlers
 @Client.on_message(filters.command('newseriesui') & filters.user(ADMINS))
 async def new_series_ui_command(client: Client, message: Message):
-    """Handle the /newseriesui command."""
     user_id = message.from_user.id
     logger.info(f"Admin {user_id} started new series UI")
     query = message.text.split(None, 1)[1] if len(message.text.split(None, 1)) > 1 else None
@@ -555,15 +584,14 @@ async def new_series_ui_command(client: Client, message: Message):
         await message.reply("Usage: `/newseriesui <series_title>`")
         return
 
-    # Acquire the lock for this admin
     async with get_admin_lock(user_id):
         temp_msg = await message.reply_photo(
-            photo=NO_POSTER_FOUND_IMG, # Temporary placeholder
+            photo=NO_POSTER_FOUND_IMG,
             caption="Searching TMDB and IMDb, please wait..."
         )
         
         tmdb_results = await get_tmdb_info(query, bulk=True)
-        imdb_results = await get_poster(query, bulk=True) # Use get_poster for IMDb search
+        imdb_results = await get_poster(query, bulk=True)
 
         all_results = []
         if tmdb_results:
@@ -572,12 +600,11 @@ async def new_series_ui_command(client: Client, message: Message):
                 all_results.append(item)
         if imdb_results:
             for item in imdb_results:
-                # Ensure IMDb results have consistent keys
                 all_results.append({
                     'title': item.get('title'),
                     'year': item.get('year'),
                     'imdb_id': item.get('imdb_id'),
-                    'media_type': item.get('media_type'), # 'movie' or 'tv series'
+                    'media_type': item.get('media_type'),
                     'source': 'imdb',
                     'poster_url': item.get('poster_url')
                 })
@@ -586,7 +613,6 @@ async def new_series_ui_command(client: Client, message: Message):
             await temp_msg.edit_caption("No results found on TMDB or IMDb for the provided series name.")
             return
 
-        # Store the search results in temp_admin_data
         temp_admin_data[user_id] = temp_admin_data.get(user_id, {})
         temp_admin_data[user_id]["search_results"] = all_results
         temp_admin_data[user_id]["query"] = query
@@ -595,24 +621,95 @@ async def new_series_ui_command(client: Client, message: Message):
 
         await send_series_selection_message(client, user_id, query, all_results, temp_msg.id)
 
+@Client.on_message(filters.command('editseries') & filters.user(ADMINS))
+async def edit_series_command(client: Client, message: Message):
+    user_id = message.from_user.id
+    logger.info(f"Admin {user_id} started edit series UI")
+    query = message.text.split(None, 1)[1] if len(message.text.split(None, 1)) > 1 else None
+
+    if not query:
+        await message.reply("Usage: `/editseries <series_title>`")
+        return
+
+    async with get_admin_lock(user_id):
+        # Search for existing series
+        series_list = get_series()
+        series_keys = [series['_id'] for series in series_list]
+        series_names = [series['title'] for series in series_list]
+        
+        # Try exact match by key first
+        if query.lower().replace(" ", "").replace("-", "") in series_keys:
+            series_key = query.lower().replace(" ", "").replace("-", "")
+            series_data = get_series_by_key(series_key)
+            if series_data:
+                temp_admin_data[user_id] = temp_admin_data.get(user_id, {})
+                temp_admin_data[user_id]["current_series_key"] = series_key
+                temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SERIES_DETAILS"
+                
+                temp_msg = await message.reply_photo(
+                    photo=get_poster_file_id(series_key) or NO_POSTER_FOUND_IMG,
+                    caption="Loading series details..."
+                )
+                
+                await send_series_details_message(client, user_id, series_data, temp_msg.id)
+                return
+        
+        # Try exact match by title
+        for s_info in series_list:
+            if s_info['title'].lower() == query.lower():
+                series_key = s_info['_id']
+                series_data = get_series_by_key(series_key)
+                if series_data:
+                    temp_admin_data[user_id] = temp_admin_data.get(user_id, {})
+                    temp_admin_data[user_id]["current_series_key"] = series_key
+                    temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SERIES_DETAILS"
+                    
+                    temp_msg = await message.reply_photo(
+                        photo=get_poster_file_id(series_key) or NO_POSTER_FOUND_IMG,
+                        caption="Loading series details..."
+                    )
+                    
+                    await send_series_details_message(client, user_id, series_data, temp_msg.id)
+                    return
+        
+        # If no exact match, show close matches
+        close_matches = find_most_similar_title(query, series_names)
+        if not close_matches:
+            await message.reply("No series found with that name.")
+            return
+        
+        buttons = []
+        for match in close_matches[:5]:  # Limit to 5 matches
+            s_info = next((s for s in series_list if s['title'] == match), None)
+            if s_info:
+                buttons.append(InlineKeyboardButton(match, callback_data=f"edit_sel_{s_info['_id']}"))
+        
+        if buttons:
+            # Define the layout pattern
+            layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
+            layout = create_dynamic_layout(buttons, layout_pattern)
+            reply_markup = InlineKeyboardMarkup(layout)
+            
+            await message.reply_photo(
+                photo=NO_POSTER_FOUND_IMG,
+                caption="Select a series to edit:",
+                reply_markup=reply_markup
+            )
+
 # Message handlers for admin UI
 @Client.on_message(filters.text & filters.private & filters.user(ADMINS))
 async def handle_admin_text_message(client: Client, message: Message):
-    """Handle text messages from admins in private chats."""
     user_id = message.from_user.id
     logger.info(f"Received admin text message {message.id} from user {user_id}")
     
-    # Check if the admin has an active state
     if user_id in temp_admin_data and temp_admin_data[user_id].get("state"):
         logger.info(f"Admin {user_id} has active state, acquiring lock")
-        # Acquire the lock for this admin
         async with get_admin_lock(user_id):
             await handle_admin_text_input(client, message)
         return
 
 @Client.on_message((filters.photo | filters.video | filters.document) & filters.private & filters.user(ADMINS))
 async def handle_admin_media_message(client: Client, message: Message):
-    """Handle media messages from admins in private chats."""
     user_id = message.from_user.id
     logger.info(f"Received admin media message {message.id} from user {user_id}")
     
@@ -623,9 +720,8 @@ async def handle_admin_media_message(client: Client, message: Message):
         return
 
 # Callback handlers for admin UI
-@Client.on_callback_query(filters.regex(r"^newui_") & filters.user(ADMINS))
+@Client.on_callback_query(filters.user(ADMINS))
 async def admin_ui_callback_handler(client: Client, callback_query: CallbackQuery):
-    """Handle admin UI callbacks."""
     user_id = callback_query.from_user.id
     data = callback_query.data
     logger.info(f"Received admin UI callback from user {user_id}: {data}")
@@ -635,7 +731,6 @@ async def admin_ui_callback_handler(client: Client, callback_query: CallbackQuer
 
 # Process input functions
 async def handle_admin_text_input(client: Client, message: Message):
-    """Handle text input from admins."""
     user_id = message.from_user.id
     current_state = temp_admin_data.get(user_id, {}).get("state")
     logger.info(f"Processing admin text input in state: {current_state}")
@@ -646,14 +741,11 @@ async def handle_admin_text_input(client: Client, message: Message):
         await process_season_input(client, message, message.text.strip())
     elif current_state == "NEW_SERIES_UI_AWAITING_QUALITY_INPUT":
         await process_quality_input(client, message, message.text.strip())
-    elif current_state == "NEW_SERIES_UI_AWAITING_CODEC_INPUT":
-        await process_codec_input(client, message, message.text.strip())
     elif current_state.startswith("NEW_SERIES_UI_EDITING_"):
         field = temp_admin_data[user_id].get("current_field")
         await process_field_edit(client, message, message.text.strip(), field)
 
 async def handle_admin_media_input(client: Client, message: Message):
-    """Handle media input from admins."""
     user_id = message.from_user.id
     current_state = temp_admin_data.get(user_id, {}).get("state")
     logger.info(f"Processing admin media input in state: {current_state}")
@@ -670,11 +762,9 @@ async def handle_admin_media_input(client: Client, message: Message):
         await process_last_file_input(client, message)
 
 async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
-    """Handle admin UI callbacks."""
     user_id = callback_query.from_user.id
-    data = callback_query.data.split(":")
-    action = data[0].replace("newui_", "")
-    logger.info(f"Processing admin UI callback: {action}")
+    data = callback_query.data
+    logger.info(f"Processing admin UI callback: {data}")
     
     if user_id not in temp_admin_data:
         logger.warning(f"Admin {user_id} not in temp_admin_data")
@@ -683,49 +773,9 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
     
     main_message_id = temp_admin_data[user_id].get("main_message_id")
     
-    if action == "search_again":
-        await callback_query.answer("Search again...")
-        query = temp_admin_data[user_id].get("query")
-        if not query:
-            logger.warning(f"No query found for admin {user_id}")
-            await callback_query.answer("No previous query found.", show_alert=True)
-            return
-        
-        temp_msg = await callback_query.message.edit_caption(
-            "Searching TMDB and IMDb, please wait..."
-        )
-        
-        tmdb_results = await get_tmdb_info(query, bulk=True)
-        imdb_results = await get_poster(query, bulk=True)
-        
-        all_results = []
-        if tmdb_results:
-            for item in tmdb_results:
-                item['source'] = 'tmdb'
-                all_results.append(item)
-        if imdb_results:
-            for item in imdb_results:
-                all_results.append({
-                    'title': item.get('title'),
-                    'year': item.get('year'),
-                    'imdb_id': item.get('imdb_id'),
-                    'media_type': item.get('media_type'),
-                    'source': 'imdb',
-                    'poster_url': item.get('poster_url')
-                })
-        
-        if not all_results:
-            await temp_msg.edit_caption("No results found on TMDB or IMDb for the provided series name.")
-            return
-        
-        temp_admin_data[user_id]["search_results"] = all_results
-        temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SEARCH_RESULTS"
-        temp_admin_data[user_id]["main_message_id"] = temp_msg.id
-        
-        await send_series_selection_message(client, user_id, query, all_results, temp_msg.id)
-    
-    elif action in ["tmdb_select", "imdb_select"]:
-        unique_id = data[1]
+    # Handle series selection callbacks
+    if data.startswith("sel_"):
+        unique_id = data.split("_", 1)[1]
         if unique_id not in temp_admin_data[user_id]:
             logger.warning(f"Invalid selection from admin {user_id}: {unique_id}")
             await callback_query.answer("Invalid selection.", show_alert=True)
@@ -755,13 +805,11 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         
         series_key = movie_details.get('title', 'N/A').lower().replace(" ", "").replace("-", "")
         
-        # Check if series already exists, if so, load it
         existing_series = get_series_by_key(series_key)
         if existing_series:
             series_data = existing_series
             await callback_query.answer("Series already exists. Loading for editing.", show_alert=True)
         else:
-            # Create new series data
             series_data = {
                 '_id': series_key,
                 'title': movie_details.get('title', 'N/A'),
@@ -786,7 +834,6 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
                     )
                     return
         
-        # Re-fetch series_data to ensure it's the latest from DB
         series_data = get_series_by_key(series_key)
         if not series_data:
             await client.edit_message_caption(
@@ -796,7 +843,6 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             )
             return
         
-        # Download and upload poster to LOG_CHANNEL, then update DB
         poster_file_id = await download_and_upload_poster(client, poster_url=movie_details.get('poster_url') or movie_details.get('poster'))
         if poster_file_id:
             update_series_field(series_key, "poster_file_id", poster_file_id)
@@ -806,14 +852,40 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             update_series_field(series_key, "poster_file_id", NO_POSTER_FOUND_IMG)
             series_data["poster_file_id"] = NO_POSTER_FOUND_IMG
         
-        # Update main message with series details and management buttons
         new_main_msg_id = await send_series_details_message(client, user_id, series_data, main_message_id)
         if new_main_msg_id:
             temp_admin_data[user_id]["main_message_id"] = new_main_msg_id
             temp_admin_data[user_id]["current_series_key"] = series_key
             temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SERIES_DETAILS"
     
-    elif action == "back_to_search":
+    # Handle edit series selection
+    elif data.startswith("edit_sel_"):
+        series_key = data.split("_", 1)[1]
+        series_data = get_series_by_key(series_key)
+        if not series_data:
+            await callback_query.answer("Series not found.", show_alert=True)
+            return
+        
+        await callback_query.answer("Loading series details...")
+        temp_admin_data[user_id]["current_series_key"] = series_key
+        temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SERIES_DETAILS"
+        
+        await send_series_details_message(client, user_id, series_data, main_message_id)
+    
+    # Handle navigation callbacks
+    elif data == "search_again":
+        await callback_query.answer("Search again...")
+        query = temp_admin_data[user_id].get("query")
+        search_results = temp_admin_data[user_id].get("search_results", [])
+        
+        if not query or not search_results:
+            await callback_query.answer("No previous search data found.", show_alert=True)
+            return
+        
+        temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SEARCH_RESULTS"
+        await send_series_selection_message(client, user_id, query, search_results, main_message_id)
+    
+    elif data == "back_to_search":
         await callback_query.answer("Going back to search results...")
         query = temp_admin_data[user_id].get("query")
         search_results = temp_admin_data[user_id].get("search_results", [])
@@ -825,8 +897,8 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SEARCH_RESULTS"
         await send_series_selection_message(client, user_id, query, search_results, main_message_id)
     
-    elif action == "back_to_series":
-        series_key = data[1]
+    elif data == "back_to_series":
+        series_key = temp_admin_data[user_id].get("current_series_key")
         series_data = get_series_by_key(series_key)
         if not series_data:
             await callback_query.answer("Series not found.", show_alert=True)
@@ -836,14 +908,15 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SERIES_DETAILS"
         await send_series_details_message(client, user_id, series_data, main_message_id)
     
-    elif action == "manage_languages":
-        series_key = data[1]
+    # Handle management callbacks
+    elif data == "manage_languages":
+        series_key = temp_admin_data[user_id].get("current_series_key")
         await callback_query.answer("Managing languages...")
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_MANAGE_LANGUAGES"
         await send_language_management_message(client, user_id, series_key, main_message_id)
     
-    elif action == "add_language":
-        series_key = data[1]
+    elif data == "add_language":
+        series_key = temp_admin_data[user_id].get("current_series_key")
         await callback_query.answer("Enter language name...")
         
         reply_keyboard = ReplyKeyboardMarkup(
@@ -865,14 +938,29 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_AWAITING_LANGUAGE_INPUT"
         temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
     
-    elif action == "manage_seasons":
-        _, series_key, language_name = data
-        await callback_query.answer("Managing seasons...")
-        temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_MANAGE_SEASONS"
-        await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+    elif data.startswith("la"):  # Language selection
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        lang_index = int(data[2:]) - 1
+        languages = get_languages(series_key)
+        
+        if 0 <= lang_index < len(languages):
+            language_name = languages[lang_index]["name"]
+            await callback_query.answer(f"Selected: {language_name}")
+            temp_admin_data[user_id]["current_language"] = language_name
+            temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_MANAGE_SEASONS"
+            await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+        else:
+            await callback_query.answer("Invalid selection.", show_alert=True)
     
-    elif action == "add_season":
-        _, series_key, language_name = data
+    elif data == "back_to_languages":
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        await callback_query.answer("Going back to languages...")
+        temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_MANAGE_LANGUAGES"
+        await send_language_management_message(client, user_id, series_key, main_message_id)
+    
+    elif data == "add_season":
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        language_name = temp_admin_data[user_id].get("current_language")
         await callback_query.answer("Enter season name...")
         
         reply_keyboard = ReplyKeyboardMarkup(
@@ -894,14 +982,32 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_AWAITING_SEASON_INPUT"
         temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
     
-    elif action == "manage_qualities":
-        _, series_key, language_name, season_name = data
-        await callback_query.answer("Managing qualities...")
-        temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_MANAGE_QUALITIES"
-        await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+    elif data.startswith("sa"):  # Season selection
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        language_name = temp_admin_data[user_id].get("current_language")
+        season_index = int(data[2:]) - 1
+        seasons = get_seasons(series_key, language_name)
+        
+        if 0 <= season_index < len(seasons):
+            season_name = seasons[season_index]["name"]
+            await callback_query.answer(f"Selected: {season_name}")
+            temp_admin_data[user_id]["current_season"] = season_name
+            temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_MANAGE_QUALITIES"
+            await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+        else:
+            await callback_query.answer("Invalid selection.", show_alert=True)
     
-    elif action == "add_quality":
-        _, series_key, language_name, season_name = data
+    elif data == "back_to_seasons":
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        language_name = temp_admin_data[user_id].get("current_language")
+        await callback_query.answer("Going back to seasons...")
+        temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_MANAGE_SEASONS"
+        await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+    
+    elif data == "add_quality":
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        language_name = temp_admin_data[user_id].get("current_language")
+        season_name = temp_admin_data[user_id].get("current_season")
         await callback_query.answer("Enter quality name...")
         
         reply_keyboard = ReplyKeyboardMarkup(
@@ -921,23 +1027,28 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_AWAITING_QUALITY_INPUT"
         temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
     
-    elif action == "add_files":
-        _, series_key, language_name, season_name, quality_name = data
-        await callback_query.answer("Adding files...")
+    elif data.startswith("qa"):  # Quality selection
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        language_name = temp_admin_data[user_id].get("current_language")
+        season_name = temp_admin_data[user_id].get("current_season")
+        quality_index = int(data[2:]) - 1
+        qualities = get_qualities(series_key, language_name, season_name)
         
-        # Store the current quality context
-        temp_admin_data[user_id]["current_language"] = language_name
-        temp_admin_data[user_id]["current_season"] = season_name
-        temp_admin_data[user_id]["current_quality"] = quality_name
-        temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_AWAITING_FIRST_FILE"
-        
-        await client.send_message(
-            user_id,
-            f"Forward me the first file (with tag) for {language_name}-{season_name}-{quality_name}"
-        )
+        if 0 <= quality_index < len(qualities):
+            quality_name = qualities[quality_index]["name"]
+            await callback_query.answer(f"Selected: {quality_name}")
+            temp_admin_data[user_id]["current_quality"] = quality_name
+            temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_AWAITING_FIRST_FILE"
+            
+            await client.send_message(
+                user_id,
+                f"Forward me the first file (with tag) for {language_name}-{season_name}-{quality_name}"
+            )
+        else:
+            await callback_query.answer("Invalid selection.", show_alert=True)
     
-    elif action == "change_poster":
-        series_key = data[1]
+    elif data == "change_poster":
+        series_key = temp_admin_data[user_id].get("current_series_key")
         await callback_query.answer("Send a new poster...")
         
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_AWAITING_SERIES_POSTER"
@@ -948,8 +1059,9 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             "Please send a photo or video to use as the series poster:"
         )
     
-    elif action == "change_language_poster":
-        _, series_key, language_name = data
+    elif data == "change_lang_poster":
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        language_name = temp_admin_data[user_id].get("current_language")
         await callback_query.answer("Send a new poster...")
         
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_AWAITING_LANGUAGE_POSTER"
@@ -961,8 +1073,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             f"Please send a photo or video to use as the poster for {language_name}:"
         )
     
-    elif action == "change_season_poster":
-        _, series_key, language_name, season_name = data
+    elif data == "change_season_poster":
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        language_name = temp_admin_data[user_id].get("current_language")
+        season_name = temp_admin_data[user_id].get("current_season")
         await callback_query.answer("Send a new poster...")
         
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_AWAITING_SEASON_POSTER"
@@ -975,33 +1089,33 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             f"Please send a photo or video to use as the poster for {language_name}-{season_name}:"
         )
     
-    elif action == "delete_language":
-        _, series_key, language_name = data
+    elif data == "delete_language":
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        language_name = temp_admin_data[user_id].get("current_language")
         await callback_query.answer(f"Deleting {language_name}...")
         
         if delete_language(series_key, language_name):
             await client.send_message(user_id, f"Language '{language_name}' deleted successfully.")
-            # Refresh the language management view
             await send_language_management_message(client, user_id, series_key, main_message_id)
         else:
             await client.send_message(user_id, f"Failed to delete language '{language_name}'.")
     
-    elif action == "delete_season":
-        _, series_key, language_name, season_name = data
+    elif data == "delete_season":
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        language_name = temp_admin_data[user_id].get("current_language")
+        season_name = temp_admin_data[user_id].get("current_season")
         await callback_query.answer(f"Deleting {season_name}...")
         
         if delete_season(series_key, language_name, season_name):
             await client.send_message(user_id, f"Season '{season_name}' deleted successfully.")
-            # Refresh the season management view
             await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
         else:
             await client.send_message(user_id, f"Failed to delete season '{season_name}'.")
     
-    elif action == "publish_series":
-        series_key = data[1]
+    elif data == "publish_series":
+        series_key = temp_admin_data[user_id].get("current_series_key")
         await callback_query.answer("Publishing series...")
         
-        # Show confirmation dialog
         text = (
             "Do you want to publish this series?\n\n"
             "NOTE: Once you publish this series, you can't edit it anymore.\n"
@@ -1009,8 +1123,8 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         )
         
         buttons = [
-            [InlineKeyboardButton("✅ Yes", callback_data=f"newui_confirm_publish:{series_key}")],
-            [InlineKeyboardButton("❌ No", callback_data=f"newui_cancel_publish:{series_key}")]
+            [InlineKeyboardButton("✅ Yes", callback_data="confirm_publish")],
+            [InlineKeyboardButton("❌ No", callback_data="cancel_publish")]
         ]
         
         reply_markup = InlineKeyboardMarkup(buttons)
@@ -1026,8 +1140,8 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             logger.error(f"Error showing publish confirmation: {e}")
             await client.send_message(user_id, "Error showing publish confirmation. Please try again.")
     
-    elif action == "confirm_publish":
-        series_key = data[1]
+    elif data == "confirm_publish":
+        series_key = temp_admin_data[user_id].get("current_series_key")
         await callback_query.answer("Publishing...")
         
         if publish_series(series_key):
@@ -1036,7 +1150,6 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
                 message_id=main_message_id,
                 caption="✅ Series published successfully!"
             )
-            # Clear the state
             temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_PUBLISHED"
         else:
             await client.edit_message_caption(
@@ -1045,8 +1158,8 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
                 caption="❌ Failed to publish series. Please try again."
             )
     
-    elif action == "cancel_publish":
-        series_key = data[1]
+    elif data == "cancel_publish":
+        series_key = temp_admin_data[user_id].get("current_series_key")
         await callback_query.answer("Cancelling publish...")
         
         series_data = get_series_by_key(series_key)
@@ -1054,383 +1167,149 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             await send_series_details_message(client, user_id, series_data, main_message_id)
         else:
             await client.send_message(user_id, "Series not found.")
-    
-    elif action == "edit_details":
-        series_key = data[1]
-        await callback_query.answer("Editing series details...")
-        
-        series_data = get_series_by_key(series_key)
-        if not series_data:
-            await client.send_message(user_id, "Series not found.")
-            return
-        
-        # Show editable fields
-        text = (
-            f"**Current Series Details:**\n\n"
-            f"**Title:** `{series_data.get('title', 'N/A')}`\n"
-            f"**Released On:** `{series_data.get('released_on', 'N/A')}`\n"
-            f"**Genre:** `{series_data.get('genre', 'N/A')}`\n"
-            f"**Rating:** `{series_data.get('rating', 'N/A')}`\n\n"
-            "Click on a field to edit it:"
-        )
-        
-        buttons = [
-            [InlineKeyboardButton("✏️ Title", callback_data=f"newui_edit_field:{series_key}:title")],
-            [InlineKeyboardButton("✏️ Released On", callback_data=f"newui_edit_field:{series_key}:released_on")],
-            [InlineKeyboardButton("✏️ Genre", callback_data=f"newui_edit_field:{series_key}:genre")],
-            [InlineKeyboardButton("✏️ Rating", callback_data=f"newui_edit_field:{series_key}:rating")],
-            [InlineKeyboardButton("⬅️ Back", callback_data=f"newui_back_to_series:{series_key}")]
-        ]
-        
-        reply_markup = InlineKeyboardMarkup(buttons)
-        
-        try:
-            await client.edit_message_caption(
-                chat_id=user_id,
-                message_id=main_message_id,
-                caption=text,
-                reply_markup=reply_markup
-            )
-            temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_EDITING_DETAILS"
-        except Exception as e:
-            logger.error(f"Error showing edit details: {e}")
-            await client.send_message(user_id, "Error showing edit details. Please try again.")
-    
-    elif action == "edit_field":
-        _, series_key, field = data
-        await callback_query.answer(f"Editing {field}...")
-        
-        temp_admin_data[user_id]["state"] = f"NEW_SERIES_UI_EDITING_{field.upper()}"
-        temp_admin_data[user_id]["current_series_key"] = series_key
-        temp_admin_data[user_id]["current_field"] = field
-        
-        field_display = field.replace("_", " ").title()
-        await client.send_message(
-            user_id,
-            f"Enter new value for {field_display}:"
-        )
 
 # Process input functions
 async def process_language_input(client: Client, message: Message, language_name: str):
-    """Process language input from admin."""
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
-    main_message_id = temp_admin_data[user_id].get("main_message_id")
-    ask_message_id = temp_admin_data[user_id].get("ask_message_id")
-    logger.info(f"Processing language input: {language_name}")
-
-    if not series_key:
-        await message.reply("Error: Series key not found in session.")
-        return
-
-    # Delete the bot's prompt message and the user's reply
-    try:
-        if ask_message_id:
-            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
-        await message.delete()
-    except Exception as e:
-        logger.warning(f"Could not delete prompt/user message: {e}")
-
+    
     if add_or_update_language(series_key, language_name):
-        confirmation_msg = await client.send_message(
-            chat_id=user_id,
-            text=f"Language '{language_name}' added/updated successfully.",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        asyncio.create_task(confirmation_msg.delete())
-
+        await message.reply(f"Language '{language_name}' added successfully.")
+        
+        # Update the language management view
+        main_message_id = temp_admin_data[user_id].get("main_message_id")
         await send_language_management_message(client, user_id, series_key, main_message_id)
+        
+        # Reset state
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_MANAGE_LANGUAGES"
     else:
-        await message.reply("Failed to add/update language.")
-
-    temp_admin_data[user_id].pop("ask_message_id", None)
+        await message.reply(f"Failed to add language '{language_name}'.")
 
 async def process_season_input(client: Client, message: Message, season_name: str):
-    """Process season input from admin."""
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
     language_name = temp_admin_data[user_id].get("current_language")
-    main_message_id = temp_admin_data[user_id].get("main_message_id")
-    ask_message_id = temp_admin_data[user_id].get("ask_message_id")
-    logger.info(f"Processing season input: {season_name}")
-
-    if not all([series_key, language_name]):
-        await message.reply("Error: Series or language not found in session.")
-        return
-
-    # Delete the bot's prompt message and the user's reply
-    try:
-        if ask_message_id:
-            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
-        await message.delete()
-    except Exception as e:
-        logger.warning(f"Could not delete prompt/user message: {e}")
-
+    
     if add_or_update_season(series_key, language_name, season_name):
-        confirmation_msg = await client.send_message(
-            chat_id=user_id,
-            text=f"Season '{season_name}' added/updated successfully.",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        asyncio.create_task(confirmation_msg.delete())
-
+        await message.reply(f"Season '{season_name}' added successfully.")
+        
+        # Update the season management view
+        main_message_id = temp_admin_data[user_id].get("main_message_id")
         await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+        
+        # Reset state
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_MANAGE_SEASONS"
     else:
-        await message.reply("Failed to add/update season.")
-
-    temp_admin_data[user_id].pop("ask_message_id", None)
+        await message.reply(f"Failed to add season '{season_name}'.")
 
 async def process_quality_input(client: Client, message: Message, quality_name: str):
-    """Process quality input from admin."""
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
     language_name = temp_admin_data[user_id].get("current_language")
     season_name = temp_admin_data[user_id].get("current_season")
-    main_message_id = temp_admin_data[user_id].get("main_message_id")
-    ask_message_id = temp_admin_data[user_id].get("ask_message_id")
-    logger.info(f"Processing quality input: {quality_name}")
-
-    if not all([series_key, language_name, season_name]):
-        await message.reply("Error: Series, language, or season not found in session.")
-        return
-
-    # Delete the bot's prompt message and the user's reply
-    try:
-        if ask_message_id:
-            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
-        await message.delete()
-    except Exception as e:
-        logger.warning(f"Could not delete prompt/user message: {e}")
-
+    
     if add_or_update_quality(series_key, language_name, season_name, quality_name):
-        confirmation_msg = await client.send_message(
-            chat_id=user_id,
-            text=f"Quality '{quality_name}' added/updated successfully.",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        asyncio.create_task(confirmation_msg.delete())
-
+        await message.reply(f"Quality '{quality_name}' added successfully.")
+        
+        # Update the quality management view
+        main_message_id = temp_admin_data[user_id].get("main_message_id")
         await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+        
+        # Reset state
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_MANAGE_QUALITIES"
     else:
-        await message.reply("Failed to add/update quality.")
-
-    temp_admin_data[user_id].pop("ask_message_id", None)
-
-async def process_codec_input(client: Client, message: Message, codec: str):
-    """Process codec input from admin."""
-    user_id = message.from_user.id
-    series_key = temp_admin_data[user_id].get("current_series_key")
-    language_name = temp_admin_data[user_id].get("current_language")
-    season_name = temp_admin_data[user_id].get("current_season")
-    quality_name = temp_admin_data[user_id].get("current_quality")
-    first_file_id = temp_admin_data[user_id].get("first_file_id")
-    last_file_id = temp_admin_data[user_id].get("last_file_id")
-    main_message_id = temp_admin_data[user_id].get("main_message_id")
-    ask_message_id = temp_admin_data[user_id].get("ask_message_id")
-    logger.info(f"Processing codec input: {codec}")
-
-    if not all([series_key, language_name, season_name, quality_name, first_file_id, last_file_id]):
-        await message.reply("Error: Missing data in session.")
-        return
-
-    # Delete the bot's prompt message and the user's reply
-    try:
-        if ask_message_id:
-            await client.delete_messages(chat_id=user_id, message_ids=[ask_message_id])
-        await message.delete()
-    except Exception as e:
-        logger.warning(f"Could not delete prompt/user message: {e}")
-
-    # Update the quality with the codec and link_key
-    link_key = f"{first_file_id}_{last_file_id}"
-    if add_or_update_quality(series_key, language_name, season_name, quality_name, link_key=link_key, codec=codec):
-        confirmation_msg = await client.send_message(
-            chat_id=user_id,
-            text=f"Files added to database successfully for {language_name}-{season_name}-{quality_name}.",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        asyncio.create_task(confirmation_msg.delete())
-
-        # Go back to quality management
-        await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
-        temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_MANAGE_QUALITIES"
-    else:
-        await message.reply("Failed to add files to database.")
-
-    temp_admin_data[user_id].pop("ask_message_id", None)
-    temp_admin_data[user_id].pop("first_file_id", None)
-    temp_admin_data[user_id].pop("last_file_id", None)
-
-async def process_field_edit(client: Client, message: Message, new_value: str, field: str):
-    """Process field edit from admin."""
-    user_id = message.from_user.id
-    series_key = temp_admin_data[user_id].get("current_series_key")
-    main_message_id = temp_admin_data[user_id].get("main_message_id")
-    logger.info(f"Processing field edit: {field} = {new_value}")
-
-    if not series_key:
-        await message.reply("Error: Series key not found in session.")
-        return
-
-    # Update the field in the database
-    if update_series_field(series_key, field, new_value):
-        confirmation_msg = await client.send_message(
-            chat_id=user_id,
-            text=f"Field '{field}' updated successfully.",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        asyncio.create_task(confirmation_msg.delete())
-
-        # Go back to series details
-        series_data = get_series_by_key(series_key)
-        if series_data:
-            await send_series_details_message(client, user_id, series_data, main_message_id)
-            temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SERIES_DETAILS"
-        else:
-            await client.send_message(user_id, "Series not found.")
-    else:
-        await message.reply(f"Failed to update field '{field}'.")
-
-    # Clean up
-    temp_admin_data[user_id].pop("current_field", None)
+        await message.reply(f"Failed to add quality '{quality_name}'.")
 
 async def process_poster_input(client: Client, message: Message, poster_type: str):
-    """Process poster input from admin."""
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
-    main_message_id = temp_admin_data[user_id].get("main_message_id")
-    logger.info(f"Processing poster input for type: {poster_type}")
-
-    if not series_key:
-        await message.reply("Error: Series key not found in session.")
-        return
-
-    # Download and upload the poster
+    
     poster_file_id = await download_and_upload_poster(client, message=message)
     if not poster_file_id:
         await message.reply("Failed to process the poster. Please try again.")
         return
-
-    # Update the poster in the database
+    
     if poster_type == "series":
-        if update_poster_file_id(series_key, poster_file_id):
-            await message.reply("Series poster updated successfully.")
-        else:
-            await message.reply("Failed to update series poster.")
+        update_series_field(series_key, "poster_file_id", poster_file_id)
+        await message.reply("Series poster updated successfully.")
     elif poster_type == "language":
         language_name = temp_admin_data[user_id].get("current_language")
-        if language_name and add_or_update_language(series_key, language_name, poster_file_id=poster_file_id):
-            await message.reply(f"Language poster for '{language_name}' updated successfully.")
-        else:
-            await message.reply("Failed to update language poster.")
+        add_or_update_language(series_key, language_name, poster_file_id)
+        await message.reply(f"Language poster for '{language_name}' updated successfully.")
     elif poster_type == "season":
         language_name = temp_admin_data[user_id].get("current_language")
         season_name = temp_admin_data[user_id].get("current_season")
-        if language_name and season_name and add_or_update_season(series_key, language_name, season_name, poster_file_id=poster_file_id):
-            await message.reply(f"Season poster for '{language_name}-{season_name}' updated successfully.")
-        else:
-            await message.reply("Failed to update season poster.")
-
-    # Refresh the current view
-    current_state = temp_admin_data[user_id].get("state")
-    if current_state == "NEW_SERIES_UI_SERIES_DETAILS":
-        series_data = get_series_by_key(series_key)
-        if series_data:
-            await send_series_details_message(client, user_id, series_data, main_message_id)
-    elif current_state == "NEW_SERIES_UI_MANAGE_LANGUAGES":
-        await send_language_management_message(client, user_id, series_key, main_message_id)
-    elif current_state == "NEW_SERIES_UI_MANAGE_SEASONS":
-        language_name = temp_admin_data[user_id].get("current_language")
-        if language_name:
-            await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
-    elif current_state == "NEW_SERIES_UI_MANAGE_QUALITIES":
-        language_name = temp_admin_data[user_id].get("current_language")
-        season_name = temp_admin_data[user_id].get("current_season")
-        if language_name and season_name:
-            await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+        add_or_update_season(series_key, language_name, season_name, poster_file_id)
+        await message.reply(f"Season poster for '{season_name}' updated successfully.")
+    
+    # Reset state
+    temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SERIES_DETAILS"
+    
+    # Update the series details view
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+    series_data = get_series_by_key(series_key)
+    await send_series_details_message(client, user_id, series_data, main_message_id)
 
 async def process_first_file_input(client: Client, message: Message):
-    """Process first file input from admin."""
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
     language_name = temp_admin_data[user_id].get("current_language")
     season_name = temp_admin_data[user_id].get("current_season")
     quality_name = temp_admin_data[user_id].get("current_quality")
-    logger.info(f"Processing first file input for {language_name}-{season_name}-{quality_name}")
-
-    if not all([series_key, language_name, season_name, quality_name]):
-        await message.reply("Error: Missing data in session.")
-        return
-
-    # Get the message ID of the forwarded file
-    channel_id, msg_id = await get_message_id(client, message)
-    if not channel_id or not msg_id:
-        await message.reply("Invalid file. Please forward a file from a channel.")
-        return
-
-    # Store the first file ID
-    temp_admin_data[user_id]["first_file_id"] = f"{channel_id}_{msg_id}"
+    
+    # Forward the message to the DB_CHANNEL
+    forwarded = await message.forward(DB_CHANNEL)
+    
+    # Store the first message ID
+    temp_admin_data[user_id]["first_file_id"] = forwarded.id
     temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_AWAITING_LAST_FILE"
-
-    # Delete the user's message
-    try:
-        await message.delete()
-    except Exception as e:
-        logger.warning(f"Could not delete user message: {e}")
-
-    # Ask for the last file
+    
     await client.send_message(
         user_id,
-        f"Forward me the last file (with tag) for {language_name}-{season_name}-{quality_name}\n"
-        f"Go to first file: https://t.me/c/{str(channel_id).replace('-100', '')}/{msg_id}"
+        f"First file received. Now forward me the last file (with tag) for {language_name}-{season_name}-{quality_name}"
     )
 
 async def process_last_file_input(client: Client, message: Message):
-    """Process last file input from admin."""
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
     language_name = temp_admin_data[user_id].get("current_language")
     season_name = temp_admin_data[user_id].get("current_season")
     quality_name = temp_admin_data[user_id].get("current_quality")
     first_file_id = temp_admin_data[user_id].get("first_file_id")
-    logger.info(f"Processing last file input for {language_name}-{season_name}-{quality_name}")
-
-    if not all([series_key, language_name, season_name, quality_name, first_file_id]):
-        await message.reply("Error: Missing data in session.")
-        return
-
-    # Get the message ID of the forwarded file
-    channel_id, msg_id = await get_message_id(client, message)
-    if not channel_id or not msg_id:
-        await message.reply("Invalid file. Please forward a file from a channel.")
-        return
-
-    # Store the last file ID
-    last_file_id = f"{channel_id}_{msg_id}"
-    temp_admin_data[user_id]["last_file_id"] = last_file_id
-    temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_AWAITING_CODEC_INPUT"
-
-    # Delete the user's message
-    try:
-        await message.delete()
-    except Exception as e:
-        logger.warning(f"Could not delete user message: {e}")
-
-    # Ask for the codec
-    reply_keyboard = ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("H.264"), KeyboardButton("H.265"), KeyboardButton("H.265 10bit")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    )
     
-    ask_msg = await client.send_message(
-        user_id,
-        f"Send me the codec field for {language_name}-{season_name}-{quality_name}:",
-        reply_markup=reply_keyboard
-    )
-    temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+    # Forward the message to the DB_CHANNEL
+    forwarded = await message.forward(DB_CHANNEL)
+    
+    # Create the link key
+    channel_id = str(DB_CHANNEL[0])  # Remove the -100 prefix
+    link_key = f"get_{channel_id}_{first_file_id}_{forwarded.id}"
+    
+    # Update the quality with the link key
+    if add_or_update_quality(series_key, language_name, season_name, quality_name, link_key):
+        await message.reply(f"Files linked successfully for {quality_name}.")
+        
+        # Update the quality management view
+        main_message_id = temp_admin_data[user_id].get("main_message_id")
+        await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+        
+        # Reset state
+        temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_MANAGE_QUALITIES"
+    else:
+        await message.reply(f"Failed to link files for {quality_name}.")
+
+async def process_field_edit(client: Client, message: Message, value: str, field: str):
+    user_id = message.from_user.id
+    series_key = temp_admin_data[user_id].get("current_series_key")
+    
+    if update_series_field(series_key, field, value):
+        await message.reply(f"Field '{field}' updated successfully.")
+        
+        # Update the series details view
+        main_message_id = temp_admin_data[user_id].get("main_message_id")
+        series_data = get_series_by_key(series_key)
+        await send_series_details_message(client, user_id, series_data, main_message_id)
+        
+        # Reset state
+        temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SERIES_DETAILS"
+    else:
+        await message.reply(f"Failed to update field '{field}'.")
