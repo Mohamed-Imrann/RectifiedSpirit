@@ -1,24 +1,37 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import asyncio
 import re
 import logging
 import random
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from pyrogram import Client, filters, enums
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
+from pyrogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery, 
+    InputMediaPhoto
+)
 from info import SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG
-from database.crazy_db import get_series_name, get_links_for_quality
-from database.gfilters_mdb import find_gfilter, get_gfilters
+from database.crazy_db import (
+    get_series, get_series_name, get_poster_manuel, get_links_for_quality
+)
+from database.gfilters_mdb import (
+    find_gfilter,
+    get_gfilters
+)
 from utils import temp
+from fuzzywuzzy import fuzz
+from pyrogram.errors import MessageNotModified
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-# Dictionary to track user requests for series selection
+# Global variables
 user_requestor: Dict[str, Optional[int]] = {}
 
+# Helper functions
 async def DeleteMessage(msg):
     """Delete a message after a delay."""
     await asyncio.sleep(600)
@@ -39,7 +52,6 @@ def find_close_matches(query, possibilities, n=3, cutoff=0.6):
 
 def get_movie_poster(series_key):
     """Get the poster URL for a series."""
-    from database.crazy_db import get_poster_manuel
     poster_url = get_poster_manuel(series_key)
     if not poster_url:
         series = get_series_name(series_key)
@@ -47,6 +59,7 @@ def get_movie_poster(series_key):
             poster_url = series.get('poster_url')
     return poster_url or NO_POSTER_FOUND_IMG[0]
 
+# Global filter function
 async def global_filters(client: Client, message: Message, text=False) -> bool:
     """Apply global filters to a message."""
     logger.info(f"Applying global filters to message {message.id} from user {message.from_user.id}")
@@ -103,11 +116,11 @@ async def global_filters(client: Client, message: Message, text=False) -> bool:
     logger.info("No global filters matched")
     return False
 
+# Series filter function
 async def series_filter(client: Client, message: Message):
     """Apply series filter to a message."""
     logger.info(f"Applying series filter to message {message.id} from user {message.from_user.id}")
     text = message.text.strip()
-    from database.crazy_db import get_series
     series_infos = get_series()
     series_keys = [series['key'] for series in series_infos]
     series_names = [series['title'] for series in series_infos]
@@ -194,6 +207,45 @@ async def series_filter(client: Client, message: Message):
             logger.info(f"Sent series filter response for {series['title']}")
         except Exception as e:
             logger.error(f"Error sending series filter message: {e}")
+
+# Message handlers
+@Client.on_message(filters.text & (filters.private | filters.group))
+async def handle_message(client: Client, message: Message):
+    """Handle text messages."""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    logger.info(f"Received text message {message.id} from user {user_id} in chat {chat_id}")
+    
+    # If the message is in a group, apply global and series filters
+    if message.chat.type != enums.ChatType.PRIVATE:
+        logger.info(f"Message is in group {chat_id}, applying filters")
+        glob = await global_filters(client, message)
+        if glob == False:
+            await series_filter(client, message)
+        return
+    
+    # For private chats from non-admins, apply global and series filters
+    if user_id not in ADMINS:
+        logger.info(f"Applying filters for user {user_id}")
+        glob = await global_filters(client, message)
+        if glob == False:
+            await series_filter(client, message)
+
+# Callback handlers
+@Client.on_callback_query()
+async def callback_handler(client: Client, callback_query: CallbackQuery):
+    """Handle callback queries."""
+    user_id = callback_query.from_user.id
+    data = callback_query.data
+    logger.info(f"Received callback query from user {user_id}: {data}")
+
+    # Handle user series callbacks
+    if data.startswith("user_series:") or data.startswith("b:"):
+        logger.info(f"User series callback from user {user_id}")
+        await user_series_callback_handler(client, callback_query)
+        return
+
+    logger.warning(f"Unknown callback type from user {user_id}: {data}")
 
 async def user_series_callback_handler(client: Client, query: CallbackQuery):
     """Handle user series callbacks."""
@@ -287,6 +339,7 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             for key, data_item in current_level_data.items():
                 buttons.append(InlineKeyboardButton(data_item['name'], callback_data=f"user_series:{series_key}:{key}"))
             text = base_text + "\nSelect the language you need...!"
+            # No back button at this level, as it's the initial series view
             
         elif not season_key: # Show seasons for selected language
             current_level_data = series.get("languages", {}).get(lang_key, {}).get("seasons", {})
@@ -301,6 +354,7 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             lang_name = series.get("languages", {}).get(lang_key, {}).get("name", "N/A")
             season_name = series.get("languages", {}).get(lang_key, {}).get("seasons", {}).get(season_key, {}).get("name", "N/A")
             for key, data_item in current_level_data.items():
+                # The file_link_key is stored in crazy_db, but the actual files are in episodes collection
                 file_link_key = data_item.get('file_link_key')
                 if file_link_key:
                     buttons.append(InlineKeyboardButton(data_item['name'], callback_data=f"b:{file_link_key}"))
@@ -321,41 +375,8 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
                 parse_mode=enums.ParseMode.MARKDOWN
             )
             logger.debug(f"Updated user series message for {series['title']}")
+        except MessageNotModified:
+            logger.debug("Message not modified, likely no changes")
         except Exception as e:
             logger.error(f"Error editing message in user_series callback: {e}")
             await query.answer("An error occurred. Please try again.", show_alert=True)
-
-# Handler functions for pm_filter
-async def handle_pm_filter_message(client: Client, message: Message):
-    """Handle messages for pm_filter."""
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    logger.info(f"Received message {message.id} from user {user_id} in chat {chat_id}")
-    
-    # If the message is in a group, apply global and series filters
-    if message.chat.type != enums.ChatType.PRIVATE:
-        logger.info(f"Message is in group {chat_id}, applying filters")
-        glob = await global_filters(client, message)
-        if glob == False:
-            await series_filter(client, message)
-        return
-    
-    # For private chats, apply global and series filters
-    logger.info(f"Applying filters for user {user_id}")
-    glob = await global_filters(client, message)
-    if glob == False:
-        await series_filter(client, message)
-
-async def handle_pm_filter_callback(client: Client, callback_query: CallbackQuery):
-    """Handle callback queries for pm_filter."""
-    user_id = callback_query.from_user.id
-    data = callback_query.data
-    logger.info(f"Received callback query from user {user_id}: {data}")
-
-    # Check if it's a user series callback
-    if data.startswith("user_series:") or data.startswith("b:"):
-        logger.info(f"User series callback from user {user_id}")
-        await user_series_callback_handler(client, callback_query)
-        return
-
-    logger.warning(f"Unknown callback type from user {user_id}: {data}")
