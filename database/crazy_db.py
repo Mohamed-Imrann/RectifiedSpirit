@@ -1,15 +1,14 @@
-from pymongo import MongoClient
-from info import DATABASE_URI, LOG_CHANNEL
+import pymongo
 import logging
-import copy
+from typing import Dict, List, Any, Optional, Union
+from info import DATABASE_URI
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
-client = MongoClient(DATABASE_URI)
+# MongoDB connection
+client = pymongo.MongoClient(DATABASE_URI)
 db = client['series_database']
 series_collection = db['series']
-# episodes_collection is now managed directly by the client in utils.py for file links
 episodes_collection = client["file_database"]["episodes"]
 
 def add_series(series_data: dict):
@@ -97,7 +96,7 @@ def delete_language(series_key: str, language_name: str):
     languages = series.get("languages", [])
     updated_languages = [lang for lang in languages if lang["name"].lower() != language_name.lower()]
     
-    if len(updated_languages) == len(languages): # Language not found
+    if len(updated_languages) == len(languages):  # Language not found
         return False
 
     # Delete associated file links from episodes collection
@@ -176,7 +175,7 @@ def delete_season(series_key: str, language_name: str, season_name: str):
             seasons = lang.get("seasons", [])
             updated_seasons = [s for s in seasons if s["name"].lower() != season_name.lower()]
             
-            if len(updated_seasons) == len(seasons): # Season not found
+            if len(updated_seasons) == len(seasons):  # Season not found
                 return False
 
             # Delete associated file links from episodes collection
@@ -283,7 +282,7 @@ def delete_quality(series_key: str, language_name: str, season_name: str, qualit
                     qualities = season.get("qualities", [])
                     updated_qualities = [q for q in qualities if q["name"].lower() != quality_name.lower()]
                     
-                    if len(updated_qualities) == len(qualities): # Quality not found
+                    if len(updated_qualities) == len(qualities):  # Quality not found
                         return False
 
                     # Delete associated file links from episodes collection
@@ -313,6 +312,7 @@ def publish_series(series_key: str):
     Sets the 'published' status of a series to True and cleans up empty groups.
     Also removes any quality entries that do not have a 'link_key'.
     """
+    import copy
     series = series_collection.find_one({"_id": series_key})
     if not series:
         logger.error(f"Series '{series_key}' not found for publishing.")
@@ -358,8 +358,6 @@ def publish_series(series_key: str):
         logger.error(f"Error publishing series '{series_key}': {e}")
         return False
 
-# ... (existing imports and functions)
-
 def get_series_name(series_key: str):
     """Retrieves a series document by its _id with a simplified structure for the user interface."""
     series = series_collection.find_one({"_id": series_key})
@@ -379,7 +377,7 @@ def get_series_name(series_key: str):
     }
     
     # Simplify languages structure
-    for lang in series.get('languages', []):
+    for lang in series.get("languages", []):
         lang_key = lang['name'].lower().replace(" ", "_")
         simplified['languages'][lang_key] = {
             'name': lang['name'],
@@ -388,7 +386,7 @@ def get_series_name(series_key: str):
         }
         
         # Simplify seasons structure
-        for season in lang.get('seasons', []):
+        for season in lang.get("seasons", []):
             season_key = season['name'].lower().replace(" ", "_")
             simplified['languages'][lang_key]['seasons'][season_key] = {
                 'name': season['name'],
@@ -397,7 +395,7 @@ def get_series_name(series_key: str):
             }
             
             # Simplify qualities structure
-            for quality in season.get('qualities', []):
+            for quality in season.get("qualities", []):
                 quality_key = quality['name'].lower().replace(" ", "_")
                 simplified['languages'][lang_key]['seasons'][season_key]['qualities'][quality_key] = {
                     'name': quality['name'],
@@ -441,5 +439,3 @@ def get_links_for_quality(file_link_key: str):
     except Exception as e:
         logger.error(f"Error getting links for quality {file_link_key}: {e}")
         return [], None, None, None
-
-# ... (rest of the existing code)
