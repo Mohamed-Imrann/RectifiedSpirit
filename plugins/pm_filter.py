@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
 import asyncio
 import re
 import logging
@@ -15,6 +16,7 @@ from utils import temp
 
 logger = logging.getLogger(__name__)
 
+# Dictionary to track user requests for series selection
 user_requestor: Dict[str, Optional[int]] = {}
 
 async def DeleteMessage(msg):
@@ -112,10 +114,12 @@ async def series_filter(client: Client, message: Message):
 
     series_key = None
     
+    # Try exact match by key first
     if text.lower().replace(" ", "").replace("-", "") in series_keys:
         series_key = text.lower().replace(" ", "").replace("-", "")
         logger.info(f"Found exact key match: {series_key}")
     else:
+        # Try exact match by title
         for s_info in series_infos:
             if s_info['title'].lower() == text.lower():
                 series_key = s_info['key']
@@ -123,8 +127,10 @@ async def series_filter(client: Client, message: Message):
                 break
         
         if not series_key:
+            # Try close matches for titles
             close_matches = find_close_matches(text, series_names)
             if not close_matches:
+                # Fallback to starts-with if no close matches
                 first_word = text.split()[0]
                 close_matches = [name for name in series_names if name.lower().startswith(first_word.lower())]
             
@@ -134,7 +140,7 @@ async def series_filter(client: Client, message: Message):
                 for match in close_matches:
                     s_info = next((s for s in series_infos if s['title'] == match), None)
                     if s_info:
-                        buttons.append(InlineKeyboardButton(match, callback_data=f"user:{s_info['key']}:l1"))
+                        buttons.append(InlineKeyboardButton(match, callback_data=f"user_series:{s_info['key']}"))
                 
                 if buttons:
                     buttons_chunked = chunk_buttons(buttons, chunk_size=1)
@@ -170,8 +176,8 @@ async def series_filter(client: Client, message: Message):
         poster_url = get_movie_poster(series_key)
         
         buttons = []
-        for i, (lang_key, lang_data) in enumerate(languages.items()):
-            buttons.append(InlineKeyboardButton(lang_data['name'], callback_data=f"user:{series_key}:l1:{i}"))
+        for lang_key, lang_data in languages.items():
+            buttons.append(InlineKeyboardButton(lang_data['name'], callback_data=f"user_series:{series_key}:{lang_key}"))
         
         buttons_chunked = chunk_buttons(buttons, chunk_size=2)
         reply_markup = InlineKeyboardMarkup(buttons_chunked)
@@ -209,10 +215,16 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         await query.answer("Not your request!", show_alert=True)
         return
 
-    if data.startswith("b:"):
+    if data == "pages":
+        await query.answer()
+        return
+
+    elif data.startswith("b:"):
+        # This is the final link to fetch files
         file_link_key = data.split(":", 1)[1]
         logger.info(f"Fetching files for link key: {file_link_key}")
         
+        # Fetch files from the episodes collection
         files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(file_link_key)
 
         if not files_to_send:
@@ -222,19 +234,22 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
 
         await query.answer("Sending files...")
         
+        track_msgs = []
         for entry in files_to_send:
             try:
-                await client.send_cached_media(
+                copied_msg = await client.send_cached_media(
                     chat_id=query.from_user.id, 
                     file_id=entry["file_id"],
                     caption=entry.get("caption", "")
                 )
+                if copied_msg and temp.AUTO_DELETE_TIME and temp.AUTO_DELETE_TIME > 0:
+                    track_msgs.append(copied_msg)
                 await asyncio.sleep(0.5)
             except Exception as e:
                 logger.error(f"Error sending cached media to user {query.from_user.id}: {e}")
                 await client.send_message(query.from_user.id, f"Error sending file: {e}")
                 
-        if temp.AUTO_DELETE_TIME and temp.AUTO_DELETE_TIME > 0:
+        if track_msgs:
             delete_data = await client.send_message(
                 chat_id=query.from_user.id,
                 text=temp.AUTO_DELETE_MSG.format(time=temp.AUTO_DELETE_TIME)
@@ -242,7 +257,7 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             asyncio.create_task(DeleteMessage(delete_data))
         return
 
-    elif data.startswith("user:"):
+    elif data.startswith("user_series:"):
         series_key = parts[1]
         logger.info(f"Processing series with key: {series_key}")
         series = get_series_name(series_key)
@@ -251,8 +266,9 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             await query.message.edit_text("Series not found or deleted.", parse_mode=enums.ParseMode.HTML)
             return
 
-        layer = parts[2] if len(parts) > 2 else None
-        index = int(parts[3]) if len(parts) > 3 else None
+        lang_key = parts[2] if len(parts) > 2 else None
+        season_key = parts[3] if len(parts) > 3 else None
+        quality_key = parts[4] if len(parts) > 4 else None
 
         base_text = (
             f"○ **Title:** `{series['title']}`\n"
@@ -263,67 +279,33 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         )
         
         buttons = []
+        current_level_data = None
         back_callback = None
 
-        if layer == "l1":  # Languages
-            languages = list(series.get("languages", {}).items())
-            if index >= len(languages):
-                await query.answer("Language not found!", show_alert=True)
-                return
-            
-            lang_key, lang_data = languages[index]
-            lang_name = lang_data['name']
-            
-            seasons = list(lang_data.get("seasons", {}).items())
-            for i, (season_key, season_data) in enumerate(seasons):
-                buttons.append(InlineKeyboardButton(season_data['name'], callback_data=f"user:{series_key}:l2:{i}"))
-            
-            text = base_text + f"○ **Language:** `{lang_name}`\n\nSelect the season you need...!"
-            back_callback = f"user:{series_key}:back"
-        
-        elif layer == "l2":  # Seasons
-            languages = list(series.get("languages", {}).items())
-            if index >= len(languages):
-                await query.answer("Season not found!", show_alert=True)
-                return
-            
-            lang_key, lang_data = languages[index]
-            lang_name = lang_data['name']
-            
-            seasons = list(lang_data.get("seasons", {}).items())
-            if index >= len(seasons):
-                await query.answer("Season not found!", show_alert=True)
-                return
-            
-            season_key, season_data = seasons[index]
-            season_name = season_data['name']
-            
-            qualities = list(season_data.get("qualities", {}).items())
-            for i, (quality_key, quality_data) in enumerate(qualities):
-                file_link_key = quality_data.get('file_link_key')
-                if file_link_key:
-                    buttons.append(InlineKeyboardButton(quality_data['name'], callback_data=f"b:{file_link_key}"))
-            
-            text = base_text + f"○ **Language:** `{lang_name}`\n○ **Season:** `{season_name}`\n\nSelect the quality you need...!"
-            back_callback = f"user:{series_key}:l1:{languages.index((lang_key, lang_data))}"
-        
-        elif layer == "back":
-            series = get_series_name(series_key)
-            if not series:
-                await query.answer("Series not found!", show_alert=True)
-                return
-            
-            languages = list(series.get("languages", {}).items())
-            buttons = []
-            for i, (lang_key, lang_data) in enumerate(languages):
-                buttons.append(InlineKeyboardButton(lang_data['name'], callback_data=f"user:{series_key}:l1:{i}"))
-            
+        if not lang_key: # Show languages
+            current_level_data = series.get("languages", {})
+            for key, data_item in current_level_data.items():
+                buttons.append(InlineKeyboardButton(data_item['name'], callback_data=f"user_series:{series_key}:{key}"))
             text = base_text + "\nSelect the language you need...!"
-            back_callback = None
-        
-        else:
-            await query.answer("Invalid action!", show_alert=True)
-            return
+            
+        elif not season_key: # Show seasons for selected language
+            current_level_data = series.get("languages", {}).get(lang_key, {}).get("seasons", {})
+            lang_name = series.get("languages", {}).get(lang_key, {}).get("name", "N/A")
+            for key, data_item in current_level_data.items():
+                buttons.append(InlineKeyboardButton(data_item['name'], callback_data=f"user_series:{series_key}:{lang_key}:{key}"))
+            text = base_text + f"○ **Language:** `{lang_name}`\n\nSelect the season you need...!"
+            back_callback = f"user_series:{series_key}"
+
+        elif not quality_key: # Show qualities for selected season
+            current_level_data = series.get("languages", {}).get(lang_key, {}).get("seasons", {}).get(season_key, {}).get("qualities", {})
+            lang_name = series.get("languages", {}).get(lang_key, {}).get("name", "N/A")
+            season_name = series.get("languages", {}).get(lang_key, {}).get("seasons", {}).get(season_key, {}).get("name", "N/A")
+            for key, data_item in current_level_data.items():
+                file_link_key = data_item.get('file_link_key')
+                if file_link_key:
+                    buttons.append(InlineKeyboardButton(data_item['name'], callback_data=f"b:{file_link_key}"))
+            text = base_text + f"○ **Language:** `{lang_name}`\n○ **Season:** `{season_name}`\n\nSelect the quality you need...!"
+            back_callback = f"user_series:{series_key}:{lang_key}"
         
         buttons_chunked = chunk_buttons(buttons, chunk_size=2)
         if back_callback:
@@ -343,12 +325,14 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             logger.error(f"Error editing message in user_series callback: {e}")
             await query.answer("An error occurred. Please try again.", show_alert=True)
 
+# Handler functions for pm_filter
 async def handle_pm_filter_message(client: Client, message: Message):
     """Handle messages for pm_filter."""
     user_id = message.from_user.id
     chat_id = message.chat.id
     logger.info(f"Received message {message.id} from user {user_id} in chat {chat_id}")
     
+    # If the message is in a group, apply global and series filters
     if message.chat.type != enums.ChatType.PRIVATE:
         logger.info(f"Message is in group {chat_id}, applying filters")
         glob = await global_filters(client, message)
@@ -356,6 +340,7 @@ async def handle_pm_filter_message(client: Client, message: Message):
             await series_filter(client, message)
         return
     
+    # For private chats, apply global and series filters
     logger.info(f"Applying filters for user {user_id}")
     glob = await global_filters(client, message)
     if glob == False:
@@ -367,7 +352,8 @@ async def handle_pm_filter_callback(client: Client, callback_query: CallbackQuer
     data = callback_query.data
     logger.info(f"Received callback query from user {user_id}: {data}")
 
-    if data.startswith("user:") or data.startswith("b:"):
+    # Check if it's a user series callback
+    if data.startswith("user_series:") or data.startswith("b:"):
         logger.info(f"User series callback from user {user_id}")
         await user_series_callback_handler(client, callback_query)
         return
