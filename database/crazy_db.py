@@ -30,6 +30,11 @@ def get_series_by_key(series_key: str):
     """Retrieves a single series document by its _id."""
     return series_collection.find_one({"_id": series_key})
 
+# Wrapper for get_series_by_key to maintain compatibility with pm_filter.py
+def get_series_name(series_key: str):
+    """Retrieves a single series document by its _id (alias for get_series_by_key)."""
+    return get_series_by_key(series_key)
+
 def update_series_field(series_key: str, field: str, value):
     """Updates a top-level field of a series document."""
     try:
@@ -46,6 +51,11 @@ def get_poster_file_id(series_key: str):
     """Retrieves the main poster file_id for a series."""
     series = series_collection.find_one({"_id": series_key}, {"poster_file_id": 1})
     return series.get("poster_file_id") if series else None
+
+# Wrapper for get_poster_file_id to maintain compatibility with pm_filter.py
+def get_poster_manuel(series_key: str):
+    """Retrieves the main poster file_id for a series (alias for get_poster_file_id)."""
+    return get_poster_file_id(series_key)
 
 def update_poster_file_id(series_key: str, poster_file_id: str):
     """Updates the main poster file_id for a series."""
@@ -357,6 +367,3 @@ def publish_series(series_key: str):
     except Exception as e:
         logger.error(f"Error publishing series '{series_key}': {e}")
         return False
-
-# No need for get_specific_poster as poster retrieval is now hierarchical in the UI functions
-# and uses get_poster_file_id for the top level.
