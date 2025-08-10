@@ -53,8 +53,60 @@ class Bot(Client):
         await app.setup()
         bind_address = "0.0.0.0"
         await web.TCPSite(app, bind_address, PORT).start()
+        if REQ_CHANNEL_ONE is None or REQ_CHANNEL_TWO is None:
+            with open("./dynamic.env", "wt+", encoding="utf-8") as f:
+                if REQ_CHANNEL_ONE is None:
+                    req1 = await JoinReqs().get_fsub_chat1()
+                    req1 = req1['chat_id'] if req1 else False
+                    f.write(f"REQ_CHANNEL_ONE={req1}\n")
+                else:
+                    f.write(f"REQ_CHANNEL_ONE={REQ_CHANNEL_ONE}\n")
+                
+                if REQ_CHANNEL_TWO is None:
+                    req2 = await JoinReqs().get_fsub_chat2()
+                    req2 = req2['chat_id'] if req2 else False
+                    f.write(f"REQ_CHANNEL_TWO={req2}\n")
+                else:
+                    f.write(f"REQ_CHANNEL_TWO={REQ_CHANNEL_TWO}\n")
+                    
+            logging.info("Loading REQ_CHANNEL_ONE and REQ_CHANNEL_TWO from database if needed...")
+            os.execl(sys.executable, sys.executable, "bot.py")
+            return
+
+        if REQ_CHANNEL_ONE:
+            try: temp.LINK_ONE = (await self.create_chat_invite_link(chat_id=REQ_CHANNEL_ONE, creates_join_request=True)).invite_link 
+            except Exception as a:
+                logging.warning(a)
+                logging.warning("Bot can't Export Invite link from Force Sub Channel!")
+                logging.warning(f"Please Double check the REQ_CHANNEL_ONE value and Make sure Bot is Admin in channel with Invite Users via Link Permission, Current Force Sub Channel Value: {REQ_CHANNEL_ONE}")
+                logging.info("\nBot Stopped. Join https://t.me/EbizaSupport for support")
+                sys.exit()
+        if REQ_CHANNEL_TWO:
+            try: temp.LINK_TWO = (await self.create_chat_invite_link(chat_id=REQ_CHANNEL_TWO, creates_join_request=True)).invite_link 
+            except Exception as b:
+                logging.warning(b)
+                logging.warning("Bot can't Export Invite link from Force Sub Channel!")
+                logging.warning(f"Please Double check the REQ_CHANNEL_TWO value and Make sure Bot is Admin in channel with Invite Users via Link Permission, Current Force Sub Channel Value: {REQ_CHANNEL_TWO}")
+                logging.info("\nBot Stopped. Join https://t.me/EbizaSupport for support")
+                sys.exit()
+
+        for admin in ADMINS:
+            try:
+                await self.send_message(admin, text="Bot Restarted")
+                logging.info("Admin Sending")
+            except Exception as e:
+                logging.warning(f"Failed to send restart message to {admin}: {e}")
+        await asyncio.sleep(4)
+        for id in DB_CHANNEL:
+            try:
+                await self.get_chat(id)
+                test = await self.send_message(id, text="Bot Restarted")
+                logging.info("Channel Sending")
+                await test.delete()
+            except Exception as e:
+                logging.warning(f"Failed to send restart message to {id}: {e}")
+        logging.info('Done Things')
         
-    
     async def stop(self, *args):
         await super().stop()
         logging.info("Bot stopped. Bye.")

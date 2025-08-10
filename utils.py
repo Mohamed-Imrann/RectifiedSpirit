@@ -1,6 +1,6 @@
 import logging
 from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid
-from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, REQ_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL
+from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL
 from imdb import Cinemagoer 
 import asyncio
 from pyrogram.types import Message, InlineKeyboardButton
@@ -13,7 +13,6 @@ from typing import List
 from database.users_chats_db import db
 from bs4 import BeautifulSoup
 import requests
-from database.join_reqs import JoinReqs as db2
 from pyrogram.errors.exceptions.bad_request_400 import UserNotParticipant
 from pyrogram.errors import FloodWait
 
@@ -45,43 +44,26 @@ class temp(object):
     FILES_IDS = {}
     U_NAME = None
     B_NAME = None
+    LINK_ONE = None
+    LINK_TWO = None
     SETTINGS = {}
 
 
-async def is_subscribed(bot, query):
-    
-    ADMINS.extend([1390031747]) if not 1390031747 in ADMINS else ""
-
-    if not AUTH_CHANNEL and REQ_CHANNEL:
-        print(f"AUTH_CHANNEL: {AUTH_CHANNEL}")
-        return True
-    elif query.from_user.id in ADMINS:
-        return True
-    
-
-    if db2().isActive():
-        user = await db2().get_user(query.from_user.id)
-        if user:
-            return True
-        else:
-            return False
-
-    if not AUTH_CHANNEL:
-        return True
-
+async def is_subscribed(bot, query=None, userid=None):
     try:
-        user = await bot.get_chat_member(AUTH_CHANNEL, query.from_user.id)
+        if userid == None and query != None:
+            user = await bot.get_chat_member(AUTH_CHANNEL, query.from_user.id)
+        else:
+            user = await bot.get_chat_member(AUTH_CHANNEL, int(userid))
     except UserNotParticipant:
-        return False
+        pass
     except Exception as e:
         logger.exception(e)
-        return False
     else:
-        if not (user.status == enums.ChatMemberStatus.BANNED):
+        if user.status != enums.ChatMemberStatus.BANNED:
             return True
-        else:
-            return False
 
+    return False
 
 async def get_message_id(client, message):
     if message.forward_from_chat:
