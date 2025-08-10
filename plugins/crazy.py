@@ -25,7 +25,7 @@ from database.crazy_db import (
     get_poster_file_id, update_poster_file_id, publish_series
 )
 from utils import (
-    get_message_id, get_messages_in_range, delete_messages_from_user_chat, 
+    get_message_id, get_messages as get_messages_in_range, delete_messages_from_user_chat, 
     get_poster, find_most_similar_title
 )
 from fuzzywuzzy import fuzz
