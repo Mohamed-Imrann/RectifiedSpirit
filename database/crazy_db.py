@@ -26,6 +26,10 @@ def get_series():
 def get_series_by_key(series_key: str):
     return series_collection.find_one({"_id": series_key})
 
+def get_series_name(series_key: str):
+    """Retrieves a single series document by its _id (alias for get_series_by_key)."""
+    return get_series_by_key(series_key)
+
 def update_series_field(series_key: str, field: str, value):
     try:
         result = series_collection.update_one({"_id": series_key}, {"$set": {field: value}})
@@ -40,6 +44,15 @@ def get_poster_file_id(series_key: str):
 
 def update_poster_file_id(series_key: str, poster_file_id: str):
     return update_series_field(series_key, "poster_file_id", poster_file_id)
+
+def get_poster_by_key(series_key: str):
+    """Retrieves the poster file_id for a series by its key."""
+    series = series_collection.find_one({"_id": series_key}, {"poster_file_id": 1})
+    return series.get("poster_file_id") if series else None
+
+def get_poster_manuel(series_key: str):
+    """Retrieves the poster file_id for a series by its key (alias for get_poster_by_key)."""
+    return get_poster_by_key(series_key)
 
 def add_or_update_language(series_key: str, language_name: str, poster_file_id: str = None):
     series = series_collection.find_one({"_id": series_key})
