@@ -81,7 +81,6 @@ async def start_command(client, message):
             reply_markup=InlineKeyboardMarkup(btn),
             parse_mode=enums.ParseMode.HTML
         )
-        logger.info(message.command]
         return False
 
     if deep_link:
