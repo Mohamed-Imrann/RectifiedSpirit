@@ -1,5 +1,5 @@
 from pymongo import MongoClient
-from info import DATABASE_URI, LOG_CHANNEL
+from info import DATABASE_URI
 import logging
 import copy
 
@@ -9,67 +9,46 @@ logger.setLevel(logging.INFO)
 client = MongoClient(DATABASE_URI)
 db = client['series_database']
 series_collection = db['series']
-# episodes_collection is now managed directly by the client in utils.py for file links
 episodes_collection = client["file_database"]["episodes"]
 
 def add_series(series_data: dict):
-    """Adds a new series document to the database. Uses _id as the primary key."""
     try:
         series_collection.insert_one(series_data)
         logger.info(f"Series '{series_data.get('title', 'N/A')}' added with key: {series_data['_id']}")
         return True
     except Exception as e:
-        logger.error(f"Error adding series '{series_data.get('title', 'N/A')}': {e}")
+        logger.error(f"Error adding series: {e}")
         return False
 
 def get_series():
-    """Returns all series documents."""
     return list(series_collection.find({}))
 
 def get_series_by_key(series_key: str):
-    """Retrieves a single series document by its _id."""
     return series_collection.find_one({"_id": series_key})
 
-# Wrapper for get_series_by_key to maintain compatibility with pm_filter.py
-def get_series_name(series_key: str):
-    """Retrieves a single series document by its _id (alias for get_series_by_key)."""
-    return get_series_by_key(series_key)
-
 def update_series_field(series_key: str, field: str, value):
-    """Updates a top-level field of a series document."""
     try:
         result = series_collection.update_one({"_id": series_key}, {"$set": {field: value}})
-        if result.modified_count > 0:
-            logger.info(f"Series '{series_key}' field '{field}' updated.")
-            return True
-        return False
+        return result.modified_count > 0
     except Exception as e:
-        logger.error(f"Error updating series '{series_key}' field '{field}': {e}")
+        logger.error(f"Error updating series: {e}")
         return False
 
 def get_poster_file_id(series_key: str):
-    """Retrieves the main poster file_id for a series."""
     series = series_collection.find_one({"_id": series_key}, {"poster_file_id": 1})
     return series.get("poster_file_id") if series else None
 
-# Wrapper for get_poster_file_id to maintain compatibility with pm_filter.py
-def get_poster_manuel(series_key: str):
-    """Retrieves the main poster file_id for a series (alias for get_poster_file_id)."""
-    return get_poster_file_id(series_key)
-
 def update_poster_file_id(series_key: str, poster_file_id: str):
-    """Updates the main poster file_id for a series."""
     return update_series_field(series_key, "poster_file_id", poster_file_id)
 
 def add_or_update_language(series_key: str, language_name: str, poster_file_id: str = None):
-    """Adds a new language or updates an existing one for a series."""
     series = series_collection.find_one({"_id": series_key})
     if not series:
-        logger.error(f"Series '{series_key}' not found for language update.")
         return False
 
     languages = series.get("languages", [])
     language_exists = False
+    
     for lang in languages:
         if lang["name"].lower() == language_name.lower():
             if poster_file_id:
@@ -85,21 +64,16 @@ def add_or_update_language(series_key: str, language_name: str, poster_file_id: 
     
     try:
         result = series_collection.update_one({"_id": series_key}, {"$set": {"languages": languages}})
-        if result.modified_count > 0 or result.upserted_id:
-            logger.info(f"Language '{language_name}' added/updated for series '{series_key}'.")
-            return True
-        return False
+        return result.modified_count > 0 or result.upserted_id
     except Exception as e:
-        logger.error(f"Error adding/updating language '{language_name}' for series '{series_key}': {e}")
+        logger.error(f"Error adding language: {e}")
         return False
 
 def get_languages(series_key: str):
-    """Returns the list of languages for a series."""
     series = series_collection.find_one({"_id": series_key}, {"languages": 1})
     return series.get("languages", []) if series else []
 
 def delete_language(series_key: str, language_name: str):
-    """Deletes a language and all its nested data (seasons, qualities, file links)."""
     series = series_collection.find_one({"_id": series_key})
     if not series:
         return False
@@ -107,31 +81,26 @@ def delete_language(series_key: str, language_name: str):
     languages = series.get("languages", [])
     updated_languages = [lang for lang in languages if lang["name"].lower() != language_name.lower()]
     
-    if len(updated_languages) == len(languages): # Language not found
+    if len(updated_languages) == len(languages):
         return False
 
-    # Delete associated file links from episodes collection
+    # Delete associated file links
     for lang in languages:
         if lang["name"].lower() == language_name.lower():
             for season in lang.get("seasons", []):
                 for quality in season.get("qualities", []):
                     if quality.get("link_key"):
                         episodes_collection.delete_one({"file_link_key": quality["link_key"]})
-                        logger.info(f"Deleted episode link for {quality['link_key']}")
             break
 
     try:
         result = series_collection.update_one({"_id": series_key}, {"$set": {"languages": updated_languages}})
-        if result.modified_count > 0:
-            logger.info(f"Language '{language_name}' and its data deleted for series '{series_key}'.")
-            return True
-        return False
+        return result.modified_count > 0
     except Exception as e:
-        logger.error(f"Error deleting language '{language_name}' for series '{series_key}': {e}")
+        logger.error(f"Error deleting language: {e}")
         return False
 
 def add_or_update_season(series_key: str, language_name: str, season_name: str, poster_file_id: str = None):
-    """Adds a new season or updates an existing one for a specific language."""
     series = series_collection.find_one({"_id": series_key})
     if not series:
         return False
@@ -157,16 +126,12 @@ def add_or_update_season(series_key: str, language_name: str, season_name: str, 
     
     try:
         result = series_collection.update_one({"_id": series_key}, {"$set": {"languages": languages}})
-        if result.modified_count > 0:
-            logger.info(f"Season '{season_name}' added/updated for series '{series_key}' language '{language_name}'.")
-            return True
-        return False
+        return result.modified_count > 0
     except Exception as e:
-        logger.error(f"Error adding/updating season '{season_name}' for series '{series_key}' language '{language_name}': {e}")
+        logger.error(f"Error adding season: {e}")
         return False
 
 def get_seasons(series_key: str, language_name: str):
-    """Returns the list of seasons for a specific language in a series."""
     series = series_collection.find_one({"_id": series_key}, {"languages": 1})
     if series:
         for lang in series.get("languages", []):
@@ -175,7 +140,6 @@ def get_seasons(series_key: str, language_name: str):
     return []
 
 def delete_season(series_key: str, language_name: str, season_name: str):
-    """Deletes a season and all its nested data (qualities, file links)."""
     series = series_collection.find_one({"_id": series_key})
     if not series:
         return False
@@ -186,16 +150,15 @@ def delete_season(series_key: str, language_name: str, season_name: str):
             seasons = lang.get("seasons", [])
             updated_seasons = [s for s in seasons if s["name"].lower() != season_name.lower()]
             
-            if len(updated_seasons) == len(seasons): # Season not found
+            if len(updated_seasons) == len(seasons):
                 return False
 
-            # Delete associated file links from episodes collection
+            # Delete associated file links
             for season in seasons:
                 if season["name"].lower() == season_name.lower():
                     for quality in season.get("qualities", []):
                         if quality.get("link_key"):
                             episodes_collection.delete_one({"file_link_key": quality["link_key"]})
-                            logger.info(f"Deleted episode link for {quality['link_key']}")
                     break
             
             lang["seasons"] = updated_seasons
@@ -203,16 +166,12 @@ def delete_season(series_key: str, language_name: str, season_name: str):
     
     try:
         result = series_collection.update_one({"_id": series_key}, {"$set": {"languages": languages}})
-        if result.modified_count > 0:
-            logger.info(f"Season '{season_name}' and its data deleted for series '{series_key}' language '{language_name}'.")
-            return True
-        return False
+        return result.modified_count > 0
     except Exception as e:
-        logger.error(f"Error deleting season '{season_name}' for series '{series_key}' language '{language_name}': {e}")
+        logger.error(f"Error deleting season: {e}")
         return False
 
-def add_or_update_quality(series_key: str, language_name: str, season_name: str, quality_name: str, link_key: str = None, codec: str = None):
-    """Adds a new quality or updates an existing one for a specific season."""
+def add_or_update_quality(series_key: str, language_name: str, season_name: str, quality_name: str, link_key: str = None):
     series = series_collection.find_one({"_id": series_key})
     if not series:
         return False
@@ -229,16 +188,12 @@ def add_or_update_quality(series_key: str, language_name: str, season_name: str,
                         if quality["name"].lower() == quality_name.lower():
                             if link_key:
                                 quality["link_key"] = link_key
-                            if codec:
-                                quality["codec"] = codec
                             quality_exists = True
                             break
                     if not quality_exists:
                         new_quality = {"name": quality_name}
                         if link_key:
                             new_quality["link_key"] = link_key
-                        if codec:
-                            new_quality["codec"] = codec
                         qualities.append(new_quality)
                     season["qualities"] = qualities
                     break
@@ -246,16 +201,12 @@ def add_or_update_quality(series_key: str, language_name: str, season_name: str,
     
     try:
         result = series_collection.update_one({"_id": series_key}, {"$set": {"languages": languages}})
-        if result.modified_count > 0:
-            logger.info(f"Quality '{quality_name}' added/updated for series '{series_key}' language '{language_name}' season '{season_name}'.")
-            return True
-        return False
+        return result.modified_count > 0
     except Exception as e:
-        logger.error(f"Error adding/updating quality '{quality_name}' for series '{series_key}' language '{language_name}' season '{season_name}': {e}")
+        logger.error(f"Error adding quality: {e}")
         return False
 
 def get_qualities(series_key: str, language_name: str, season_name: str):
-    """Returns the list of qualities for a specific season in a language."""
     series = series_collection.find_one({"_id": series_key}, {"languages": 1})
     if series:
         for lang in series.get("languages", []):
@@ -266,7 +217,6 @@ def get_qualities(series_key: str, language_name: str, season_name: str):
     return []
 
 def get_quality_link(series_key: str, language_name: str, season_name: str, quality_name: str):
-    """Returns the link_key for a specific quality."""
     series = series_collection.find_one({"_id": series_key}, {"languages": 1})
     if series:
         for lang in series.get("languages", []):
@@ -279,7 +229,6 @@ def get_quality_link(series_key: str, language_name: str, season_name: str, qual
     return None
 
 def delete_quality(series_key: str, language_name: str, season_name: str, quality_name: str):
-    """Deletes a quality and its associated file links."""
     series = series_collection.find_one({"_id": series_key})
     if not series:
         return False
@@ -293,15 +242,14 @@ def delete_quality(series_key: str, language_name: str, season_name: str, qualit
                     qualities = season.get("qualities", [])
                     updated_qualities = [q for q in qualities if q["name"].lower() != quality_name.lower()]
                     
-                    if len(updated_qualities) == len(qualities): # Quality not found
+                    if len(updated_qualities) == len(qualities):
                         return False
 
-                    # Delete associated file links from episodes collection
+                    # Delete associated file links
                     for quality in qualities:
                         if quality["name"].lower() == quality_name.lower():
                             if quality.get("link_key"):
                                 episodes_collection.delete_one({"file_link_key": quality["link_key"]})
-                                logger.info(f"Deleted episode link for {quality['link_key']}")
                             break
                     
                     season["qualities"] = updated_qualities
@@ -310,25 +258,16 @@ def delete_quality(series_key: str, language_name: str, season_name: str, qualit
     
     try:
         result = series_collection.update_one({"_id": series_key}, {"$set": {"languages": languages}})
-        if result.modified_count > 0:
-            logger.info(f"Quality '{quality_name}' and its data deleted for series '{series_key}' language '{language_name}' season '{season_name}'.")
-            return True
-        return False
+        return result.modified_count > 0
     except Exception as e:
-        logger.error(f"Error deleting quality '{quality_name}' for series '{series_key}' language '{language_name}' season '{season_name}': {e}")
+        logger.error(f"Error deleting quality: {e}")
         return False
 
 def publish_series(series_key: str):
-    """
-    Sets the 'published' status of a series to True and cleans up empty groups.
-    Also removes any quality entries that do not have a 'link_key'.
-    """
     series = series_collection.find_one({"_id": series_key})
     if not series:
-        logger.error(f"Series '{series_key}' not found for publishing.")
         return False
 
-    # Create a deep copy to modify and then save
     series_to_publish = copy.deepcopy(series)
 
     cleaned_languages = []
@@ -340,30 +279,21 @@ def publish_series(series_key: str):
                 if quality.get("link_key") and quality["link_key"] != "PENDING_LINK":
                     cleaned_qualities.append(quality)
                 else:
-                    # If quality has no link_key or is PENDING_LINK, delete its potential entry in episodes_collection
                     if quality.get("link_key"):
                         episodes_collection.delete_one({"file_link_key": quality["link_key"]})
-                        logger.info(f"Removed unlinked/pending quality {quality.get('name')} and its episode link.")
             if cleaned_qualities:
                 season["qualities"] = cleaned_qualities
                 cleaned_seasons.append(season)
-            else:
-                logger.info(f"Removed empty season {season.get('name')} from language {lang.get('name')}.")
         if cleaned_seasons:
             lang["seasons"] = cleaned_seasons
             cleaned_languages.append(lang)
-        else:
-            logger.info(f"Removed empty language {lang.get('name')}.")
     
     series_to_publish["languages"] = cleaned_languages
     series_to_publish["published"] = True
 
     try:
         result = series_collection.replace_one({"_id": series_key}, series_to_publish)
-        if result.modified_count > 0:
-            logger.info(f"Series '{series_key}' published successfully and cleaned up.")
-            return True
-        return False
+        return result.modified_count > 0
     except Exception as e:
-        logger.error(f"Error publishing series '{series_key}': {e}")
+        logger.error(f"Error publishing series: {e}")
         return False
