@@ -35,6 +35,8 @@ class Temp(object):
     A temporary storage class for bot-related data that needs to persist
     across different parts of the application during runtime.
     """
+    BANNED_USERS = []
+    BANNED_CHATS = []
     ME = None  # Bot's user ID
     U_NAME = None  # Bot's username
     B_NAME = None  # Bot's first name
