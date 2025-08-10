@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 import pymongo
 
 BATCH_FILES = {}
-from utils import get_messages, delete_file
+from utils import get_messages_in_range as get_messages, delete_file
 
 mongo_client = MongoClient(DATABASE_URI)
 edb = mongo_client["file_database"]
