@@ -9,15 +9,15 @@ from pyrogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery, 
     InputMediaPhoto
 )
-from info import SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG
+from info import SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG, ADMINS # Ensure ADMINS is imported
 from database.crazy_db import (
-    get_series, get_series_name, get_poster_manuel, get_links_for_quality
+    get_series, get_series_name, get_poster_manuel # get_series_name and get_poster_manuel are wrappers now
 )
 from database.gfilters_mdb import (
     find_gfilter,
     get_gfilters
 )
-from utils import temp
+from utils import temp, get_links_for_quality # get_links_for_quality is now in utils.py
 from fuzzywuzzy import fuzz
 from pyrogram.errors import MessageNotModified
 
@@ -34,7 +34,7 @@ user_requestor: Dict[str, Optional[int]] = {}
 # Helper functions
 async def DeleteMessage(msg):
     """Delete a message after a delay."""
-    await asyncio.sleep(600)
+    await asyncio.sleep(temp.AUTO_DELETE_TIME) # Use AUTO_DELETE_TIME from temp
     try:
         await msg.delete()
         logger.debug(f"Deleted message {msg.id} from chat {msg.chat.id}")
@@ -51,13 +51,9 @@ def find_close_matches(query, possibilities, n=3, cutoff=0.6):
     return difflib.get_close_matches(query, possibilities, n, cutoff)
 
 def get_movie_poster(series_key):
-    """Get the poster URL for a series."""
-    poster_url = get_poster_manuel(series_key)
-    if not poster_url:
-        series = get_series_name(series_key)
-        if series:
-            poster_url = series.get('poster_url')
-    return poster_url or NO_POSTER_FOUND_IMG[0]
+    """Get the poster file_id for a series."""
+    poster_file_id = get_poster_manuel(series_key) # This now calls get_poster_file_id from crazy_db
+    return poster_file_id or NO_POSTER_FOUND_IMG[0] # NO_POSTER_FOUND_IMG is a list
 
 # Global filter function
 async def global_filters(client: Client, message: Message, text=False) -> bool:
@@ -66,8 +62,8 @@ async def global_filters(client: Client, message: Message, text=False) -> bool:
     group_id = message.chat.id
     name = text or message.text 
     reply_id = message.reply_to_message.id if message.reply_to_message else message.id 
-    keywords = await get_gfilters("gfilters")
-    
+    keywords = await get_gfilters("gfilters") # "gfilters" is the collection name
+
     for keyword in reversed(sorted(keywords, key=len)):
         pattern = r"( |^|[\W])" + re.escape(keyword) + r"( |$|[\W])"
         if re.search(pattern, name, flags=re.IGNORECASE):
@@ -121,8 +117,8 @@ async def series_filter(client: Client, message: Message):
     """Apply series filter to a message."""
     logger.info(f"Applying series filter to message {message.id} from user {message.from_user.id}")
     text = message.text.strip()
-    series_infos = get_series()
-    series_keys = [series['key'] for series in series_infos]
+    series_infos = get_series() # This returns a list of series documents
+    series_keys = [series['_id'] for series in series_infos] # Use '_id' as the key
     series_names = [series['title'] for series in series_infos]
 
     series_key = None
@@ -135,7 +131,7 @@ async def series_filter(client: Client, message: Message):
         # Try exact match by title
         for s_info in series_infos:
             if s_info['title'].lower() == text.lower():
-                series_key = s_info['key']
+                series_key = s_info['_id'] # Use '_id'
                 logger.info(f"Found exact title match: {series_key}")
                 break
         
@@ -153,7 +149,7 @@ async def series_filter(client: Client, message: Message):
                 for match in close_matches:
                     s_info = next((s for s in series_infos if s['title'] == match), None)
                     if s_info:
-                        buttons.append(InlineKeyboardButton(match, callback_data=f"user_series:{s_info['key']}"))
+                        buttons.append(InlineKeyboardButton(match, callback_data=f"user_series:{s_info['_id']}")) # Use '_id'
                 
                 if buttons:
                     buttons_chunked = chunk_buttons(buttons, chunk_size=1)
@@ -171,12 +167,12 @@ async def series_filter(client: Client, message: Message):
     
     if series_key:
         logger.info(f"Processing series with key: {series_key}")
-        series = get_series_name(series_key)
+        series = get_series_name(series_key) # This calls get_series_by_key
         if not series:
             logger.warning(f"Series not found for key: {series_key}")
             return
 
-        languages = series.get("languages", {})
+        languages = series.get("languages", []) # languages is a list of dicts
         
         reply_text = (
             f"○ **Title:** `{series['title']}`\n"
@@ -186,11 +182,11 @@ async def series_filter(client: Client, message: Message):
             f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`\n\n"
             "Select the language you need...!"
         )
-        poster_url = get_movie_poster(series_key)
+        poster_url = get_movie_poster(series_key) # This gets the poster file_id
         
         buttons = []
-        for lang_key, lang_data in languages.items():
-            buttons.append(InlineKeyboardButton(lang_data['name'], callback_data=f"user_series:{series_key}:{lang_key}"))
+        for lang_data in languages: # Iterate through the list of language dictionaries
+            buttons.append(InlineKeyboardButton(lang_data['name'], callback_data=f"user_series:{series_key}:{lang_data['name']}"))
         
         buttons_chunked = chunk_buttons(buttons, chunk_size=2)
         reply_markup = InlineKeyboardMarkup(buttons_chunked)
@@ -225,7 +221,7 @@ async def handle_message(client: Client, message: Message):
         return
     
     # For private chats from non-admins, apply global and series filters
-    if user_id not in ADMINS:
+    if user_id not in ADMINS: # Use ADMINS from info.py
         logger.info(f"Applying filters for user {user_id}")
         glob = await global_filters(client, message)
         if glob == False:
@@ -276,7 +272,7 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         file_link_key = data.split(":", 1)[1]
         logger.info(f"Fetching files for link key: {file_link_key}")
         
-        # Fetch files from the episodes collection
+        # Fetch files from the episodes collection using get_links_for_quality from utils
         files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(file_link_key)
 
         if not files_to_send:
@@ -312,15 +308,15 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
     elif data.startswith("user_series:"):
         series_key = parts[1]
         logger.info(f"Processing series with key: {series_key}")
-        series = get_series_name(series_key)
+        series = get_series_name(series_key) # This calls get_series_by_key
         if not series:
             logger.warning(f"Series not found for key: {series_key}")
             await query.message.edit_text("Series not found or deleted.", parse_mode=enums.ParseMode.HTML)
             return
 
-        lang_key = parts[2] if len(parts) > 2 else None
-        season_key = parts[3] if len(parts) > 3 else None
-        quality_key = parts[4] if len(parts) > 4 else None
+        lang_name_from_callback = parts[2] if len(parts) > 2 else None
+        season_name_from_callback = parts[3] if len(parts) > 3 else None
+        quality_name_from_callback = parts[4] if len(parts) > 4 else None
 
         base_text = (
             f"○ **Title:** `{series['title']}`\n"
@@ -331,35 +327,34 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         )
         
         buttons = []
-        current_level_data = None
         back_callback = None
 
-        if not lang_key: # Show languages
-            current_level_data = series.get("languages", {})
-            for key, data_item in current_level_data.items():
-                buttons.append(InlineKeyboardButton(data_item['name'], callback_data=f"user_series:{series_key}:{key}"))
+        if not lang_name_from_callback: # Show languages
+            languages = series.get("languages", [])
+            for lang_data in languages: # Iterate through the list
+                buttons.append(InlineKeyboardButton(lang_data['name'], callback_data=f"user_series:{series_key}:{lang_data['name']}"))
             text = base_text + "\nSelect the language you need...!"
-            # No back button at this level, as it's the initial series view
             
-        elif not season_key: # Show seasons for selected language
-            current_level_data = series.get("languages", {}).get(lang_key, {}).get("seasons", {})
-            lang_name = series.get("languages", {}).get(lang_key, {}).get("name", "N/A")
-            for key, data_item in current_level_data.items():
-                buttons.append(InlineKeyboardButton(data_item['name'], callback_data=f"user_series:{series_key}:{lang_key}:{key}"))
-            text = base_text + f"○ **Language:** `{lang_name}`\n\nSelect the season you need...!"
+        elif not season_name_from_callback: # Show seasons for selected language
+            current_lang = next((lang for lang in series.get("languages", []) if lang["name"] == lang_name_from_callback), None)
+            if current_lang:
+                seasons = current_lang.get("seasons", [])
+                for season_data in seasons: # Iterate through the list
+                    buttons.append(InlineKeyboardButton(season_data['name'], callback_data=f"user_series:{series_key}:{lang_name_from_callback}:{season_data['name']}"))
+            text = base_text + f"○ **Language:** `{lang_name_from_callback}`\n\nSelect the season you need...!"
             back_callback = f"user_series:{series_key}"
 
-        elif not quality_key: # Show qualities for selected season
-            current_level_data = series.get("languages", {}).get(lang_key, {}).get("seasons", {}).get(season_key, {}).get("qualities", {})
-            lang_name = series.get("languages", {}).get(lang_key, {}).get("name", "N/A")
-            season_name = series.get("languages", {}).get(lang_key, {}).get("seasons", {}).get(season_key, {}).get("name", "N/A")
-            for key, data_item in current_level_data.items():
-                # The file_link_key is stored in crazy_db, but the actual files are in episodes collection
-                file_link_key = data_item.get('file_link_key')
-                if file_link_key:
-                    buttons.append(InlineKeyboardButton(data_item['name'], callback_data=f"b:{file_link_key}"))
-            text = base_text + f"○ **Language:** `{lang_name}`\n○ **Season:** `{season_name}`\n\nSelect the quality you need...!"
-            back_callback = f"user_series:{series_key}:{lang_key}"
+        elif not quality_name_from_callback: # Show qualities for selected season
+            current_lang = next((lang for lang in series.get("languages", []) if lang["name"] == lang_name_from_callback), None)
+            current_season = next((s for s in current_lang.get("seasons", []) if s["name"] == season_name_from_callback), None) if current_lang else None
+            if current_season:
+                qualities = current_season.get("qualities", [])
+                for quality_data in qualities: # Iterate through the list
+                    file_link_key = quality_data.get('link_key')
+                    if file_link_key:
+                        buttons.append(InlineKeyboardButton(quality_data['name'], callback_data=f"b:{file_link_key}"))
+            text = base_text + f"○ **Language:** `{lang_name_from_callback}`\n○ **Season:** `{season_name_from_callback}`\n\nSelect the quality you need...!"
+            back_callback = f"user_series:{series_key}:{lang_name_from_callback}"
         
         buttons_chunked = chunk_buttons(buttons, chunk_size=2)
         if back_callback:
@@ -380,3 +375,7 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         except Exception as e:
             logger.error(f"Error editing message in user_series callback: {e}")
             await query.answer("An error occurred. Please try again.", show_alert=True)
+
+# Register handlers
+Client.on_message(filters.text & (filters.private | filters.group))(handle_message)
+Client.on_callback_query()(callback_handler)
