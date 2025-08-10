@@ -14,7 +14,7 @@ from pyrogram.types import (
 )
 from info import SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG, ADMINS
 from database.crazy_db import (
-    get_series, get_series_name, get_poster_manuel
+    get_series, get_series_by_key as get_series_name, get_poster_manuel
 )
 from database.gfilters_mdb import (
     find_gfilter,
