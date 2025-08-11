@@ -586,7 +586,7 @@ async def new_series_ui_command(client: Client, message: Message):
 
     async with get_admin_lock(user_id):
         temp_msg = await message.reply_photo(
-            photo=NO_POSTER_FOUND_IMG,
+            photo="https://envs.sh/EMw.jpg",
             caption="Searching TMDB and IMDb, please wait..."
         )
         
