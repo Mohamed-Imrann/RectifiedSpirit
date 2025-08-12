@@ -640,9 +640,7 @@ async def new_series_ui_command(client: Client, message: Message):
         buttons.append(InlineKeyboardButton("🔍 Search Again", callback_data="newseriesui_retry"))
         
         # Create dynamic layout
-        layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
-        layout = create_dynamic_layout(buttons, layout_pattern)
-        reply_markup = InlineKeyboardMarkup(layout)
+        reply_markup = InlineKeyboardMarkup(buttons)
 
         # Send final message with fixed photo and buttons
         msg = await message.reply_photo(
