@@ -582,7 +582,7 @@ async def new_series_ui_command(client: Client, message: Message):
 
     if not query:
         await message.reply_photo(
-            photo=NO_POSTER_FOUND_IMG,
+            photo="https://envs.sh/EMw.jpg",
             caption="Usage: `/newseriesui <series_title>`",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔍 Search Again", callback_data="newseriesui_retry")]
