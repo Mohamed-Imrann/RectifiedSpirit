@@ -66,7 +66,7 @@ def create_dynamic_layout(items, layout_pattern):
     Create a dynamic button layout based on a pattern.
     
     Args:
-        items: List of items to display
+        items: List of InlineKeyboardButton objects or strings
         layout_pattern: List of strings representing the layout pattern
                        Each string contains the type and position (e.g., "la1", "lb2", "sa3")
     
@@ -84,10 +84,16 @@ def create_dynamic_layout(items, layout_pattern):
     
     for code in layout_pattern:
         if code in item_dict:
-            current_row.append(InlineKeyboardButton(
-                text=item_dict[code],
-                callback_data=code
-            ))
+            # If item is already an InlineKeyboardButton, use it directly
+            # If it's a string, create a button with the code as callback_data
+            if isinstance(item_dict[code], InlineKeyboardButton):
+                current_row.append(item_dict[code])
+            else:
+                # This is for backward compatibility with string inputs
+                current_row.append(InlineKeyboardButton(
+                    text=str(item_dict[code]),
+                    callback_data=code
+                ))
         
         # Add row to layout if it has 3 buttons or is the last item
         if len(current_row) == 3 or code == layout_pattern[-1]:
@@ -246,9 +252,8 @@ async def send_series_selection_message(client: Client, user_id: int, query: str
     
     buttons.append(InlineKeyboardButton("🔍 Search Again", callback_data="search_again"))
     
-    # Create dynamic layout
-    layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
-    layout = create_dynamic_layout(buttons, layout_pattern)
+    # Create layout with 1 button per row for better readability
+    layout = [[button] for button in buttons]
     reply_markup = InlineKeyboardMarkup(layout)
 
     try:
@@ -363,20 +368,16 @@ async def send_language_management_message(client: Client, user_id: int, series_
 
     # Create buttons for languages
     buttons = []
-    for lang in languages:
-        buttons.append(InlineKeyboardButton(
+    for i, lang in enumerate(languages):
+        buttons.append([InlineKeyboardButton(
             f"{lang['name']} ({len(lang.get('seasons', []))} Seasons)", 
-            callback_data=f"la{len(buttons)+1}"
-        ))
+            callback_data=f"la{i+1}"
+        )])
     
-    buttons.append(InlineKeyboardButton("+ Language", callback_data="add_language"))
-    buttons.append(InlineKeyboardButton("⬅️ Back to Series", callback_data="back_to_series"))
+    buttons.append([InlineKeyboardButton("+ Language", callback_data="add_language")])
+    buttons.append([InlineKeyboardButton("⬅️ Back to Series", callback_data="back_to_series")])
 
-    # Define the layout pattern
-    layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
-    layout = create_dynamic_layout(buttons, layout_pattern)
-    reply_markup = InlineKeyboardMarkup(layout)
-
+    reply_markup = InlineKeyboardMarkup(buttons)
     poster_to_use = series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG
 
     try:
