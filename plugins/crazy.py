@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -46,7 +45,7 @@ admin_locks: Dict[int, asyncio.Lock] = {}
 imdb = Cinemagoer()
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
-NO_POSTER_FOUND_IMG = "https://envs.sh/EMw.jpg"  # Fixed URL instead of environment variable
+NO_POSTER_FOUND_IMG = "https://envs.sh/EMw.jpg"  # Fixed URL
 
 # Helper functions
 def get_admin_lock(user_id: int) -> asyncio.Lock:
@@ -97,6 +96,37 @@ def create_dynamic_layout(items, layout_pattern):
                 layout.append(current_row)
                 current_row = []
     
+    return layout
+
+def create_flexible_layout(buttons, layout_pattern):
+    """
+    Create a flexible button layout based on a pattern.
+    
+    Args:
+        buttons: List of InlineKeyboardButton objects
+        layout_pattern: List of strings representing the layout pattern
+                       Each string is a comma-separated list of indices (0-based) for buttons in that row
+                       Example: ["0,1", "2", "3,4,5"] would create:
+                           Row 1: buttons[0], buttons[1]
+                           Row 2: buttons[2]
+                           Row 3: buttons[3], buttons[4], buttons[5]
+    
+    Returns:
+        List of lists of InlineKeyboardButton objects
+    """
+    layout = []
+    for row_pattern in layout_pattern:
+        row = []
+        indices = row_pattern.split(',')
+        for idx in indices:
+            try:
+                button_index = int(idx.strip())
+                if 0 <= button_index < len(buttons):
+                    row.append(buttons[button_index])
+            except ValueError:
+                pass
+        if row:
+            layout.append(row)
     return layout
 
 # TMDB and helper functions
@@ -248,9 +278,8 @@ async def send_series_selection_message(client: Client, user_id: int, query: str
     
     buttons.append(InlineKeyboardButton("🔍 Search Again", callback_data="search_again"))
     
-    # Create dynamic layout
-    layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
-    layout = create_dynamic_layout(buttons, layout_pattern)
+    # Create layout with single buttons per row
+    layout = [[button] for button in buttons]
     reply_markup = InlineKeyboardMarkup(layout)
 
     try:
@@ -302,8 +331,7 @@ async def send_series_details_message(client: Client, user_id: int, series_data:
         f"**Media Type:** `{series_data.get('media_type', 'N/A').upper()}`\n\n"
     )
 
-    # Define the layout pattern for series details
-    layout_pattern = ["la1", "la2", "la3", "la4", "la5"]
+    # Define the layout pattern for series details - single buttons per row
     buttons = [
         InlineKeyboardButton("✏️ Edit Details", callback_data="edit_details"),
         InlineKeyboardButton("🌐 Languages", callback_data="manage_languages"),
@@ -312,7 +340,7 @@ async def send_series_details_message(client: Client, user_id: int, series_data:
         InlineKeyboardButton("⬅️ Back", callback_data="back_to_search")
     ]
     
-    layout = create_dynamic_layout(buttons, layout_pattern)
+    layout = [[button] for button in buttons]
     reply_markup = InlineKeyboardMarkup(layout)
 
     try:
@@ -364,24 +392,40 @@ async def send_language_management_message(client: Client, user_id: int, series_
     text += "Select any Language group to manage. Or click '+' button to add new Language group.\n\n"
 
     # Create buttons for languages
-    buttons = []
+    item_buttons = []
     for i, lang in enumerate(languages):
-        buttons.append(InlineKeyboardButton(
+        item_buttons.append(InlineKeyboardButton(
             f"{lang['name']} ({len(lang.get('seasons', []))} Seasons)", 
             callback_data=f"lang_{i}"
         ))
     
-    buttons.append(InlineKeyboardButton("+ Add Language", callback_data="add_language"))
-    buttons.append(InlineKeyboardButton("⬅️ Back to Series", callback_data="back_to_series"))
-
-    # Create dynamic layout with improved pattern
-    layout = []
-    row = []
-    for i, button in enumerate(buttons):
-        row.append(button)
-        if len(row) == 2 or i == len(buttons) - 1:
-            layout.append(row)
-            row = []
+    # Action buttons
+    action_buttons = [
+        InlineKeyboardButton("+ Add Language", callback_data="add_language"),
+        InlineKeyboardButton("⬅️ Back to Series", callback_data="back_to_series")
+    ]
+    
+    # Define flexible layout pattern for languages
+    # Example: ["0,1", "2", "3,4,5"] would create:
+    # Row 1: buttons[0], buttons[1]
+    # Row 2: buttons[2]
+    # Row 3: buttons[3], buttons[4], buttons[5]
+    # Adjust this pattern to control button positions
+    if len(item_buttons) >= 6:
+        layout_pattern = ["0,1", "2,3", "4,5"]
+    elif len(item_buttons) >= 4:
+        layout_pattern = ["0,1", "2,3"]
+    elif len(item_buttons) >= 2:
+        layout_pattern = ["0,1"]
+    else:
+        layout_pattern = ["0"] if item_buttons else []
+    
+    # Create layout for item buttons
+    layout = create_flexible_layout(item_buttons, layout_pattern)
+    
+    # Add action buttons as a new row
+    if action_buttons:
+        layout.append(action_buttons)
     
     reply_markup = InlineKeyboardMarkup(layout)
 
@@ -446,26 +490,37 @@ async def send_season_management_message(client: Client, user_id: int, series_ke
     )
 
     # Create buttons for seasons
-    buttons = []
+    item_buttons = []
     for i, season in enumerate(seasons):
-        buttons.append(InlineKeyboardButton(
+        item_buttons.append(InlineKeyboardButton(
             f"{season['name']} ({len(season.get('qualities', []))} Qualities)", 
             callback_data=f"season_{i}"
         ))
     
-    buttons.append(InlineKeyboardButton("+ Add Season", callback_data="add_season"))
-    buttons.append(InlineKeyboardButton("🖼️ Change Poster", callback_data="change_lang_poster"))
-    buttons.append(InlineKeyboardButton(f"🗑️ Delete '{language_name}'", callback_data="delete_language"))
-    buttons.append(InlineKeyboardButton("⬅️ Back to Languages", callback_data="back_to_languages"))
-
-    # Create dynamic layout with improved pattern
-    layout = []
-    row = []
-    for i, button in enumerate(buttons):
-        row.append(button)
-        if len(row) == 2 or i == len(buttons) - 1:
-            layout.append(row)
-            row = []
+    # Action buttons
+    action_buttons = [
+        InlineKeyboardButton("+ Add Season", callback_data="add_season"),
+        InlineKeyboardButton("🖼️ Change Poster", callback_data="change_lang_poster"),
+        InlineKeyboardButton(f"🗑️ Delete '{language_name}'", callback_data="delete_language"),
+        InlineKeyboardButton("⬅️ Back to Languages", callback_data="back_to_languages")
+    ]
+    
+    # Define flexible layout pattern for seasons
+    if len(item_buttons) >= 6:
+        layout_pattern = ["0,1", "2,3", "4,5"]
+    elif len(item_buttons) >= 4:
+        layout_pattern = ["0,1", "2,3"]
+    elif len(item_buttons) >= 2:
+        layout_pattern = ["0,1"]
+    else:
+        layout_pattern = ["0"] if item_buttons else []
+    
+    # Create layout for item buttons
+    layout = create_flexible_layout(item_buttons, layout_pattern)
+    
+    # Add action buttons as a new row
+    if action_buttons:
+        layout.append(action_buttons)
     
     reply_markup = InlineKeyboardMarkup(layout)
 
@@ -532,26 +587,37 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
     )
 
     # Create buttons for qualities
-    buttons = []
+    item_buttons = []
     for i, quality in enumerate(qualities):
-        buttons.append(InlineKeyboardButton(
+        item_buttons.append(InlineKeyboardButton(
             f"{quality['name']}", 
             callback_data=f"quality_{i}"
         ))
     
-    buttons.append(InlineKeyboardButton("+ Add Quality", callback_data="add_quality"))
-    buttons.append(InlineKeyboardButton("🖼️ Change Poster", callback_data="change_season_poster"))
-    buttons.append(InlineKeyboardButton(f"🗑️ Delete '{season_name}'", callback_data="delete_season"))
-    buttons.append(InlineKeyboardButton("⬅️ Back to Seasons", callback_data="back_to_seasons"))
-
-    # Create dynamic layout with improved pattern
-    layout = []
-    row = []
-    for i, button in enumerate(buttons):
-        row.append(button)
-        if len(row) == 2 or i == len(buttons) - 1:
-            layout.append(row)
-            row = []
+    # Action buttons
+    action_buttons = [
+        InlineKeyboardButton("+ Add Quality", callback_data="add_quality"),
+        InlineKeyboardButton("🖼️ Change Poster", callback_data="change_season_poster"),
+        InlineKeyboardButton(f"🗑️ Delete '{season_name}'", callback_data="delete_season"),
+        InlineKeyboardButton("⬅️ Back to Seasons", callback_data="back_to_seasons")
+    ]
+    
+    # Define flexible layout pattern for qualities
+    if len(item_buttons) >= 6:
+        layout_pattern = ["0,1", "2,3", "4,5"]
+    elif len(item_buttons) >= 4:
+        layout_pattern = ["0,1", "2,3"]
+    elif len(item_buttons) >= 2:
+        layout_pattern = ["0,1"]
+    else:
+        layout_pattern = ["0"] if item_buttons else []
+    
+    # Create layout for item buttons
+    layout = create_flexible_layout(item_buttons, layout_pattern)
+    
+    # Add action buttons as a new row
+    if action_buttons:
+        layout.append(action_buttons)
     
     reply_markup = InlineKeyboardMarkup(layout)
 
@@ -611,7 +677,13 @@ async def new_series_ui_command(client: Client, message: Message):
         return
 
     async with get_admin_lock(user_id):
-        # Fetch results first
+        # Send initial message with fixed photo
+        temp_msg = await message.reply_photo(
+            photo=NO_POSTER_FOUND_IMG,
+            caption="Searching TMDB and IMDb, please wait..."
+        )
+        
+        # Fetch results
         tmdb_results = await get_tmdb_info(query, bulk=True)
         imdb_results = await get_poster(query, bulk=True)
 
@@ -632,8 +704,7 @@ async def new_series_ui_command(client: Client, message: Message):
                 })
 
         if not all_results:
-            await message.reply_photo(
-                photo=NO_POSTER_FOUND_IMG,
+            await temp_msg.edit_caption(
                 caption="No results found on TMDB or IMDb for the provided series name.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔍 Search Again", callback_data="newseriesui_retry")]
@@ -641,43 +712,15 @@ async def new_series_ui_command(client: Client, message: Message):
             )
             return
 
-        # Create buttons for results
-        buttons = []
-        for i, item in enumerate(all_results, 1):
-            unique_id = str(uuid.uuid4())
-            temp_admin_data[user_id] = temp_admin_data.get(user_id, {})
-            temp_admin_data[user_id][unique_id] = {
-                'id': item.get('tmdb_id') if item.get('source') == 'tmdb' else item.get('imdb_id'),
-                'media_type': item.get('media_type'),
-                'source': item.get('source'),
-                'query': query
-            }
-            buttons.append(InlineKeyboardButton(
-                text=f"{item.get('title', 'N/A')} ({item.get('year', 'N/A')}) - {item.get('source').upper()}",
-                callback_data=f"sel_{unique_id}"
-            ))
-        
-        buttons.append(InlineKeyboardButton("🔍 Search Again", callback_data="newseriesui_retry"))
-        
-        # Create dynamic layout
-        layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
-        layout = create_dynamic_layout(buttons, layout_pattern)
-        reply_markup = InlineKeyboardMarkup(layout)
-
-        # Send final message with fixed photo and buttons
-        msg = await message.reply_photo(
-            photo=NO_POSTER_FOUND_IMG,
-            caption=f"**Select a series from below:**\n\nSearch query: `{query}`",
-            reply_markup=reply_markup,
-            parse_mode=enums.ParseMode.MARKDOWN
-        )
-        
         # Store data in temp_admin_data
         temp_admin_data[user_id] = temp_admin_data.get(user_id, {})
         temp_admin_data[user_id]["search_results"] = all_results
         temp_admin_data[user_id]["query"] = query
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SEARCH_RESULTS"
-        temp_admin_data[user_id]["main_message_id"] = msg.id
+        temp_admin_data[user_id]["main_message_id"] = temp_msg.id
+
+        # Edit message with results and single buttons per row
+        await send_series_selection_message(client, user_id, query, all_results, temp_msg.id)
 
 @Client.on_message(filters.command('editseries') & filters.user(ADMINS))
 async def edit_series_command(client: Client, message: Message):
@@ -707,7 +750,6 @@ async def edit_series_command(client: Client, message: Message):
             series_data = get_series_by_key(series_key)
             if series_data:
                 # Create buttons for series details
-                layout_pattern = ["la1", "la2", "la3", "la4", "la5"]
                 buttons = [
                     InlineKeyboardButton("✏️ Edit Details", callback_data="edit_details"),
                     InlineKeyboardButton("🌐 Languages", callback_data="manage_languages"),
@@ -716,7 +758,7 @@ async def edit_series_command(client: Client, message: Message):
                     InlineKeyboardButton("⬅️ Back", callback_data="editseries_retry")
                 ]
                 
-                layout = create_dynamic_layout(buttons, layout_pattern)
+                layout = [[button] for button in buttons]
                 reply_markup = InlineKeyboardMarkup(layout)
                 
                 poster_file_id = get_poster_file_id(series_key) or NO_POSTER_FOUND_IMG
@@ -750,7 +792,6 @@ async def edit_series_command(client: Client, message: Message):
                 series_data = get_series_by_key(series_key)
                 if series_data:
                     # Create buttons for series details
-                    layout_pattern = ["la1", "la2", "la3", "la4", "la5"]
                     buttons = [
                         InlineKeyboardButton("✏️ Edit Details", callback_data="edit_details"),
                         InlineKeyboardButton("🌐 Languages", callback_data="manage_languages"),
@@ -759,7 +800,7 @@ async def edit_series_command(client: Client, message: Message):
                         InlineKeyboardButton("⬅️ Back", callback_data="editseries_retry")
                     ]
                     
-                    layout = create_dynamic_layout(buttons, layout_pattern)
+                    layout = [[button] for button in buttons]
                     reply_markup = InlineKeyboardMarkup(layout)
                     
                     poster_file_id = get_poster_file_id(series_key) or NO_POSTER_FOUND_IMG
@@ -770,6 +811,7 @@ async def edit_series_command(client: Client, message: Message):
                         f"**Genre:** `{series_data.get('genre', 'N/A')}`\n"
                         f"**Rating:** `{series_data.get('rating', 'N/A')}`\n"
                         f"**TMDB ID:** `{series_data.get('tmdb_id', 'N/A')}`\n"
+                        f"**IMDb ID:** `{series_data.get('imdb_id', 'N/A')}`\n"
                         f"**Media Type:** `{series_data.get('media_type', 'N/A').upper()}`\n\n"
                     )
                     
@@ -806,9 +848,8 @@ async def edit_series_command(client: Client, message: Message):
         
         buttons.append(InlineKeyboardButton("🔍 Search Again", callback_data="editseries_retry"))
         
-        # Define the layout pattern
-        layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
-        layout = create_dynamic_layout(buttons, layout_pattern)
+        # Create layout with single buttons per row
+        layout = [[button] for button in buttons]
         reply_markup = InlineKeyboardMarkup(layout)
         
         msg = await message.reply_photo(
@@ -1279,8 +1320,7 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             InlineKeyboardButton("⬅️ Back", callback_data="back_to_series")
         ]
         
-        layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
-        layout = create_dynamic_layout(buttons, layout_pattern)
+        layout = [[button] for button in buttons]
         reply_markup = InlineKeyboardMarkup(layout)
         
         text = (
