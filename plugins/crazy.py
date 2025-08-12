@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -18,7 +19,7 @@ from pyrogram.types import (
     InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 )
 from imdb import Cinemagoer
-from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, TMDB_API_KEY, LOG_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL, NO_POSTER_FOUND_IMG
+from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, TMDB_API_KEY, LOG_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL
 from database.crazy_db import (
     add_series, get_series_by_key, update_series_field, add_or_update_language,
     get_languages, delete_language, add_or_update_season, get_seasons, delete_season,
@@ -45,6 +46,7 @@ admin_locks: Dict[int, asyncio.Lock] = {}
 imdb = Cinemagoer()
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
+NO_POSTER_FOUND_IMG = "https://envs.sh/EMw.jpg"  # Fixed URL instead of environment variable
 
 # Helper functions
 def get_admin_lock(user_id: int) -> asyncio.Lock:
@@ -363,18 +365,24 @@ async def send_language_management_message(client: Client, user_id: int, series_
 
     # Create buttons for languages
     buttons = []
-    for lang in languages:
+    for i, lang in enumerate(languages):
         buttons.append(InlineKeyboardButton(
             f"{lang['name']} ({len(lang.get('seasons', []))} Seasons)", 
-            callback_data=f"la{len(buttons)+1}"
+            callback_data=f"lang_{i}"
         ))
     
-    buttons.append(InlineKeyboardButton("+ Language", callback_data="add_language"))
+    buttons.append(InlineKeyboardButton("+ Add Language", callback_data="add_language"))
     buttons.append(InlineKeyboardButton("⬅️ Back to Series", callback_data="back_to_series"))
 
-    # Define the layout pattern
-    layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
-    layout = create_dynamic_layout(buttons, layout_pattern)
+    # Create dynamic layout with improved pattern
+    layout = []
+    row = []
+    for i, button in enumerate(buttons):
+        row.append(button)
+        if len(row) == 2 or i == len(buttons) - 1:
+            layout.append(row)
+            row = []
+    
     reply_markup = InlineKeyboardMarkup(layout)
 
     poster_to_use = series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG
@@ -439,20 +447,26 @@ async def send_season_management_message(client: Client, user_id: int, series_ke
 
     # Create buttons for seasons
     buttons = []
-    for season in seasons:
+    for i, season in enumerate(seasons):
         buttons.append(InlineKeyboardButton(
             f"{season['name']} ({len(season.get('qualities', []))} Qualities)", 
-            callback_data=f"sa{len(buttons)+1}"
+            callback_data=f"season_{i}"
         ))
     
-    buttons.append(InlineKeyboardButton("+ Season", callback_data="add_season"))
-    buttons.append(InlineKeyboardButton("🖼️ Change Poster for this Language", callback_data="change_lang_poster"))
-    buttons.append(InlineKeyboardButton(f"🗑️ Delete '{language_name}' Group", callback_data="delete_language"))
+    buttons.append(InlineKeyboardButton("+ Add Season", callback_data="add_season"))
+    buttons.append(InlineKeyboardButton("🖼️ Change Poster", callback_data="change_lang_poster"))
+    buttons.append(InlineKeyboardButton(f"🗑️ Delete '{language_name}'", callback_data="delete_language"))
     buttons.append(InlineKeyboardButton("⬅️ Back to Languages", callback_data="back_to_languages"))
 
-    # Define the layout pattern
-    layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
-    layout = create_dynamic_layout(buttons, layout_pattern)
+    # Create dynamic layout with improved pattern
+    layout = []
+    row = []
+    for i, button in enumerate(buttons):
+        row.append(button)
+        if len(row) == 2 or i == len(buttons) - 1:
+            layout.append(row)
+            row = []
+    
     reply_markup = InlineKeyboardMarkup(layout)
 
     poster_to_use = current_lang.get("poster_file_id") or series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG
@@ -519,20 +533,26 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
 
     # Create buttons for qualities
     buttons = []
-    for quality in qualities:
+    for i, quality in enumerate(qualities):
         buttons.append(InlineKeyboardButton(
             f"{quality['name']}", 
-            callback_data=f"qa{len(buttons)+1}"
+            callback_data=f"quality_{i}"
         ))
     
-    buttons.append(InlineKeyboardButton("+ Quality", callback_data="add_quality"))
-    buttons.append(InlineKeyboardButton("🖼️ Change Poster for this Season", callback_data="change_season_poster"))
-    buttons.append(InlineKeyboardButton(f"🗑️ Delete '{season_name}' Group", callback_data="delete_season"))
+    buttons.append(InlineKeyboardButton("+ Add Quality", callback_data="add_quality"))
+    buttons.append(InlineKeyboardButton("🖼️ Change Poster", callback_data="change_season_poster"))
+    buttons.append(InlineKeyboardButton(f"🗑️ Delete '{season_name}'", callback_data="delete_season"))
     buttons.append(InlineKeyboardButton("⬅️ Back to Seasons", callback_data="back_to_seasons"))
 
-    # Define the layout pattern
-    layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
-    layout = create_dynamic_layout(buttons, layout_pattern)
+    # Create dynamic layout with improved pattern
+    layout = []
+    row = []
+    for i, button in enumerate(buttons):
+        row.append(button)
+        if len(row) == 2 or i == len(buttons) - 1:
+            layout.append(row)
+            row = []
+    
     reply_markup = InlineKeyboardMarkup(layout)
 
     poster_to_use = current_season.get("poster_file_id") or current_lang.get("poster_file_id") or series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG
@@ -582,7 +602,7 @@ async def new_series_ui_command(client: Client, message: Message):
 
     if not query:
         await message.reply_photo(
-            photo="https://envs.sh/EMw.jpg",
+            photo=NO_POSTER_FOUND_IMG,
             caption="Usage: `/newseriesui <series_title>`",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔍 Search Again", callback_data="newseriesui_retry")]
@@ -613,7 +633,7 @@ async def new_series_ui_command(client: Client, message: Message):
 
         if not all_results:
             await message.reply_photo(
-                photo="https://envs.sh/EMw.jpg",
+                photo=NO_POSTER_FOUND_IMG,
                 caption="No results found on TMDB or IMDb for the provided series name.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔍 Search Again", callback_data="newseriesui_retry")]
@@ -640,11 +660,13 @@ async def new_series_ui_command(client: Client, message: Message):
         buttons.append(InlineKeyboardButton("🔍 Search Again", callback_data="newseriesui_retry"))
         
         # Create dynamic layout
-        reply_markup = InlineKeyboardMarkup(buttons)
+        layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
+        layout = create_dynamic_layout(buttons, layout_pattern)
+        reply_markup = InlineKeyboardMarkup(layout)
 
         # Send final message with fixed photo and buttons
         msg = await message.reply_photo(
-            photo="https://envs.sh/EMw.jpg",
+            photo=NO_POSTER_FOUND_IMG,
             caption=f"**Select a series from below:**\n\nSearch query: `{query}`",
             reply_markup=reply_markup,
             parse_mode=enums.ParseMode.MARKDOWN
@@ -665,7 +687,7 @@ async def edit_series_command(client: Client, message: Message):
 
     if not query:
         await message.reply_photo(
-            photo="https://envs.sh/EMw.jpg",
+            photo=NO_POSTER_FOUND_IMG,
             caption="Usage: `/editseries <series_title>`",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔍 Search Again", callback_data="editseries_retry")]
@@ -740,7 +762,7 @@ async def edit_series_command(client: Client, message: Message):
                     layout = create_dynamic_layout(buttons, layout_pattern)
                     reply_markup = InlineKeyboardMarkup(layout)
                     
-                    poster_file_id = get_poster_file_id(series_key) or "https://envs.sh/EMw.jpg"
+                    poster_file_id = get_poster_file_id(series_key) or NO_POSTER_FOUND_IMG
                     
                     text = (
                         f"**Title:** `{series_data.get('title', 'N/A')}`\n"
@@ -768,7 +790,7 @@ async def edit_series_command(client: Client, message: Message):
         close_matches = find_most_similar_title(query, series_names)
         if not close_matches:
             await message.reply_photo(
-                photo="https://envs.sh/EMw.jpg",
+                photo=NO_POSTER_FOUND_IMG,
                 caption="No series found with that name.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔍 Search Again", callback_data="editseries_retry")]
@@ -790,7 +812,7 @@ async def edit_series_command(client: Client, message: Message):
         reply_markup = InlineKeyboardMarkup(layout)
         
         msg = await message.reply_photo(
-            photo="https://envs.sh/EMw.jpg",
+            photo=NO_POSTER_FOUND_IMG,
             caption="Select a series to edit:",
             reply_markup=reply_markup
         )
@@ -1041,9 +1063,9 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_AWAITING_LANGUAGE_INPUT"
         temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
     
-    elif data.startswith("la"):  # Language selection
+    elif data.startswith("lang_"):  # Language selection
         series_key = temp_admin_data[user_id].get("current_series_key")
-        lang_index = int(data[2:]) - 1
+        lang_index = int(data.split("_", 1)[1])
         languages = get_languages(series_key)
         
         if 0 <= lang_index < len(languages):
@@ -1085,10 +1107,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_AWAITING_SEASON_INPUT"
         temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
     
-    elif data.startswith("sa"):  # Season selection
+    elif data.startswith("season_"):  # Season selection
         series_key = temp_admin_data[user_id].get("current_series_key")
         language_name = temp_admin_data[user_id].get("current_language")
-        season_index = int(data[2:]) - 1
+        season_index = int(data.split("_", 1)[1])
         seasons = get_seasons(series_key, language_name)
         
         if 0 <= season_index < len(seasons):
@@ -1130,11 +1152,11 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_AWAITING_QUALITY_INPUT"
         temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
     
-    elif data.startswith("qa"):  # Quality selection
+    elif data.startswith("quality_"):  # Quality selection
         series_key = temp_admin_data[user_id].get("current_series_key")
         language_name = temp_admin_data[user_id].get("current_language")
         season_name = temp_admin_data[user_id].get("current_season")
-        quality_index = int(data[2:]) - 1
+        quality_index = int(data.split("_", 1)[1])
         qualities = get_qualities(series_key, language_name, season_name)
         
         if 0 <= quality_index < len(qualities):
