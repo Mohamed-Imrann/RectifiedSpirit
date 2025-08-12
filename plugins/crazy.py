@@ -613,7 +613,7 @@ async def new_series_ui_command(client: Client, message: Message):
 
         if not all_results:
             await message.reply_photo(
-                photo=NO_POSTER_FOUND_IMG,
+                photo="https://envs.sh/EMw.jpg",
                 caption="No results found on TMDB or IMDb for the provided series name.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔍 Search Again", callback_data="newseriesui_retry")]
@@ -646,7 +646,7 @@ async def new_series_ui_command(client: Client, message: Message):
 
         # Send final message with fixed photo and buttons
         msg = await message.reply_photo(
-            photo=NO_POSTER_FOUND_IMG,
+            photo="https://envs.sh/EMw.jpg",
             caption=f"**Select a series from below:**\n\nSearch query: `{query}`",
             reply_markup=reply_markup,
             parse_mode=enums.ParseMode.MARKDOWN
@@ -667,7 +667,7 @@ async def edit_series_command(client: Client, message: Message):
 
     if not query:
         await message.reply_photo(
-            photo=NO_POSTER_FOUND_IMG,
+            photo="https://envs.sh/EMw.jpg",
             caption="Usage: `/editseries <series_title>`",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔍 Search Again", callback_data="editseries_retry")]
@@ -742,7 +742,7 @@ async def edit_series_command(client: Client, message: Message):
                     layout = create_dynamic_layout(buttons, layout_pattern)
                     reply_markup = InlineKeyboardMarkup(layout)
                     
-                    poster_file_id = get_poster_file_id(series_key) or NO_POSTER_FOUND_IMG
+                    poster_file_id = get_poster_file_id(series_key) or "https://envs.sh/EMw.jpg"
                     
                     text = (
                         f"**Title:** `{series_data.get('title', 'N/A')}`\n"
@@ -770,7 +770,7 @@ async def edit_series_command(client: Client, message: Message):
         close_matches = find_most_similar_title(query, series_names)
         if not close_matches:
             await message.reply_photo(
-                photo=NO_POSTER_FOUND_IMG,
+                photo="https://envs.sh/EMw.jpg",
                 caption="No series found with that name.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔍 Search Again", callback_data="editseries_retry")]
@@ -792,7 +792,7 @@ async def edit_series_command(client: Client, message: Message):
         reply_markup = InlineKeyboardMarkup(layout)
         
         msg = await message.reply_photo(
-            photo=NO_POSTER_FOUND_IMG,
+            photo="https://envs.sh/EMw.jpg",
             caption="Select a series to edit:",
             reply_markup=reply_markup
         )
