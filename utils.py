@@ -19,15 +19,15 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 BTN_URL_REGEX = re.compile(
-    r"(\[([^\[]+?)\]$$(buttonurl|buttonalert):(?:/\{0,2\})(.+?)(:same)?$$)"
+    r"(\[([^\[]+?)\]\((buttonurl|buttonalert):(?:/ {0,2})(.+?)(:same)?\))"
 )
 temp_requests = {}
 AUTO_DEL_SUCCESS_MSG = """Your File Has Been Deleted To Avoid BOT Copyright.\nYou Can Request Again If You Want!🫵🏻"""
 imdb = Cinemagoer() 
 
 BANNED = {}
-SMART_OPEN = '“'
-SMART_CLOSE = '”'
+SMART_OPEN = '""'
+SMART_CLOSE = '""'
 START_CHAR = ('\'', '"', SMART_OPEN)
 
 class Temp(object):
