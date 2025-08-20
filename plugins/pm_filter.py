@@ -43,39 +43,54 @@ async def DeleteMessage(msg):
     except Exception as e:
         logger.warning(f"Failed to delete message {msg.id}: {e}")
 
-def create_dynamic_layout(items, layout_pattern):
+def create_user_layout_from_pattern(items: List[str], layout_pattern: List[int], callback_prefix: str = "user_item") -> List[List[InlineKeyboardButton]]:
     """
-    Create a dynamic button layout based on a pattern.
+    Create a user-facing layout without + buttons using saved layout pattern.
     
     Args:
-        items: List of items to display
-        layout_pattern: List of strings representing the layout pattern
-                       Each string contains the type and position (e.g., "la1", "lb2", "sa3")
+        items: List of item names
+        layout_pattern: List of integers representing buttons per row
+        callback_prefix: Prefix for callback data
     
     Returns:
         List of lists of InlineKeyboardButton objects
     """
-    # Create a dictionary to map layout codes to items
-    item_dict = {}
-    for i, item in enumerate(items, 1):
-        item_dict[f"l{i}"] = item
+    if not items:
+        return []
     
-    # Create the layout
     layout = []
-    current_row = []
+    item_index = 0
     
-    for code in layout_pattern:
-        if code in item_dict:
-            current_row.append(InlineKeyboardButton(
-                text=item_dict[code],
-                callback_data=code
-            ))
+    # Use saved layout pattern
+    for row_count in layout_pattern:
+        if item_index >= len(items):
+            break
         
-        # Add row to layout if it has 3 buttons or is the last item
-        if len(current_row) == 3 or code == layout_pattern[-1]:
-            if current_row:
-                layout.append(current_row)
-                current_row = []
+        row = []
+        for _ in range(row_count):
+            if item_index < len(items):
+                item_button = InlineKeyboardButton(
+                    items[item_index], 
+                    callback_data=f"{callback_prefix}_{item_index}"
+                )
+                row.append(item_button)
+                item_index += 1
+        
+        if row:
+            layout.append(row)
+    
+    # Add remaining items if any (fallback)
+    while item_index < len(items):
+        row = []
+        for _ in range(min(2, len(items) - item_index)):  # Max 2 per row for remaining
+            item_button = InlineKeyboardButton(
+                items[item_index], 
+                callback_data=f"{callback_prefix}_{item_index}"
+            )
+            row.append(item_button)
+            item_index += 1
+        if row:
+            layout.append(row)
     
     return layout
 
@@ -148,8 +163,12 @@ async def series_filter(client: Client, message: Message):
     logger.info(f"Applying series filter to message {message.id} from user {message.from_user.id}")
     text = message.text.strip()
     series_infos = get_series()
-    series_keys = [series['_id'] for series in series_infos]
-    series_names = [series['title'] for series in series_infos]
+    
+    # Filter only published series for users
+    published_series = [s for s in series_infos if s.get('published', False)]
+    
+    series_keys = [series['_id'] for series in published_series]
+    series_names = [series['title'] for series in published_series]
 
     series_key = None
     
@@ -159,7 +178,7 @@ async def series_filter(client: Client, message: Message):
         logger.info(f"Found exact key match: {series_key}")
     else:
         # Try exact match by title
-        for s_info in series_infos:
+        for s_info in published_series:
             if s_info['title'].lower() == text.lower():
                 series_key = s_info['_id']
                 logger.info(f"Found exact title match: {series_key}")
@@ -177,14 +196,13 @@ async def series_filter(client: Client, message: Message):
                 logger.info(f"Found {len(close_matches)} close matches: {close_matches}")
                 buttons = []
                 for match in close_matches:
-                    s_info = next((s for s in series_infos if s['title'] == match), None)
+                    s_info = next((s for s in published_series if s['title'] == match), None)
                     if s_info:
                         buttons.append(InlineKeyboardButton(match, callback_data=f"user_series:{s_info['_id']}"))
                 
                 if buttons:
-                    # Define the layout pattern
-                    layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
-                    layout = create_dynamic_layout(buttons, layout_pattern)
+                    # Create simple layout for selection (1 button per row)
+                    layout = [[button] for button in buttons]
                     reply_markup = InlineKeyboardMarkup(layout)
                     
                     etho = await message.reply_photo(
@@ -201,11 +219,12 @@ async def series_filter(client: Client, message: Message):
     if series_key:
         logger.info(f"Processing series with key: {series_key}")
         series = get_series_name(series_key)
-        if not series:
-            logger.warning(f"Series not found for key: {series_key}")
+        if not series or not series.get('published', False):
+            logger.warning(f"Series not found or not published for key: {series_key}")
             return
 
         languages = series.get("languages", [])
+        language_layout = series.get("language_layout", [1] * len(languages))
         
         reply_text = (
             f"○ **Title:** `{series['title']}`\n"
@@ -217,13 +236,17 @@ async def series_filter(client: Client, message: Message):
         )
         poster_url = get_movie_poster(series_key)
         
-        buttons = []
-        for lang_data in languages:
-            buttons.append(lang_data['name'])
+        # Get language names
+        language_names = [lang['name'] for lang in languages]
         
-        # Define the layout pattern
-        layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
-        layout = create_dynamic_layout(buttons, layout_pattern)
+        # Create user layout using saved pattern
+        layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
+        
+        if not layout:
+            # Fallback if no languages
+            await message.reply("No languages available for this series.")
+            return
+        
         reply_markup = InlineKeyboardMarkup(layout)
         
         try:
@@ -233,7 +256,10 @@ async def series_filter(client: Client, message: Message):
                 etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG[0], caption=reply_text, reply_markup=reply_markup)
             
             reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
-            user_requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
+            user_requestor[f"{etho.chat.id}•{etho.id}"] = {
+                "series_key": series_key,
+                "requested_user": reply_etho_user_id
+            }
             asyncio.create_task(DeleteMessage(etho))
             logger.info(f"Sent series filter response for {series['title']}")
         except Exception as e:
@@ -271,10 +297,10 @@ async def callback_handler(client: Client, callback_query: CallbackQuery):
         await user_series_callback_handler(client, callback_query)
         return
 
-    # Handle dynamic layout callbacks
-    elif data.startswith("la") or data.startswith("sa") or data.startswith("qa"):
-        logger.info(f"Dynamic layout callback from user {user_id}")
-        await dynamic_layout_callback_handler(client, callback_query)
+    # Handle user interface callbacks
+    elif data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_"):
+        logger.info(f"User interface callback from user {user_id}")
+        await user_interface_callback_handler(client, callback_query)
         return
 
     logger.warning(f"Unknown callback type from user {user_id}: {data}")
@@ -291,7 +317,11 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
     if reply_msg and reply_msg.from_user:
         requested_user = reply_msg.from_user.id
     else:
-        requested_user = user_requestor.get(f"{chat_id}•{message_id}")
+        stored_data = user_requestor.get(f"{chat_id}•{message_id}")
+        if isinstance(stored_data, dict):
+            requested_user = stored_data.get("requested_user")
+        else:
+            requested_user = stored_data
     
     if chat_id < 0 and requested_user and clicked_user != requested_user:
         logger.warning(f"User {clicked_user} tried to access another user's request")
@@ -342,18 +372,19 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         series_key = parts[1]
         logger.info(f"Processing series with key: {series_key}")
         series = get_series_name(series_key)
-        if not series:
-            logger.warning(f"Series not found for key: {series_key}")
-            await query.message.edit_text("Series not found or deleted.", parse_mode=enums.ParseMode.HTML)
+        if not series or not series.get('published', False):
+            logger.warning(f"Series not found or not published for key: {series_key}")
+            await query.message.edit_text("Series not found or not available.", parse_mode=enums.ParseMode.HTML)
             return
 
-        # Store series key in user_requestor for dynamic layout callbacks
+        # Store series key in user_requestor for future callbacks
         user_requestor[f"{chat_id}•{message_id}"] = {
             "series_key": series_key,
-            "requested_user": requested_user
+            "requested_user": clicked_user
         }
 
         languages = series.get("languages", [])
+        language_layout = series.get("language_layout", [1] * len(languages))
         
         base_text = (
             f"○ **Title:** `{series['title']}`\n"
@@ -363,15 +394,18 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`\n"
         )
         
-        buttons = []
-        for lang_data in languages:
-            buttons.append(lang_data['name'])
+        # Get language names
+        language_names = [lang['name'] for lang in languages]
         
         text = base_text + "\nSelect the language you need...!"
         
-        # Define the layout pattern
-        layout_pattern = [f"la{i}" for i in range(1, len(buttons) + 1)]
-        layout = create_dynamic_layout(buttons, layout_pattern)
+        # Create user layout using saved pattern
+        layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
+        
+        if not layout:
+            await query.message.edit_text("No languages available for this series.")
+            return
+        
         reply_markup = InlineKeyboardMarkup(layout)
 
         try:
@@ -388,27 +422,21 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             logger.error(f"Error editing message in user_series callback: {e}")
             await query.answer("An error occurred. Please try again.", show_alert=True)
 
-async def dynamic_layout_callback_handler(client: Client, query: CallbackQuery):
+async def user_interface_callback_handler(client: Client, query: CallbackQuery):
     user_id = query.from_user.id
     chat_id = query.message.chat.id
     message_id = query.message.id
     data = query.data
-    logger.info(f"Processing dynamic layout callback: {data}")
+    logger.info(f"Processing user interface callback: {data}")
     
     # Get stored data
     stored_data = user_requestor.get(f"{chat_id}•{message_id}")
-    if not stored_data:
+    if not stored_data or not isinstance(stored_data, dict):
         await query.answer("Session expired. Please search again.", show_alert=True)
         return
     
-    if isinstance(stored_data, dict):
-        series_key = stored_data.get("series_key")
-        requested_user = stored_data.get("requested_user")
-    else:
-        requested_user = stored_data
-        # Find series_key from previous callbacks
-        await query.answer("Session expired. Please search again.", show_alert=True)
-        return
+    series_key = stored_data.get("series_key")
+    requested_user = stored_data.get("requested_user")
     
     # Check if user is authorized
     if chat_id < 0 and requested_user and user_id != requested_user:
@@ -417,8 +445,8 @@ async def dynamic_layout_callback_handler(client: Client, query: CallbackQuery):
         return
     
     series = get_series_name(series_key)
-    if not series:
-        await query.answer("Series not found.", show_alert=True)
+    if not series or not series.get('published', False):
+        await query.answer("Series not found or not available.", show_alert=True)
         return
     
     base_text = (
@@ -430,11 +458,12 @@ async def dynamic_layout_callback_handler(client: Client, query: CallbackQuery):
     )
     
     # Parse the callback data
-    callback_type = data[0]  # l, s, or q
-    callback_index = int(data[2:]) - 1  # Convert to 0-based index
+    callback_parts = data.split("_")
+    callback_type = callback_parts[0]  # lang, season, or quality
+    callback_index = int(callback_parts[1])  # Index
     
-    # Handle language selection (la)
-    if callback_type == "l":
+    # Handle language selection
+    if callback_type == "lang":
         languages = series.get("languages", [])
         
         if 0 <= callback_index < len(languages):
@@ -445,20 +474,24 @@ async def dynamic_layout_callback_handler(client: Client, query: CallbackQuery):
             user_requestor[f"{chat_id}•{message_id}"] = {
                 "series_key": series_key,
                 "language_name": language_name,
+                "language_index": callback_index,
                 "requested_user": requested_user
             }
             
             # Get seasons for this language
             seasons = languages[callback_index].get("seasons", [])
-            buttons = []
-            for season_data in seasons:
-                buttons.append(season_data['name'])
+            season_layout = languages[callback_index].get("season_layout", [1] * len(seasons))
+            season_names = [season['name'] for season in seasons]
             
             text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
             
-            # Define the layout pattern
-            layout_pattern = [f"sa{i}" for i in range(1, len(buttons) + 1)]
-            layout = create_dynamic_layout(buttons, layout_pattern)
+            # Create user layout using saved pattern
+            layout = create_user_layout_from_pattern(season_names, season_layout, "season")
+            
+            if not layout:
+                await query.answer("No seasons available for this language.", show_alert=True)
+                return
+            
             reply_markup = InlineKeyboardMarkup(layout)
             
             try:
@@ -474,16 +507,20 @@ async def dynamic_layout_callback_handler(client: Client, query: CallbackQuery):
         else:
             await query.answer("Invalid selection.", show_alert=True)
     
-    # Handle season selection (sa)
-    elif callback_type == "s":
-        language_name = stored_data.get("language_name")
-        lang_index = next((i for i, lang in enumerate(series.get("languages", [])) if lang["name"] == language_name), -1)
+    # Handle season selection
+    elif callback_type == "season":
+        language_index = stored_data.get("language_index")
         
-        if lang_index == -1:
+        if language_index is None:
+            await query.answer("Session error. Please start again.", show_alert=True)
+            return
+        
+        languages = series.get("languages", [])
+        if language_index >= len(languages):
             await query.answer("Language not found.", show_alert=True)
             return
         
-        seasons = series.get("languages", [])[lang_index].get("seasons", [])
+        seasons = languages[language_index].get("seasons", [])
         
         if 0 <= callback_index < len(seasons):
             season_name = seasons[callback_index]["name"]
@@ -492,23 +529,34 @@ async def dynamic_layout_callback_handler(client: Client, query: CallbackQuery):
             # Update stored data
             user_requestor[f"{chat_id}•{message_id}"] = {
                 "series_key": series_key,
-                "language_name": language_name,
+                "language_name": stored_data.get("language_name"),
+                "language_index": language_index,
                 "season_name": season_name,
+                "season_index": callback_index,
                 "requested_user": requested_user
             }
             
             # Get qualities for this season
             qualities = seasons[callback_index].get("qualities", [])
-            buttons = []
-            for quality_data in qualities:
-                if quality_data.get("link_key"):
-                    buttons.append(quality_data['name'])
+            quality_layout = seasons[callback_index].get("quality_layout", [1] * len(qualities))
             
-            text = base_text + f"○ **Language:** `{language_name}`\n○ **Season:** `{season_name}`\n\nSelect the quality you need...!"
+            # Filter qualities that have files
+            available_qualities = []
+            available_quality_names = []
+            for quality in qualities:
+                if quality.get("link_key"):
+                    available_qualities.append(quality)
+                    available_quality_names.append(quality['name'])
             
-            # Define the layout pattern
-            layout_pattern = [f"qa{i}" for i in range(1, len(buttons) + 1)]
-            layout = create_dynamic_layout(buttons, layout_pattern)
+            text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`\n○ **Season:** `{season_name}`\n\nSelect the quality you need...!"
+            
+            # Create user layout using saved pattern
+            layout = create_user_layout_from_pattern(available_quality_names, quality_layout, "quality")
+            
+            if not layout:
+                await query.answer("No qualities available for this season.", show_alert=True)
+                return
+            
             reply_markup = InlineKeyboardMarkup(layout)
             
             try:
@@ -524,26 +572,33 @@ async def dynamic_layout_callback_handler(client: Client, query: CallbackQuery):
         else:
             await query.answer("Invalid selection.", show_alert=True)
     
-    # Handle quality selection (qa)
-    elif callback_type == "q":
-        language_name = stored_data.get("language_name")
-        season_name = stored_data.get("season_name")
+    # Handle quality selection
+    elif callback_type == "quality":
+        language_index = stored_data.get("language_index")
+        season_index = stored_data.get("season_index")
         
-        lang_index = next((i for i, lang in enumerate(series.get("languages", [])) if lang["name"] == language_name), -1)
-        if lang_index == -1:
+        if language_index is None or season_index is None:
+            await query.answer("Session error. Please start again.", show_alert=True)
+            return
+        
+        languages = series.get("languages", [])
+        if language_index >= len(languages):
             await query.answer("Language not found.", show_alert=True)
             return
         
-        season_index = next((i for i, season in enumerate(series.get("languages", [])[lang_index].get("seasons", [])) if season["name"] == season_name), -1)
-        if season_index == -1:
+        seasons = languages[language_index].get("seasons", [])
+        if season_index >= len(seasons):
             await query.answer("Season not found.", show_alert=True)
             return
         
-        qualities = series.get("languages", [])[lang_index].get("seasons", [])[season_index].get("qualities", [])
+        qualities = seasons[season_index].get("qualities", [])
         
-        if 0 <= callback_index < len(qualities):
-            quality_name = qualities[callback_index]["name"]
-            link_key = qualities[callback_index].get("link_key")
+        # Filter available qualities (those with link_key)
+        available_qualities = [q for q in qualities if q.get("link_key")]
+        
+        if 0 <= callback_index < len(available_qualities):
+            quality_name = available_qualities[callback_index]["name"]
+            link_key = available_qualities[callback_index].get("link_key")
             
             if not link_key:
                 await query.answer("No files available for this quality.", show_alert=True)
