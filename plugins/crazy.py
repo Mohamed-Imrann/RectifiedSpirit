@@ -54,23 +54,69 @@ async def DeleteMessage(msg):
     except Exception as e:
         logger.warning(f"Failed to delete message {msg.id}: {e}")
 
-def create_dynamic_layout(items: List[str], layout_pattern: List[int] = None) -> List[List[InlineKeyboardButton]]:
+def create_dynamic_layout_from_pattern(items: List[str], layout_pattern: List[int], add_buttons: List[str] = None) -> List[List[InlineKeyboardButton]]:
     """
-    Create a dynamic button layout based on a pattern.
+    Create a dynamic button layout based on a saved pattern.
     
     Args:
-        items: List of button texts
-        layout_pattern: List of integers representing buttons per row (e.g., [2, 1, 1] = 2 buttons in first row, 1 in second, 1 in third)
+        items: List of item names
+        layout_pattern: List of integers representing buttons per row (e.g., [2, 2, 3])
+        add_buttons: Additional buttons to add at the end
+    
+    Returns:
+        List of lists of InlineKeyboardButton objects
+    """
+    if not items:
+        layout = []
+    else:
+        layout = []
+        item_index = 0
+        
+        for row_count in layout_pattern:
+            if item_index >= len(items):
+                break
+            
+            row = []
+            for _ in range(row_count):
+                if item_index < len(items):
+                    # Create item button and + button
+                    item_button = InlineKeyboardButton(items[item_index], callback_data=f"item_{item_index}")
+                    plus_button = InlineKeyboardButton("+", callback_data=f"add_to_row_{len(layout)}")
+                    row.extend([item_button, plus_button])
+                    item_index += 1
+            
+            if row:
+                layout.append(row)
+        
+        # Add remaining items if any
+        while item_index < len(items):
+            row = []
+            item_button = InlineKeyboardButton(items[item_index], callback_data=f"item_{item_index}")
+            plus_button = InlineKeyboardButton("+", callback_data=f"add_to_row_{len(layout)}")
+            row.extend([item_button, plus_button])
+            layout.append(row)
+            item_index += 1
+    
+    # Add control buttons
+    if add_buttons:
+        for button_text, callback_data in add_buttons:
+            layout.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+    
+    return layout
+
+def create_user_layout_from_pattern(items: List[str], layout_pattern: List[int]) -> List[List[InlineKeyboardButton]]:
+    """
+    Create a user-facing layout without + buttons.
+    
+    Args:
+        items: List of item names
+        layout_pattern: List of integers representing buttons per row
     
     Returns:
         List of lists of InlineKeyboardButton objects
     """
     if not items:
         return []
-    
-    if not layout_pattern:
-        # Default: 1 button per row
-        layout_pattern = [1] * len(items)
     
     layout = []
     item_index = 0
@@ -82,19 +128,19 @@ def create_dynamic_layout(items: List[str], layout_pattern: List[int] = None) ->
         row = []
         for _ in range(row_count):
             if item_index < len(items):
-                callback_data = f"btn_{item_index}"
-                row.append(InlineKeyboardButton(items[item_index], callback_data=callback_data))
+                item_button = InlineKeyboardButton(items[item_index], callback_data=f"user_item_{item_index}")
+                row.append(item_button)
                 item_index += 1
         
         if row:
             layout.append(row)
     
-    # Add remaining items if any
+    # Add remaining items
     while item_index < len(items):
         row = []
-        for _ in range(min(2, len(items) - item_index)):  # Max 2 buttons per remaining row
-            callback_data = f"btn_{item_index}"
-            row.append(InlineKeyboardButton(items[item_index], callback_data=callback_data))
+        for _ in range(min(2, len(items) - item_index)):  # Max 2 per row for remaining
+            item_button = InlineKeyboardButton(items[item_index], callback_data=f"user_item_{item_index}")
+            row.append(item_button)
             item_index += 1
         layout.append(row)
     
@@ -330,25 +376,23 @@ async def send_language_management_message(client: Client, user_id: int, series_
         return
 
     languages = series_data.get("languages", [])
+    language_layout = series_data.get("language_layout", [1] * len(languages) if languages else [])
     
     text = f"**Series:** `{series_data.get('title', 'N/A')}`\n\n"
     text += "Select any Language group to add new Season/Part group inside them. Or click '+' button to add new Language group.\n\n"
 
-    # Create buttons for languages with + buttons
-    buttons = []
-    for i, lang in enumerate(languages):
-        lang_text = f"{lang['name']}"
-        plus_text = "+"
-        buttons.append([
-            InlineKeyboardButton(lang_text, callback_data=f"lang_{i}"),
-            InlineKeyboardButton(plus_text, callback_data=f"add_season_to_{i}")
-        ])
+    # Get language names
+    language_names = [lang['name'] for lang in languages]
     
-    # Add main + Language button and Back button
-    buttons.append([InlineKeyboardButton("+ Language", callback_data="add_language")])
-    buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="back_to_series")])
-
-    reply_markup = InlineKeyboardMarkup(buttons)
+    # Create dynamic layout with + buttons
+    add_buttons = [
+        ("+ Language", "add_language"),
+        ("⬅️ Back", "back_to_series")
+    ]
+    
+    layout = create_dynamic_layout_from_pattern(language_names, language_layout, add_buttons)
+    reply_markup = InlineKeyboardMarkup(layout)
+    
     poster_to_use = series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG[0]
 
     try:
@@ -390,6 +434,7 @@ async def send_season_management_message(client: Client, user_id: int, series_ke
         return
 
     seasons = current_lang.get("seasons", [])
+    season_layout = current_lang.get("season_layout", [1] * len(seasons) if seasons else [])
     
     text = (
         f"**Series:** `{series_data.get('title', 'N/A')}`\n"
@@ -397,25 +442,20 @@ async def send_season_management_message(client: Client, user_id: int, series_ke
         "Select any Seasons group to add new Quality group into them. Or click '+' button to add new Seasons group.\n\n"
     )
 
-    # Create buttons for seasons with + buttons
-    buttons = []
-    for i, season in enumerate(seasons):
-        season_text = f"{season['name']}"
-        plus_text = "+"
-        buttons.append([
-            InlineKeyboardButton(season_text, callback_data=f"season_{i}"),
-            InlineKeyboardButton(plus_text, callback_data=f"add_quality_to_{i}")
-        ])
+    # Get season names
+    season_names = [season['name'] for season in seasons]
     
-    # Add control buttons
-    buttons.extend([
-        [InlineKeyboardButton("🖼️ Change Poster for this Language", callback_data="change_lang_poster")],
-        [InlineKeyboardButton("+ Season", callback_data="add_season")],
-        [InlineKeyboardButton(f"🗑️ Delete '{language_name}' Group", callback_data="delete_language")],
-        [InlineKeyboardButton("⬅️ Back", callback_data="back_to_languages")]
-    ])
-
-    reply_markup = InlineKeyboardMarkup(buttons)
+    # Create dynamic layout with + buttons
+    add_buttons = [
+        ("+ Season", "add_season"),
+        ("🖼️ Change Poster for this Language", "change_lang_poster"),
+        (f"🗑️ Delete '{language_name}' Group", "delete_language"),
+        ("⬅️ Back", "back_to_languages")
+    ]
+    
+    layout = create_dynamic_layout_from_pattern(season_names, season_layout, add_buttons)
+    reply_markup = InlineKeyboardMarkup(layout)
+    
     poster_to_use = current_lang.get("poster_file_id") or series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG[0]
 
     try:
@@ -458,6 +498,7 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
         return
 
     qualities = current_season.get("qualities", [])
+    quality_layout = current_season.get("quality_layout", [1] * len(qualities) if qualities else [])
     
     text = (
         f"**Series:** `{series_data.get('title', 'N/A')}`\n"
@@ -466,25 +507,20 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
         "Select any Quality group to add new files into them. Or click '+' button to add new Quality group.\n\n"
     )
 
-    # Create buttons for qualities with + buttons
-    buttons = []
-    for i, quality in enumerate(qualities):
-        quality_text = f"{quality['name']}"
-        plus_text = "+"
-        buttons.append([
-            InlineKeyboardButton(quality_text, callback_data=f"quality_{i}"),
-            InlineKeyboardButton(plus_text, callback_data=f"add_files_to_{i}")
-        ])
+    # Get quality names
+    quality_names = [quality['name'] for quality in qualities]
     
-    # Add control buttons
-    buttons.extend([
-        [InlineKeyboardButton("🖼️ Change Poster for this Season", callback_data="change_season_poster")],
-        [InlineKeyboardButton("+ Quality", callback_data="add_quality")],
-        [InlineKeyboardButton(f"🗑️ Delete '{season_name}' Group", callback_data="delete_season")],
-        [InlineKeyboardButton("⬅️ Back", callback_data="back_to_seasons")]
-    ])
-
-    reply_markup = InlineKeyboardMarkup(buttons)
+    # Create dynamic layout with + buttons
+    add_buttons = [
+        ("+ Quality", "add_quality"),
+        ("🖼️ Change Poster for this Season", "change_season_poster"),
+        (f"🗑️ Delete '{season_name}' Group", "delete_season"),
+        ("⬅️ Back", "back_to_seasons")
+    ]
+    
+    layout = create_dynamic_layout_from_pattern(quality_names, quality_layout, add_buttons)
+    reply_markup = InlineKeyboardMarkup(layout)
+    
     poster_to_use = current_season.get("poster_file_id") or current_lang.get("poster_file_id") or series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG[0]
 
     try:
@@ -675,6 +711,7 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
                 'media_type': media_type,
                 'poster_file_id': None,
                 'languages': [],
+                'language_layout': [],
                 'published': False
             }
             if not add_series(series_data):
@@ -761,20 +798,127 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         temp_admin_data[user_id]["state"] = "AWAITING_LANGUAGE_INPUT"
         temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
     
-    elif data.startswith("lang_"):  # Language selection
-        series_key = temp_admin_data[user_id].get("current_series_key")
-        lang_index = int(data.split("_")[1])
-        languages = get_languages(series_key)
+    elif data.startswith("add_to_row_"):
+        # Add item to specific row
+        row_index = int(data.split("_")[-1])
+        current_state = temp_admin_data[user_id].get("state")
         
-        if 0 <= lang_index < len(languages):
-            language_name = languages[lang_index]["name"]
-            await callback_query.answer(f"Selected: {language_name}")
-            temp_admin_data[user_id]["current_language"] = language_name
-            temp_admin_data[user_id]["current_language_index"] = lang_index
-            temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
-            await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
-        else:
-            await callback_query.answer("Invalid selection.", show_alert=True)
+        if current_state == "MANAGE_LANGUAGES":
+            await callback_query.answer("Enter language name...")
+            temp_admin_data[user_id]["target_row"] = row_index
+            
+            reply_keyboard = ReplyKeyboardMarkup(
+                [
+                    [KeyboardButton("English"), KeyboardButton("Spanish"), KeyboardButton("Japanese")],
+                    [KeyboardButton("Korean"), KeyboardButton("French"), KeyboardButton("German")]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=True
+            )
+            
+            ask_msg = await client.send_message(
+                user_id,
+                "Enter language name to add to this row:",
+                reply_markup=reply_keyboard
+            )
+            temp_admin_data[user_id]["state"] = "AWAITING_LANGUAGE_INPUT"
+            temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+            
+        elif current_state == "MANAGE_SEASONS":
+            await callback_query.answer("Enter season name...")
+            temp_admin_data[user_id]["target_row"] = row_index
+            
+            reply_keyboard = ReplyKeyboardMarkup(
+                [
+                    [KeyboardButton("Season 1"), KeyboardButton("Season 2"), KeyboardButton("Season 3")],
+                    [KeyboardButton("Season 4"), KeyboardButton("Season 5"), KeyboardButton("Season 6")],
+                    [KeyboardButton("Part 1"), KeyboardButton("Part 2")]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=True
+            )
+            
+            ask_msg = await client.send_message(
+                user_id,
+                "Enter season name to add to this row:",
+                reply_markup=reply_keyboard
+            )
+            temp_admin_data[user_id]["state"] = "AWAITING_SEASON_INPUT"
+            temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+            
+        elif current_state == "MANAGE_QUALITIES":
+            await callback_query.answer("Enter quality name...")
+            temp_admin_data[user_id]["target_row"] = row_index
+            
+            reply_keyboard = ReplyKeyboardMarkup(
+                [
+                    [KeyboardButton("360p"), KeyboardButton("480p"), KeyboardButton("720p")],
+                    [KeyboardButton("1080p"), KeyboardButton("2160p"), KeyboardButton("H.265")]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=True
+            )
+            
+            ask_msg = await client.send_message(
+                user_id,
+                "Enter quality name to add to this row:",
+                reply_markup=reply_keyboard
+            )
+            temp_admin_data[user_id]["state"] = "AWAITING_QUALITY_INPUT"
+            temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+    
+    elif data.startswith("item_"):  # Item selection
+        item_index = int(data.split("_")[1])
+        current_state = temp_admin_data[user_id].get("state")
+        
+        if current_state == "MANAGE_LANGUAGES":
+            series_key = temp_admin_data[user_id].get("current_series_key")
+            languages = get_languages(series_key)
+            
+            if 0 <= item_index < len(languages):
+                language_name = languages[item_index]["name"]
+                await callback_query.answer(f"Selected: {language_name}")
+                temp_admin_data[user_id]["current_language"] = language_name
+                temp_admin_data[user_id]["current_language_index"] = item_index
+                temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
+                await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+            else:
+                await callback_query.answer("Invalid selection.", show_alert=True)
+                
+        elif current_state == "MANAGE_SEASONS":
+            series_key = temp_admin_data[user_id].get("current_series_key")
+            language_name = temp_admin_data[user_id].get("current_language")
+            seasons = get_seasons(series_key, language_name)
+            
+            if 0 <= item_index < len(seasons):
+                season_name = seasons[item_index]["name"]
+                await callback_query.answer(f"Selected: {season_name}")
+                temp_admin_data[user_id]["current_season"] = season_name
+                temp_admin_data[user_id]["current_season_index"] = item_index
+                temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
+                await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+            else:
+                await callback_query.answer("Invalid selection.", show_alert=True)
+                
+        elif current_state == "MANAGE_QUALITIES":
+            series_key = temp_admin_data[user_id].get("current_series_key")
+            language_name = temp_admin_data[user_id].get("current_language")
+            season_name = temp_admin_data[user_id].get("current_season")
+            qualities = get_qualities(series_key, language_name, season_name)
+            
+            if 0 <= item_index < len(qualities):
+                quality_name = qualities[item_index]["name"]
+                await callback_query.answer(f"Selected: {quality_name}")
+                temp_admin_data[user_id]["current_quality"] = quality_name
+                temp_admin_data[user_id]["current_quality_index"] = item_index
+                temp_admin_data[user_id]["state"] = "AWAITING_FIRST_FILE"
+                
+                await client.send_message(
+                    user_id,
+                    f"Add me to the channel as admin and forward me the first file (with tag) for {language_name}-{season_name}-{quality_name}"
+                )
+            else:
+                await callback_query.answer("Invalid selection.", show_alert=True)
     
     elif data == "back_to_languages":
         series_key = temp_admin_data[user_id].get("current_series_key")
@@ -782,15 +926,7 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
         await send_language_management_message(client, user_id, series_key, main_message_id)
     
-    elif data == "add_season" or data.startswith("add_season_to_"):
-        if data.startswith("add_season_to_"):
-            lang_index = int(data.split("_")[-1])
-            series_key = temp_admin_data[user_id].get("current_series_key")
-            languages = get_languages(series_key)
-            if 0 <= lang_index < len(languages):
-                temp_admin_data[user_id]["current_language"] = languages[lang_index]["name"]
-                temp_admin_data[user_id]["current_language_index"] = lang_index
-        
+    elif data == "add_season":
         await callback_query.answer("Enter season name...")
         
         reply_keyboard = ReplyKeyboardMarkup(
@@ -811,22 +947,6 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         temp_admin_data[user_id]["state"] = "AWAITING_SEASON_INPUT"
         temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
     
-    elif data.startswith("season_"):  # Season selection
-        series_key = temp_admin_data[user_id].get("current_series_key")
-        language_name = temp_admin_data[user_id].get("current_language")
-        season_index = int(data.split("_")[1])
-        seasons = get_seasons(series_key, language_name)
-        
-        if 0 <= season_index < len(seasons):
-            season_name = seasons[season_index]["name"]
-            await callback_query.answer(f"Selected: {season_name}")
-            temp_admin_data[user_id]["current_season"] = season_name
-            temp_admin_data[user_id]["current_season_index"] = season_index
-            temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
-            await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
-        else:
-            await callback_query.answer("Invalid selection.", show_alert=True)
-    
     elif data == "back_to_seasons":
         series_key = temp_admin_data[user_id].get("current_series_key")
         language_name = temp_admin_data[user_id].get("current_language")
@@ -834,16 +954,7 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
         await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
     
-    elif data == "add_quality" or data.startswith("add_quality_to_"):
-        if data.startswith("add_quality_to_"):
-            season_index = int(data.split("_")[-1])
-            series_key = temp_admin_data[user_id].get("current_series_key")
-            language_name = temp_admin_data[user_id].get("current_language")
-            seasons = get_seasons(series_key, language_name)
-            if 0 <= season_index < len(seasons):
-                temp_admin_data[user_id]["current_season"] = seasons[season_index]["name"]
-                temp_admin_data[user_id]["current_season_index"] = season_index
-        
+    elif data == "add_quality":
         await callback_query.answer("Enter quality name...")
         
         reply_keyboard = ReplyKeyboardMarkup(
@@ -862,32 +973,6 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         )
         temp_admin_data[user_id]["state"] = "AWAITING_QUALITY_INPUT"
         temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
-    
-    elif data.startswith("quality_") or data.startswith("add_files_to_"):  # Quality selection or add files
-        series_key = temp_admin_data[user_id].get("current_series_key")
-        language_name = temp_admin_data[user_id].get("current_language")
-        season_name = temp_admin_data[user_id].get("current_season")
-        
-        if data.startswith("add_files_to_"):
-            quality_index = int(data.split("_")[-1])
-        else:
-            quality_index = int(data.split("_")[1])
-            
-        qualities = get_qualities(series_key, language_name, season_name)
-        
-        if 0 <= quality_index < len(qualities):
-            quality_name = qualities[quality_index]["name"]
-            await callback_query.answer(f"Selected: {quality_name}")
-            temp_admin_data[user_id]["current_quality"] = quality_name
-            temp_admin_data[user_id]["current_quality_index"] = quality_index
-            temp_admin_data[user_id]["state"] = "AWAITING_FIRST_FILE"
-            
-            await client.send_message(
-                user_id,
-                f"Add me to the channel as admin and forward me the first file (with tag) for {language_name}-{season_name}-{quality_name}"
-            )
-        else:
-            await callback_query.answer("Invalid selection.", show_alert=True)
     
     elif data == "change_poster":
         await callback_query.answer("Send a new poster...")
@@ -966,7 +1051,7 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             await client.edit_message_caption(
                 chat_id=user_id,
                 message_id=main_message_id,
-                caption="✅ Series published successfully!"
+                caption="✅ Published Successfully"
             )
             temp_admin_data[user_id]["state"] = "PUBLISHED"
         else:
@@ -990,17 +1075,34 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
 async def process_language_input(client: Client, message: Message, language_name: str):
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
+    target_row = temp_admin_data[user_id].get("target_row")
     
     # Remove keyboard
     await message.reply("Language Updated", reply_markup=ReplyKeyboardRemove())
     
     if add_or_update_language(series_key, language_name):
+        # Update layout pattern
+        series_data = get_series_by_key(series_key)
+        languages = series_data.get("languages", [])
+        current_layout = series_data.get("language_layout", [])
+        
+        if target_row is not None and target_row < len(current_layout):
+            # Add to existing row
+            current_layout[target_row] += 1
+        else:
+            # Add new row
+            current_layout.append(1)
+        
+        # Update layout in database
+        update_series_field(series_key, "language_layout", current_layout)
+        
         # Update the language management view
         main_message_id = temp_admin_data[user_id].get("main_message_id")
         await send_language_management_message(client, user_id, series_key, main_message_id)
         
         # Reset state
         temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
+        temp_admin_data[user_id].pop("target_row", None)
     else:
         await message.reply(f"Failed to add language '{language_name}'.")
 
@@ -1008,17 +1110,42 @@ async def process_season_input(client: Client, message: Message, season_name: st
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
     language_name = temp_admin_data[user_id].get("current_language")
+    target_row = temp_admin_data[user_id].get("target_row")
     
     # Remove keyboard
     await message.reply("Season Updated", reply_markup=ReplyKeyboardRemove())
     
     if add_or_update_season(series_key, language_name, season_name):
+        # Update layout pattern
+        series_data = get_series_by_key(series_key)
+        current_lang = next((lang for lang in series_data.get("languages", []) if lang["name"].lower() == language_name.lower()), None)
+        
+        if current_lang:
+            current_layout = current_lang.get("season_layout", [])
+            
+            if target_row is not None and target_row < len(current_layout):
+                # Add to existing row
+                current_layout[target_row] += 1
+            else:
+                # Add new row
+                current_layout.append(1)
+            
+            # Update layout in database
+            languages = series_data.get("languages", [])
+            for lang in languages:
+                if lang["name"].lower() == language_name.lower():
+                    lang["season_layout"] = current_layout
+                    break
+            
+            update_series_field(series_key, "languages", languages)
+        
         # Update the season management view
         main_message_id = temp_admin_data[user_id].get("main_message_id")
         await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
         
         # Reset state
         temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
+        temp_admin_data[user_id].pop("target_row", None)
     else:
         await message.reply(f"Failed to add season '{season_name}'.")
 
@@ -1027,17 +1154,46 @@ async def process_quality_input(client: Client, message: Message, quality_name: 
     series_key = temp_admin_data[user_id].get("current_series_key")
     language_name = temp_admin_data[user_id].get("current_language")
     season_name = temp_admin_data[user_id].get("current_season")
+    target_row = temp_admin_data[user_id].get("target_row")
     
     # Remove keyboard
     await message.reply("Quality Updated", reply_markup=ReplyKeyboardRemove())
     
     if add_or_update_quality(series_key, language_name, season_name, quality_name):
+        # Update layout pattern
+        series_data = get_series_by_key(series_key)
+        current_lang = next((lang for lang in series_data.get("languages", []) if lang["name"].lower() == language_name.lower()), None)
+        current_season = next((s for s in current_lang.get("seasons", []) if s["name"].lower() == season_name.lower()), None) if current_lang else None
+        
+        if current_season:
+            current_layout = current_season.get("quality_layout", [])
+            
+            if target_row is not None and target_row < len(current_layout):
+                # Add to existing row
+                current_layout[target_row] += 1
+            else:
+                # Add new row
+                current_layout.append(1)
+            
+            # Update layout in database
+            languages = series_data.get("languages", [])
+            for lang in languages:
+                if lang["name"].lower() == language_name.lower():
+                    for season in lang.get("seasons", []):
+                        if season["name"].lower() == season_name.lower():
+                            season["quality_layout"] = current_layout
+                            break
+                    break
+            
+            update_series_field(series_key, "languages", languages)
+        
         # Update the quality management view
         main_message_id = temp_admin_data[user_id].get("main_message_id")
         await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
         
         # Reset state
         temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
+        temp_admin_data[user_id].pop("target_row", None)
     else:
         await message.reply(f"Failed to add quality '{quality_name}'.")
 
