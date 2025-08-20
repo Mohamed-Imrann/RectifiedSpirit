@@ -19,15 +19,15 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 BTN_URL_REGEX = re.compile(
-    r"(\[([^\[]+?)\]\((buttonurl|buttonalert):(?:/ {0,2})(.+?)(:same)?\))"
+    r"(\[([^\[]+?)\]$$(buttonurl|buttonalert):(?:/\{0,2\})(.+?)(:same)?$$)"
 )
 temp_requests = {}
 AUTO_DEL_SUCCESS_MSG = """Your File Has Been Deleted To Avoid BOT Copyright.\nYou Can Request Again If You Want!🫵🏻"""
 imdb = Cinemagoer() 
 
 BANNED = {}
-SMART_OPEN = '""'
-SMART_CLOSE = '""'
+SMART_OPEN = '"'
+SMART_CLOSE = '"'
 START_CHAR = ('\'', '"', SMART_OPEN)
 
 class Temp(object):
@@ -187,7 +187,8 @@ async def get_poster(query, bulk=False, id=False, file=None):
                 'year': item.get('year'),
                 'imdb_id': f"tt{item.get('movieID')}",
                 'media_type': item.get('kind'),
-                'poster_url': item.get('full-size cover url')
+                'poster_url': item.get('full-size cover url'),
+                'source': 'imdb'
             } for item in movieid]
         
         movieid = movieid[0].movieID
@@ -520,17 +521,17 @@ def _generate_reply_keyboard(options: List[str], row_width: int = 3):
 def find_most_similar_title(query: str, titles: List[str]):
     """Finds the most similar title from a list using fuzzy matching."""
     if not titles:
-        return None
+        return []
     
-    best_match = None
-    highest_score = -1
-    
+    matches = []
     for title in titles:
         score = fuzz.ratio(query.lower(), title.lower())
-        if score > highest_score:
-            highest_score = score
-            best_match = title
-    return best_match
+        if score > 60:  # Minimum similarity threshold
+            matches.append((title, score))
+    
+    # Sort by score in descending order and return top matches
+    matches.sort(key=lambda x: x[1], reverse=True)
+    return [match[0] for match in matches[:5]]
 
 async def get_links_for_quality(file_link_key: str):
     """
