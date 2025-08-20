@@ -187,8 +187,7 @@ async def get_poster(query, bulk=False, id=False, file=None):
                 'year': item.get('year'),
                 'imdb_id': f"tt{item.get('movieID')}",
                 'media_type': item.get('kind'),
-                'poster_url': item.get('full-size cover url'),
-                'source': 'imdb'
+                'poster_url': item.get('full-size cover url')
             } for item in movieid]
         
         movieid = movieid[0].movieID
@@ -521,17 +520,17 @@ def _generate_reply_keyboard(options: List[str], row_width: int = 3):
 def find_most_similar_title(query: str, titles: List[str]):
     """Finds the most similar title from a list using fuzzy matching."""
     if not titles:
-        return []
+        return None
     
-    matches = []
+    best_matches = []
     for title in titles:
         score = fuzz.ratio(query.lower(), title.lower())
-        if score > 60:  # Minimum similarity threshold
-            matches.append((title, score))
+        if score > 60:  # Only consider matches above 60% similarity
+            best_matches.append((title, score))
     
-    # Sort by score in descending order and return top matches
-    matches.sort(key=lambda x: x[1], reverse=True)
-    return [match[0] for match in matches[:5]]
+    # Sort by score and return top matches
+    best_matches.sort(key=lambda x: x[1], reverse=True)
+    return [match[0] for match in best_matches[:5]]
 
 async def get_links_for_quality(file_link_key: str):
     """
