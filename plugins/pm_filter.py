@@ -60,29 +60,16 @@ def create_dynamic_layout(items, layout_pattern):
     for i, item in enumerate(items, 1):
         item_dict[f"l{i}"] = item
     
-    # Add special case for back button
-    item_dict["back"] = "⬅️ Back"
-    
     # Create the layout
     layout = []
     current_row = []
     
     for code in layout_pattern:
         if code in item_dict:
-            if code == "back":
-                # Back button gets its own row
-                if current_row:
-                    layout.append(current_row)
-                    current_row = []
-                layout.append([InlineKeyboardButton(
-                    text=item_dict[code],
-                    callback_data=code
-                )])
-            else:
-                current_row.append(InlineKeyboardButton(
-                    text=item_dict[code],
-                    callback_data=code
-                ))
+            current_row.append(InlineKeyboardButton(
+                text=item_dict[code],
+                callback_data=code
+            ))
         
         # Add row to layout if it has 3 buttons or is the last item
         if len(current_row) == 3 or code == layout_pattern[-1]:
@@ -285,7 +272,7 @@ async def callback_handler(client: Client, callback_query: CallbackQuery):
         return
 
     # Handle dynamic layout callbacks
-    elif data.startswith("la") or data.startswith("sa") or data.startswith("qa") or data == "back":
+    elif data.startswith("la") or data.startswith("sa") or data.startswith("qa"):
         logger.info(f"Dynamic layout callback from user {user_id}")
         await dynamic_layout_callback_handler(client, callback_query)
         return
@@ -443,96 +430,6 @@ async def dynamic_layout_callback_handler(client: Client, query: CallbackQuery):
     )
     
     # Parse the callback data
-    if data == "back":
-        # Handle back button
-        # Check what level we're at and go back one level
-        if "season_name" in stored_data:
-            # We're at quality level, go back to season level
-            language_name = stored_data.get("language_name")
-            
-            # Update stored data
-            user_requestor[f"{chat_id}•{message_id}"] = {
-                "series_key": series_key,
-                "language_name": language_name,
-                "requested_user": requested_user
-            }
-            
-            # Get seasons for this language
-            lang_index = next((i for i, lang in enumerate(series.get("languages", [])) if lang["name"] == language_name), -1)
-            if lang_index >= 0:
-                seasons = series.get("languages", [])[lang_index].get("seasons", [])
-                buttons = []
-                for season_data in seasons:
-                    buttons.append(season_data['name'])
-                
-                # Add back button
-                buttons.append("⬅️ Back")
-                
-                text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
-                
-                # Define the layout pattern
-                layout_pattern = [f"sa{i}" for i in range(1, len(buttons))]
-                layout_pattern.append("back")  # For the back button
-                
-                layout = create_dynamic_layout(buttons, layout_pattern)
-                reply_markup = InlineKeyboardMarkup(layout)
-                
-                try:
-                    await query.message.edit_text(
-                        text=text,
-                        reply_markup=reply_markup,
-                        disable_web_page_preview=True,
-                        parse_mode=enums.ParseMode.MARKDOWN
-                    )
-                except Exception as e:
-                    logger.error(f"Error editing message: {e}")
-                    await query.answer("An error occurred. Please try again.", show_alert=True)
-            else:
-                await query.answer("Language not found.", show_alert=True)
-        
-        elif "language_name" in stored_data:
-            # We're at season level, go back to language level
-            # Update stored data
-            user_requestor[f"{chat_id}•{message_id}"] = {
-                "series_key": series_key,
-                "requested_user": requested_user
-            }
-            
-            # Get languages
-            languages = series.get("languages", [])
-            buttons = []
-            for lang_data in languages:
-                buttons.append(lang_data['name'])
-            
-            # Add back button
-            buttons.append("⬅️ Back")
-            
-            text = base_text + "\nSelect the language you need...!"
-            
-            # Define the layout pattern
-            layout_pattern = [f"la{i}" for i in range(1, len(buttons))]
-            layout_pattern.append("back")  # For the back button
-            
-            layout = create_dynamic_layout(buttons, layout_pattern)
-            reply_markup = InlineKeyboardMarkup(layout)
-            
-            try:
-                await query.message.edit_text(
-                    text=text,
-                    reply_markup=reply_markup,
-                    disable_web_page_preview=True,
-                    parse_mode=enums.ParseMode.MARKDOWN
-                )
-            except Exception as e:
-                logger.error(f"Error editing message: {e}")
-                await query.answer("An error occurred. Please try again.", show_alert=True)
-        
-        else:
-            # We're at language level, can't go back further
-            await query.answer("Already at the top level.", show_alert=True)
-        return
-    
-    # Regular callback data processing
     callback_type = data[0]  # l, s, or q
     callback_index = int(data[2:]) - 1  # Convert to 0-based index
     
@@ -557,15 +454,10 @@ async def dynamic_layout_callback_handler(client: Client, query: CallbackQuery):
             for season_data in seasons:
                 buttons.append(season_data['name'])
             
-            # Add back button
-            buttons.append("⬅️ Back")
-            
             text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
             
             # Define the layout pattern
-            layout_pattern = [f"sa{i}" for i in range(1, len(buttons))]
-            layout_pattern.append("back")  # For the back button
-            
+            layout_pattern = [f"sa{i}" for i in range(1, len(buttons) + 1)]
             layout = create_dynamic_layout(buttons, layout_pattern)
             reply_markup = InlineKeyboardMarkup(layout)
             
@@ -612,15 +504,10 @@ async def dynamic_layout_callback_handler(client: Client, query: CallbackQuery):
                 if quality_data.get("link_key"):
                     buttons.append(quality_data['name'])
             
-            # Add back button
-            buttons.append("⬅️ Back")
-            
             text = base_text + f"○ **Language:** `{language_name}`\n○ **Season:** `{season_name}`\n\nSelect the quality you need...!"
             
             # Define the layout pattern
-            layout_pattern = [f"qa{i}" for i in range(1, len(buttons))]
-            layout_pattern.append("back")  # For the back button
-            
+            layout_pattern = [f"qa{i}" for i in range(1, len(buttons) + 1)]
             layout = create_dynamic_layout(buttons, layout_pattern)
             reply_markup = InlineKeyboardMarkup(layout)
             
