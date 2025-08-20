@@ -70,7 +70,7 @@ def add_or_update_language(series_key: str, language_name: str, poster_file_id: 
             break
     
     if not language_exists:
-        new_language = {"name": language_name, "seasons": []}
+        new_language = {"name": language_name, "seasons": [], "season_layout": []}
         if poster_file_id:
             new_language["poster_file_id"] = poster_file_id
         languages.append(new_language)
@@ -106,8 +106,16 @@ def delete_language(series_key: str, language_name: str):
                         episodes_collection.delete_one({"file_link_key": quality["link_key"]})
             break
 
+    # Update language layout
+    language_layout = series.get("language_layout", [])
+    if len(language_layout) > len(updated_languages):
+        language_layout = language_layout[:len(updated_languages)]
+
     try:
-        result = series_collection.update_one({"_id": series_key}, {"$set": {"languages": updated_languages}})
+        result = series_collection.update_one(
+            {"_id": series_key}, 
+            {"$set": {"languages": updated_languages, "language_layout": language_layout}}
+        )
         return result.modified_count > 0
     except Exception as e:
         logger.error(f"Error deleting language: {e}")
@@ -130,7 +138,7 @@ def add_or_update_season(series_key: str, language_name: str, season_name: str, 
                     season_exists = True
                     break
             if not season_exists:
-                new_season = {"name": season_name, "qualities": []}
+                new_season = {"name": season_name, "qualities": [], "quality_layout": []}
                 if poster_file_id:
                     new_season["poster_file_id"] = poster_file_id
                 seasons.append(new_season)
@@ -174,7 +182,13 @@ def delete_season(series_key: str, language_name: str, season_name: str):
                             episodes_collection.delete_one({"file_link_key": quality["link_key"]})
                     break
             
+            # Update season layout
+            season_layout = lang.get("season_layout", [])
+            if len(season_layout) > len(updated_seasons):
+                season_layout = season_layout[:len(updated_seasons)]
+            
             lang["seasons"] = updated_seasons
+            lang["season_layout"] = season_layout
             break
     
     try:
@@ -265,7 +279,13 @@ def delete_quality(series_key: str, language_name: str, season_name: str, qualit
                                 episodes_collection.delete_one({"file_link_key": quality["link_key"]})
                             break
                     
+                    # Update quality layout
+                    quality_layout = season.get("quality_layout", [])
+                    if len(quality_layout) > len(updated_qualities):
+                        quality_layout = quality_layout[:len(updated_qualities)]
+                    
                     season["qualities"] = updated_qualities
+                    season["quality_layout"] = quality_layout
                     break
             break
     
