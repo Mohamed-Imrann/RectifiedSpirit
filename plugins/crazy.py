@@ -56,7 +56,7 @@ async def DeleteMessage(msg):
 
 def create_dynamic_layout_from_pattern(items: List[str], layout_pattern: List[int], add_buttons: List[str] = None) -> List[List[InlineKeyboardButton]]:
     """
-    Create a dynamic button layout based on a saved pattern with + buttons for each row.
+    Create a dynamic button layout with unique + callbacks for each position.
     
     Args:
         items: List of item names
@@ -76,14 +76,16 @@ def create_dynamic_layout_from_pattern(items: List[str], layout_pattern: List[in
         
         row = []
         # Add items for this row
+        items_in_this_row = 0
         for _ in range(row_count):
             if item_index < len(items):
                 item_button = InlineKeyboardButton(items[item_index], callback_data=f"item_{item_index}")
                 row.append(item_button)
                 item_index += 1
+                items_in_this_row += 1
         
-        # Add + button for this row
-        if row:
+        # Add + button for this row with unique callback
+        if items_in_this_row > 0:
             plus_button = InlineKeyboardButton("+", callback_data=f"add_to_row_{row_index}")
             row.append(plus_button)
             layout.append(row)
@@ -93,17 +95,19 @@ def create_dynamic_layout_from_pattern(items: List[str], layout_pattern: List[in
         row = []
         item_button = InlineKeyboardButton(items[item_index], callback_data=f"item_{item_index}")
         row.append(item_button)
+        # Add + for this new row
         plus_button = InlineKeyboardButton("+", callback_data=f"add_to_row_{len(layout)}")
         row.append(plus_button)
         layout.append(row)
         item_index += 1
     
-    # Add a final + button row if no items or for adding first row
-    if not items or len(layout) == 0:
-        layout.append([InlineKeyboardButton("+ Add First Item", callback_data="add_to_row_0")])
+    # Add a final + button for creating new row if we have items
+    if items:
+        next_row_index = len(layout)
+        layout.append([InlineKeyboardButton("+ New Row", callback_data=f"add_to_row_{next_row_index}")])
     else:
-        # Add a new row + button
-        layout.append([InlineKeyboardButton("+ Add New Row", callback_data=f"add_to_row_{len(layout)}")])
+        # If no items, add first + button
+        layout.append([InlineKeyboardButton("+ Add First Item", callback_data="add_to_row_0")])
     
     # Add control buttons
     if add_buttons:
@@ -789,7 +793,7 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         current_state = temp_admin_data[user_id].get("state")
         
         if current_state == "MANAGE_LANGUAGES":
-            await callback_query.answer("Enter language name...")
+            await callback_query.answer(f"Adding language to row {row_index + 1}...")
             temp_admin_data[user_id]["target_row"] = row_index
             
             reply_keyboard = ReplyKeyboardMarkup(
@@ -810,7 +814,7 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
             
         elif current_state == "MANAGE_SEASONS":
-            await callback_query.answer("Enter season name...")
+            await callback_query.answer(f"Adding season to row {row_index + 1}...")
             temp_admin_data[user_id]["target_row"] = row_index
             
             reply_keyboard = ReplyKeyboardMarkup(
@@ -832,7 +836,7 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
             
         elif current_state == "MANAGE_QUALITIES":
-            await callback_query.answer("Enter quality name...")
+            await callback_query.answer(f"Adding quality to row {row_index + 1}...")
             temp_admin_data[user_id]["target_row"] = row_index
             
             reply_keyboard = ReplyKeyboardMarkup(
@@ -1030,12 +1034,19 @@ async def process_language_input(client: Client, message: Message, language_name
         languages = series_data.get("languages", [])
         current_layout = series_data.get("language_layout", [])
         
-        # Ensure we have enough rows in the layout
+        # If target_row is beyond current layout, extend it
         while len(current_layout) <= target_row:
             current_layout.append(0)
         
-        # Add to the specified row
-        current_layout[target_row] += 1
+        # If target_row is within existing layout, increment that row
+        if target_row < len(current_layout):
+            current_layout[target_row] += 1
+        else:
+            # Adding to new row
+            current_layout.append(1)
+        
+        # Clean up layout - remove any zero entries except the last one
+        current_layout = [count for count in current_layout if count > 0]
         
         # Update layout in database
         update_series_field(series_key, "language_layout", current_layout)
@@ -1067,12 +1078,19 @@ async def process_season_input(client: Client, message: Message, season_name: st
         if current_lang:
             current_layout = current_lang.get("season_layout", [])
             
-            # Ensure we have enough rows in the layout
+            # If target_row is beyond current layout, extend it
             while len(current_layout) <= target_row:
                 current_layout.append(0)
             
-            # Add to the specified row
-            current_layout[target_row] += 1
+            # If target_row is within existing layout, increment that row
+            if target_row < len(current_layout):
+                current_layout[target_row] += 1
+            else:
+                # Adding to new row
+                current_layout.append(1)
+            
+            # Clean up layout - remove any zero entries
+            current_layout = [count for count in current_layout if count > 0]
             
             # Update layout in database
             languages = series_data.get("languages", [])
@@ -1112,12 +1130,19 @@ async def process_quality_input(client: Client, message: Message, quality_name: 
         if current_season:
             current_layout = current_season.get("quality_layout", [])
             
-            # Ensure we have enough rows in the layout
+            # If target_row is beyond current layout, extend it
             while len(current_layout) <= target_row:
                 current_layout.append(0)
             
-            # Add to the specified row
-            current_layout[target_row] += 1
+            # If target_row is within existing layout, increment that row
+            if target_row < len(current_layout):
+                current_layout[target_row] += 1
+            else:
+                # Adding to new row
+                current_layout.append(1)
+            
+            # Clean up layout - remove any zero entries
+            current_layout = [count for count in current_layout if count > 0]
             
             # Update layout in database
             languages = series_data.get("languages", [])
