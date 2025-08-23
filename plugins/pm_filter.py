@@ -159,8 +159,6 @@ async def global_filters(client: Client, message: Message, text=False) -> bool:
     return False
 
 # Series filter function
-# In pm_filter.py - Modify the series_filter function
-
 async def series_filter(client: Client, message: Message):
     logger.info(f"Applying series filter to message {message.id} from user {message.from_user.id}")
     text = message.text.strip()
@@ -213,12 +211,7 @@ async def series_filter(client: Client, message: Message):
                         reply_markup=reply_markup
                     )
                     reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
-                    # Store original query for back navigation
-                    user_requestor[f"{etho.chat.id}•{etho.id}"] = {
-                        "from_spellcheck": True,
-                        "original_query": text,
-                        "requested_user": reply_etho_user_id
-                    }
+                    user_requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
                     asyncio.create_task(DeleteMessage(etho))
                     logger.info(f"Sent series selection message with {len(buttons)} options")
                     return
@@ -265,14 +258,13 @@ async def series_filter(client: Client, message: Message):
             reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
             user_requestor[f"{etho.chat.id}•{etho.id}"] = {
                 "series_key": series_key,
-                "requested_user": reply_etho_user_id,
-                "from_spellcheck": False  # Not from spellcheck
+                "requested_user": reply_etho_user_id
             }
             asyncio.create_task(DeleteMessage(etho))
             logger.info(f"Sent series filter response for {series['title']}")
         except Exception as e:
             logger.error(f"Error sending series filter message: {e}")
-            
+
 # Message handlers
 @Client.on_message(filters.text & (filters.private | filters.group))
 async def handle_message(client: Client, message: Message):
@@ -313,8 +305,6 @@ async def callback_handler(client: Client, callback_query: CallbackQuery):
 
     logger.warning(f"Unknown callback type from user {user_id}: {data}")
 
-# In pm_filter.py - Modify the user_series_callback_handler function
-
 async def user_series_callback_handler(client: Client, query: CallbackQuery):
     data = query.data
     parts = data.split(":")
@@ -343,13 +333,40 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         return
 
     elif data.startswith("b:"):
-        try:
-            k = data.split(":")
-            parameter = k[1]
-            url = f"https://t.me/{temp.U_NAME}?start={parameter}"
-            await query.answer(url=url)
-        except pyrogram.errors.exceptions.bad_request_400.UrlInvalid:
-            await query.answer("Invalid URL provided.", show_alert=True)
+        file_link_key = data.split(":", 1)[1]
+        logger.info(f"Fetching files for link key: {file_link_key}")
+        
+        files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(file_link_key)
+
+        if not files_to_send:
+            logger.warning(f"No files found for link key: {file_link_key}")
+            await query.answer("No files found for this quality.", show_alert=True)
+            return
+
+        await query.answer("Sending files...")
+        
+        track_msgs = []
+        for entry in files_to_send:
+            try:
+                copied_msg = await client.send_cached_media(
+                    chat_id=query.from_user.id, 
+                    file_id=entry["file_id"],
+                    caption=entry.get("caption", "")
+                )
+                if copied_msg and temp.AUTO_DELETE_TIME and temp.AUTO_DELETE_TIME > 0:
+                    track_msgs.append(copied_msg)
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Error sending cached media to user {query.from_user.id}: {e}")
+                await client.send_message(query.from_user.id, f"Error sending file: {e}")
+                
+        if track_msgs:
+            delete_data = await client.send_message(
+                chat_id=query.from_user.id,
+                text=temp.AUTO_DELETE_MSG.format(time=temp.AUTO_DELETE_TIME)
+            )
+            asyncio.create_task(DeleteMessage(delete_data))
+        return
 
     elif data.startswith("user_series:"):
         series_key = parts[1]
@@ -360,17 +377,10 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             await query.message.edit_text("Series not found or not available.", parse_mode=enums.ParseMode.HTML)
             return
 
-        # Get stored data to check if we came from spellcheck
-        stored_data = user_requestor.get(f"{chat_id}•{message_id}")
-        from_spellcheck = stored_data.get("from_spellcheck", False) if stored_data else False
-        original_query = stored_data.get("original_query") if stored_data else None
-
         # Store series key in user_requestor for future callbacks
         user_requestor[f"{chat_id}•{message_id}"] = {
             "series_key": series_key,
-            "requested_user": clicked_user,
-            "from_spellcheck": from_spellcheck,
-            "original_query": original_query
+            "requested_user": clicked_user
         }
 
         languages = series.get("languages", [])
@@ -392,10 +402,6 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         # Create user layout using saved pattern
         layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
         
-        # Add back button only if came from spellcheck
-        if from_spellcheck:
-            layout.append([InlineKeyboardButton("⬅️ Back", callback_data="back_to_spellcheck")])
-        
         if not layout:
             await query.message.edit_text("No languages available for this series.")
             return
@@ -415,7 +421,7 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         except Exception as e:
             logger.error(f"Error editing message in user_series callback: {e}")
             await query.answer("An error occurred. Please try again.", show_alert=True)
-            
+
 async def user_interface_callback_handler(client: Client, query: CallbackQuery):
     user_id = query.from_user.id
     chat_id = query.message.chat.id
