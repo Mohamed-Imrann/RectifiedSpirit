@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# File: MultipleFiles/crazy.py
 # -*- coding: utf-8 -*-
 
 import asyncio
@@ -32,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Global variables
-user_requestor: Dict[str, Optional[int]] = {}
+user_requestor: Dict[str, Dict[str, Any]] = {} # Changed to store more context
 
 # Helper functions
 async def DeleteMessage(msg):
@@ -43,7 +44,7 @@ async def DeleteMessage(msg):
     except Exception as e:
         logger.warning(f"Failed to delete message {msg.id}: {e}")
 
-def create_user_layout_from_pattern(items: List[str], layout_pattern: List[int], callback_prefix: str = "user_item") -> List[List[InlineKeyboardButton]]:
+def create_user_layout_from_pattern(items: List[str], layout_pattern: List[int], callback_prefix: str = "user_item", back_button_data: Optional[str] = None) -> List[List[InlineKeyboardButton]]:
     """
     Create a user-facing layout without + buttons using saved layout pattern.
     
@@ -51,46 +52,50 @@ def create_user_layout_from_pattern(items: List[str], layout_pattern: List[int],
         items: List of item names
         layout_pattern: List of integers representing buttons per row
         callback_prefix: Prefix for callback data
+        back_button_data: Callback data for a back button, if needed
     
     Returns:
         List of lists of InlineKeyboardButton objects
     """
     if not items:
-        return []
-    
-    layout = []
-    item_index = 0
-    
-    # Use saved layout pattern
-    for row_count in layout_pattern:
-        if item_index >= len(items):
-            break
+        layout = []
+    else:
+        layout = []
+        item_index = 0
         
-        row = []
-        for _ in range(row_count):
-            if item_index < len(items):
+        # Use saved layout pattern
+        for row_count in layout_pattern:
+            if item_index >= len(items):
+                break
+            
+            row = []
+            for _ in range(row_count):
+                if item_index < len(items):
+                    item_button = InlineKeyboardButton(
+                        items[item_index], 
+                        callback_data=f"{callback_prefix}_{item_index}"
+                    )
+                    row.append(item_button)
+                    item_index += 1
+            
+            if row:
+                layout.append(row)
+        
+        # Add remaining items if any (fallback)
+        while item_index < len(items):
+            row = []
+            for _ in range(min(2, len(items) - item_index)):  # Max 2 per row for remaining
                 item_button = InlineKeyboardButton(
                     items[item_index], 
                     callback_data=f"{callback_prefix}_{item_index}"
                 )
                 row.append(item_button)
                 item_index += 1
-        
-        if row:
-            layout.append(row)
+            if row:
+                layout.append(row)
     
-    # Add remaining items if any (fallback)
-    while item_index < len(items):
-        row = []
-        for _ in range(min(2, len(items) - item_index)):  # Max 2 per row for remaining
-            item_button = InlineKeyboardButton(
-                items[item_index], 
-                callback_data=f"{callback_prefix}_{item_index}"
-            )
-            row.append(item_button)
-            item_index += 1
-        if row:
-            layout.append(row)
+    if back_button_data:
+        layout.append([InlineKeyboardButton("⬅️ Back", callback_data=back_button_data)])
     
     return layout
 
@@ -201,6 +206,9 @@ async def series_filter(client: Client, message: Message):
                         buttons.append(InlineKeyboardButton(match, callback_data=f"user_series:{s_info['_id']}"))
                 
                 if buttons:
+                    # Add a back button to return to the initial search state
+                    buttons.append(InlineKeyboardButton("⬅️ Back to Search", callback_data="back_to_initial_search"))
+
                     # Create simple layout for selection (1 button per row)
                     layout = [[button] for button in buttons]
                     reply_markup = InlineKeyboardMarkup(layout)
@@ -210,8 +218,11 @@ async def series_filter(client: Client, message: Message):
                         caption="<b>Choose Your Series:</b>", 
                         reply_markup=reply_markup
                     )
-                    reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
-                    user_requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
+                    # Store context for user-specific access and navigation
+                    user_requestor[f"{etho.chat.id}•{etho.id}"] = {
+                        "requested_user": message.from_user.id,
+                        "state": "SPELLCHECK_RESULTS"
+                    }
                     asyncio.create_task(DeleteMessage(etho))
                     logger.info(f"Sent series selection message with {len(buttons)} options")
                     return
@@ -239,8 +250,8 @@ async def series_filter(client: Client, message: Message):
         # Get language names
         language_names = [lang['name'] for lang in languages]
         
-        # Create user layout using saved pattern
-        layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
+        # Create user layout using saved pattern, with a back button to spellcheck results
+        layout = create_user_layout_from_pattern(language_names, language_layout, "lang", back_button_data="back_to_spellcheck_results")
         
         if not layout:
             # Fallback if no languages
@@ -255,10 +266,11 @@ async def series_filter(client: Client, message: Message):
             else:
                 etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG[0], caption=reply_text, reply_markup=reply_markup)
             
-            reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
+            # Store context for user-specific access and navigation
             user_requestor[f"{etho.chat.id}•{etho.id}"] = {
                 "series_key": series_key,
-                "requested_user": reply_etho_user_id
+                "requested_user": message.from_user.id,
+                "state": "LANGUAGE_SELECTION"
             }
             asyncio.create_task(DeleteMessage(etho))
             logger.info(f"Sent series filter response for {series['title']}")
@@ -292,8 +304,17 @@ async def callback_handler(client: Client, callback_query: CallbackQuery):
     data = callback_query.data
     logger.info(f"Received callback query from user {user_id}: {data}")
 
-    if data.startswith("user_series:") or data.startswith("b:"):
-        logger.info(f"User series callback from user {user_id}")
+    # Check for user-specific access in groups
+    chat_id = callback_query.message.chat.id
+    message_id = callback_query.message.id
+    
+    stored_data = user_requestor.get(f"{chat_id}•{message_id}")
+    if chat_id < 0 and stored_data and stored_data.get("requested_user") and user_id != stored_data.get("requested_user"):
+        await callback_query.answer("Not your request! Request your own.", show_alert=True)
+        return
+
+    if data.startswith("user_series:") or data.startswith("b:") or data.startswith("back_to_"):
+        logger.info(f"User series/navigation callback from user {user_id}")
         await user_series_callback_handler(client, callback_query)
         return
 
@@ -313,59 +334,41 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
     message_id = query.message.id
     logger.info(f"Processing user series callback: {data}")
 
-    reply_msg = query.message.reply_to_message  
-    if reply_msg and reply_msg.from_user:
-        requested_user = reply_msg.from_user.id
-    else:
-        stored_data = user_requestor.get(f"{chat_id}•{message_id}")
-        if isinstance(stored_data, dict):
-            requested_user = stored_data.get("requested_user")
-        else:
-            requested_user = stored_data
+    stored_data = user_requestor.get(f"{chat_id}•{message_id}")
     
-    if chat_id < 0 and requested_user and clicked_user != requested_user:
-        logger.warning(f"User {clicked_user} tried to access another user's request")
-        await query.answer("Not your request!", show_alert=True)
+    if data == "back_to_initial_search":
+        await query.answer("Going back to search...")
+        # Edit message to prompt for new search
+        await query.message.edit_media(
+            media=InputMediaPhoto(media=random.choice(SPELL_CHECK_IMAGE), caption="<b>Send me the series title you want to search for:</b>"),
+            reply_markup=None # Remove buttons
+        )
+        # Clear context for this message
+        user_requestor.pop(f"{chat_id}•{message_id}", None)
         return
 
-    if data == "pages":
-        await query.answer()
+    elif data == "back_to_spellcheck_results":
+        await query.answer("Going back to series selection...")
+        # Re-trigger the spellcheck results display
+        # This requires storing the original query or re-running the search
+        # For simplicity, we'll just prompt the user to search again for now
+        # A more robust solution would store the search_results in user_requestor
+        await query.message.edit_media(
+            media=InputMediaPhoto(media=random.choice(SPELL_CHECK_IMAGE), caption="<b>Send me the series title you want to search for:</b>"),
+            reply_markup=None # Remove buttons
+        )
+        user_requestor.pop(f"{chat_id}•{message_id}", None)
         return
 
     elif data.startswith("b:"):
         file_link_key = data.split(":", 1)[1]
-        logger.info(f"Fetching files for link key: {file_link_key}")
+        logger.info(f"Generating deep link for file key: {file_link_key}")
         
-        files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(file_link_key)
-
-        if not files_to_send:
-            logger.warning(f"No files found for link key: {file_link_key}")
-            await query.answer("No files found for this quality.", show_alert=True)
-            return
-
-        await query.answer("Sending files...")
+        # Generate the /start deep link
+        deep_link = f"https://t.me/{temp.U_NAME}?start={file_link_key}"
         
-        track_msgs = []
-        for entry in files_to_send:
-            try:
-                copied_msg = await client.send_cached_media(
-                    chat_id=query.from_user.id, 
-                    file_id=entry["file_id"],
-                    caption=entry.get("caption", "")
-                )
-                if copied_msg and temp.AUTO_DELETE_TIME and temp.AUTO_DELETE_TIME > 0:
-                    track_msgs.append(copied_msg)
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                logger.error(f"Error sending cached media to user {query.from_user.id}: {e}")
-                await client.send_message(query.from_user.id, f"Error sending file: {e}")
-                
-        if track_msgs:
-            delete_data = await client.send_message(
-                chat_id=query.from_user.id,
-                text=temp.AUTO_DELETE_MSG.format(time=temp.AUTO_DELETE_TIME)
-            )
-            asyncio.create_task(DeleteMessage(delete_data))
+        # Answer the query with the deep link URL
+        await query.answer(url=deep_link)
         return
 
     elif data.startswith("user_series:"):
@@ -380,7 +383,8 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         # Store series key in user_requestor for future callbacks
         user_requestor[f"{chat_id}•{message_id}"] = {
             "series_key": series_key,
-            "requested_user": clicked_user
+            "requested_user": clicked_user,
+            "state": "LANGUAGE_SELECTION"
         }
 
         languages = series.get("languages", [])
@@ -399,8 +403,8 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         
         text = base_text + "\nSelect the language you need...!"
         
-        # Create user layout using saved pattern
-        layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
+        # Create user layout using saved pattern, with a back button to spellcheck results
+        layout = create_user_layout_from_pattern(language_names, language_layout, "lang", back_button_data="back_to_spellcheck_results")
         
         if not layout:
             await query.message.edit_text("No languages available for this series.")
@@ -409,11 +413,10 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         reply_markup = InlineKeyboardMarkup(layout)
 
         try:
-            await query.message.edit_text(
-                text=text,
-                reply_markup=reply_markup,
-                disable_web_page_preview=True,
-                parse_mode=enums.ParseMode.MARKDOWN
+            # Edit media to update photo and caption
+            await query.message.edit_media(
+                media=InputMediaPhoto(media=get_movie_poster(series_key), caption=text, parse_mode=enums.ParseMode.MARKDOWN),
+                reply_markup=reply_markup
             )
             logger.debug(f"Updated user series message for {series['title']}")
         except MessageNotModified:
@@ -437,12 +440,6 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
     
     series_key = stored_data.get("series_key")
     requested_user = stored_data.get("requested_user")
-    
-    # Check if user is authorized
-    if chat_id < 0 and requested_user and user_id != requested_user:
-        logger.warning(f"User {user_id} tried to access another user's request")
-        await query.answer("Not your request!", show_alert=True)
-        return
     
     series = get_series_name(series_key)
     if not series or not series.get('published', False):
@@ -475,7 +472,8 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                 "series_key": series_key,
                 "language_name": language_name,
                 "language_index": callback_index,
-                "requested_user": requested_user
+                "requested_user": requested_user,
+                "state": "SEASON_SELECTION"
             }
             
             # Get seasons for this language
@@ -485,8 +483,8 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             
             text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
             
-            # Create user layout using saved pattern
-            layout = create_user_layout_from_pattern(season_names, season_layout, "season")
+            # Create user layout using saved pattern, with a back button to language selection
+            layout = create_user_layout_from_pattern(season_names, season_layout, "season", back_button_data="back_to_language_selection")
             
             if not layout:
                 await query.answer("No seasons available for this language.", show_alert=True)
@@ -533,7 +531,8 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                 "language_index": language_index,
                 "season_name": season_name,
                 "season_index": callback_index,
-                "requested_user": requested_user
+                "requested_user": requested_user,
+                "state": "QUALITY_SELECTION"
             }
             
             # Get qualities for this season
@@ -550,8 +549,8 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             
             text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`\n○ **Season:** `{season_name}`\n\nSelect the quality you need...!"
             
-            # Create user layout using saved pattern
-            layout = create_user_layout_from_pattern(available_quality_names, quality_layout, "quality")
+            # Create user layout using saved pattern, with a back button to season selection
+            layout = create_user_layout_from_pattern(available_quality_names, quality_layout, "quality", back_button_data="back_to_season_selection")
             
             if not layout:
                 await query.answer("No qualities available for this season.", show_alert=True)
@@ -606,35 +605,132 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             
             await query.answer(f"Selected: {quality_name}")
             
-            # Fetch and send files
-            files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(link_key)
-
-            if not files_to_send:
-                await query.answer("No files found for this quality.", show_alert=True)
-                return
-
-            await query.answer("Sending files...")
+            # Generate the /start deep link
+            deep_link = f"https://t.me/{temp.U_NAME}?start={link_key}"
             
-            track_msgs = []
-            for entry in files_to_send:
-                try:
-                    copied_msg = await client.send_cached_media(
-                        chat_id=query.from_user.id, 
-                        file_id=entry["file_id"],
-                        caption=entry.get("caption", "")
-                    )
-                    if copied_msg and temp.AUTO_DELETE_TIME and temp.AUTO_DELETE_TIME > 0:
-                        track_msgs.append(copied_msg)
-                    await asyncio.sleep(0.5)
-                except Exception as e:
-                    logger.error(f"Error sending cached media to user {query.from_user.id}: {e}")
-                    await client.send_message(query.from_user.id, f"Error sending file: {e}")
-                    
-            if track_msgs:
-                delete_data = await client.send_message(
-                    chat_id=query.from_user.id,
-                    text=temp.AUTO_DELETE_MSG.format(time=temp.AUTO_DELETE_TIME)
+            text = base_text + (
+                f"○ **Language:** `{stored_data.get('language_name')}`\n"
+                f"○ **Season:** `{stored_data.get('season_name')}`\n"
+                f"○ **Quality:** `{quality_name}`\n\n"
+                f"Click the button below to get your files!"
+            )
+            
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔗 Get Files", url=deep_link)],
+                [InlineKeyboardButton("⬅️ Back", callback_data="back_to_quality_selection")]
+            ])
+
+            try:
+                await query.message.edit_text(
+                    text=text,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True,
+                    parse_mode=enums.ParseMode.MARKDOWN
                 )
-                asyncio.create_task(DeleteMessage(delete_data))
+            except Exception as e:
+                logger.error(f"Error editing message: {e}")
+                await query.answer("An error occurred. Please try again.", show_alert=True)
         else:
             await query.answer("Invalid selection.", show_alert=True)
+
+    # Handle back navigation
+    elif data == "back_to_language_selection":
+        await query.answer("Going back to language selection...")
+        series = get_series_name(series_key)
+        languages = series.get("languages", [])
+        language_layout = series.get("language_layout", [1] * len(languages))
+        
+        text = base_text + "\nSelect the language you need...!"
+        layout = create_user_layout_from_pattern(language_names, language_layout, "lang", back_button_data="back_to_spellcheck_results")
+        reply_markup = InlineKeyboardMarkup(layout)
+        
+        try:
+            await query.message.edit_text(
+                text=text,
+                reply_markup=reply_markup,
+                disable_web_page_preview=True,
+                parse_mode=enums.ParseMode.MARKDOWN
+            )
+            # Update state
+            stored_data["state"] = "LANGUAGE_SELECTION"
+            stored_data.pop("language_name", None)
+            stored_data.pop("language_index", None)
+            stored_data.pop("season_name", None)
+            stored_data.pop("season_index", None)
+            stored_data.pop("quality_name", None)
+            stored_data.pop("quality_index", None)
+        except Exception as e:
+            logger.error(f"Error editing message for back_to_language_selection: {e}")
+            await query.answer("An error occurred. Please try again.", show_alert=True)
+
+    elif data == "back_to_season_selection":
+        await query.answer("Going back to season selection...")
+        language_index = stored_data.get("language_index")
+        if language_index is None:
+            await query.answer("Session error. Please start again.", show_alert=True)
+            return
+        
+        languages = series.get("languages", [])
+        language_name = languages[language_index]["name"]
+        seasons = languages[language_index].get("seasons", [])
+        season_layout = languages[language_index].get("season_layout", [1] * len(seasons))
+        season_names = [season['name'] for season in seasons]
+        
+        text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
+        layout = create_user_layout_from_pattern(season_names, season_layout, "season", back_button_data="back_to_language_selection")
+        reply_markup = InlineKeyboardMarkup(layout)
+        
+        try:
+            await query.message.edit_text(
+                text=text,
+                reply_markup=reply_markup,
+                disable_web_page_preview=True,
+                parse_mode=enums.ParseMode.MARKDOWN
+            )
+            # Update state
+            stored_data["state"] = "SEASON_SELECTION"
+            stored_data.pop("season_name", None)
+            stored_data.pop("season_index", None)
+            stored_data.pop("quality_name", None)
+            stored_data.pop("quality_index", None)
+        except Exception as e:
+            logger.error(f"Error editing message for back_to_season_selection: {e}")
+            await query.answer("An error occurred. Please try again.", show_alert=True)
+
+    elif data == "back_to_quality_selection":
+        await query.answer("Going back to quality selection...")
+        language_index = stored_data.get("language_index")
+        season_index = stored_data.get("season_index")
+        if language_index is None or season_index is None:
+            await query.answer("Session error. Please start again.", show_alert=True)
+            return
+        
+        languages = series.get("languages", [])
+        language_name = languages[language_index]["name"]
+        seasons = languages[language_index].get("seasons", [])
+        season_name = seasons[season_index]["name"]
+        
+        qualities = seasons[season_index].get("qualities", [])
+        quality_layout = seasons[season_index].get("quality_layout", [1] * len(qualities))
+        available_qualities = [q for q in qualities if q.get("link_key")]
+        available_quality_names = [q['name'] for q in available_qualities]
+        
+        text = base_text + f"○ **Language:** `{language_name}`\n○ **Season:** `{season_name}`\n\nSelect the quality you need...!"
+        layout = create_user_layout_from_pattern(available_quality_names, quality_layout, "quality", back_button_data="back_to_season_selection")
+        reply_markup = InlineKeyboardMarkup(layout)
+        
+        try:
+            await query.message.edit_text(
+                text=text,
+                reply_markup=reply_markup,
+                disable_web_page_preview=True,
+                parse_mode=enums.ParseMode.MARKDOWN
+            )
+            # Update state
+            stored_data["state"] = "QUALITY_SELECTION"
+            stored_data.pop("quality_name", None)
+            stored_data.pop("quality_index", None)
+        except Exception as e:
+            logger.error(f"Error editing message for back_to_quality_selection: {e}")
+            await query.answer("An error occurred. Please try again.", show_alert=True)
+
