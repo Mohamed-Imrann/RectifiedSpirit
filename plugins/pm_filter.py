@@ -6,7 +6,7 @@ import asyncio
 import re
 import logging
 import random
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 
 from pyrogram import Client, filters, enums
 from pyrogram.types import (
@@ -33,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Global variables
-user_requestor: Dict[str, Dict[str]] = {} # Changed to store more context
+user_requestor: Dict[str, Dict[str, Any]] = {} # Changed to store more context
 
 # Helper functions
 async def DeleteMessage(msg):
