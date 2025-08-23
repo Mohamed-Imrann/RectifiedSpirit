@@ -313,43 +313,37 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
     message_id = query.message.id
     logger.info(f"Processing user series callback: {data}")
 
-    reply_msg = query.message.reply_to_message  
-    if reply_msg and reply_msg.from_user:
+    # Determine who requested the menu (reply-to-user or stored requester)
+    reply_msg = query.message.reply_to_message
+    if reply_msg and getattr(reply_msg, "from_user", None):
         requested_user = reply_msg.from_user.id
     else:
-        stored_data = user_requestor.get(f"{chat_id}•{message_id}")
-        if isinstance(stored_data, dict):
-            requested_user = stored_data.get("requested_user")
-        else:
-            requested_user = stored_data
-    
+        requested_user = user_requestor.get(f"{chat_id}•{message_id}")
+
+    # If in a group, block others from using the buttons
     if chat_id < 0 and requested_user and clicked_user != requested_user:
-        logger.warning(f"User {clicked_user} tried to access another user's request")
         await query.answer("Not your request!", show_alert=True)
         return
 
+    # quick passthrough
     if data == "pages":
         await query.answer()
         return
 
-    elif data.startswith("b:"):
+    # Final quality link -> send files to user
+    if data.startswith("b:"):
         file_link_key = data.split(":", 1)[1]
-        logger.info(f"Fetching files for link key: {file_link_key}")
-        
         files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(file_link_key)
-
         if not files_to_send:
-            logger.warning(f"No files found for link key: {file_link_key}")
             await query.answer("No files found for this quality.", show_alert=True)
             return
 
         await query.answer("Sending files...")
-        
         track_msgs = []
         for entry in files_to_send:
             try:
                 copied_msg = await client.send_cached_media(
-                    chat_id=query.from_user.id, 
+                    chat_id=query.from_user.id,
                     file_id=entry["file_id"],
                     caption=entry.get("caption", "")
                 )
@@ -359,7 +353,6 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             except Exception as e:
                 logger.error(f"Error sending cached media to user {query.from_user.id}: {e}")
                 await client.send_message(query.from_user.id, f"Error sending file: {e}")
-                
         if track_msgs:
             delete_data = await client.send_message(
                 chat_id=query.from_user.id,
@@ -368,24 +361,19 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             asyncio.create_task(DeleteMessage(delete_data))
         return
 
-    elif data.startswith("user_series:"):
+    # Handle the hierarchical user_series menus (series -> language -> season -> quality)
+    if data.startswith("user_series:"):
+        # parts: ["user_series", series_key, maybe language, maybe season, maybe quality]
         series_key = parts[1]
-        logger.info(f"Processing series with key: {series_key}")
+        lang_name_from_callback = parts[2] if len(parts) > 2 else None
+        season_name_from_callback = parts[3] if len(parts) > 3 else None
+        quality_name_from_callback = parts[4] if len(parts) > 4 else None
+
         series = get_series_name(series_key)
         if not series or not series.get('published', False):
-            logger.warning(f"Series not found or not published for key: {series_key}")
             await query.message.edit_text("Series not found or not available.", parse_mode=enums.ParseMode.HTML)
             return
 
-        # Store series key in user_requestor for future callbacks
-        user_requestor[f"{chat_id}•{message_id}"] = {
-            "series_key": series_key,
-            "requested_user": clicked_user
-        }
-
-        languages = series.get("languages", [])
-        language_layout = series.get("language_layout", [1] * len(languages))
-        
         base_text = (
             f"○ **Title:** `{series['title']}`\n"
             f"○ **Released On:** `{series['released_on']}`\n"
@@ -393,20 +381,50 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             f"○ **Rating:** `{series['rating']}`\n"
             f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`\n"
         )
-        
-        # Get language names
-        language_names = [lang['name'] for lang in languages]
-        
-        text = base_text + "\nSelect the language you need...!"
-        
-        # Create user layout using saved pattern
-        layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
-        
-        if not layout:
-            await query.message.edit_text("No languages available for this series.")
-            return
-        
-        reply_markup = InlineKeyboardMarkup(layout)
+
+        buttons = []
+        back_callback = None
+
+        # 1) Show languages
+        if not lang_name_from_callback:
+            languages = series.get("languages", [])
+            for lang_data in languages:
+                buttons.append(InlineKeyboardButton(lang_data['name'],
+                                                    callback_data=f"user_series:{series_key}:{lang_data['name']}"))
+            text = base_text + "\nSelect the language you need...!"
+
+        # 2) Show seasons for selected language
+        elif not season_name_from_callback:
+            current_lang = next((lang for lang in series.get("languages", []) if lang["name"] == lang_name_from_callback), None)
+            if current_lang:
+                seasons = current_lang.get("seasons", [])
+                for season_data in seasons:
+                    buttons.append(InlineKeyboardButton(season_data['name'],
+                                                        callback_data=f"user_series:{series_key}:{lang_name_from_callback}:{season_data['name']}"))
+            text = base_text + f"○ **Language:** `{lang_name_from_callback}`\n\nSelect the season you need...!"
+            back_callback = f"user_series:{series_key}"  # Back to languages
+
+        # 3) Show qualities for selected season
+        elif not quality_name_from_callback:
+            current_lang = next((lang for lang in series.get("languages", []) if lang["name"] == lang_name_from_callback), None)
+            current_season = next((s for s in current_lang.get("seasons", []) if s["name"] == season_name_from_callback), None) if current_lang else None
+            if current_season:
+                qualities = current_season.get("qualities", [])
+                for quality_data in qualities:
+                    file_link_key = quality_data.get('link_key')
+                    if file_link_key:
+                        buttons.append(InlineKeyboardButton(quality_data['name'], callback_data=f"b:{file_link_key}"))
+            text = base_text + f"○ **Language:** `{lang_name_from_callback}`\n○ **Season:** `{season_name_from_callback}`\n\nSelect the quality you need.!"
+            back_callback = f"user_series:{series_key}:{lang_name_from_callback}"  # Back to seasons
+
+        # chunk rows (uses your chunk_buttons helper)
+        buttons_chunked = chunk_buttons(buttons, chunk_size=2)
+
+        # Append a Back button when appropriate (labelled with arrow)
+        if back_callback:
+            buttons_chunked.append([InlineKeyboardButton("⬅️ Back", callback_data=back_callback)])
+
+        reply_markup = InlineKeyboardMarkup(buttons_chunked)
 
         try:
             await query.message.edit_text(
@@ -417,11 +435,11 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             )
             logger.debug(f"Updated user series message for {series['title']}")
         except MessageNotModified:
-            logger.debug("Message not modified, likely no changes")
+            logger.debug("Message not modified (no changes)")
         except Exception as e:
             logger.error(f"Error editing message in user_series callback: {e}")
             await query.answer("An error occurred. Please try again.", show_alert=True)
-
+            
 async def user_interface_callback_handler(client: Client, query: CallbackQuery):
     user_id = query.from_user.id
     chat_id = query.message.chat.id
