@@ -10,9 +10,12 @@ client = MongoClient(DATABASE_URI)
 db = client['series_database']
 series_collection = db['series']
 episodes_collection = client["file_database"]["episodes"]
+admin_channels_collection = db['admin_channels'] # New collection for admin channels
 
 def add_series(series_data: dict):
     try:
+        # Initialize subscribers list for the series
+        series_data["subscribers"] = []
         series_collection.insert_one(series_data)
         logger.info(f"Series '{series_data.get('title', 'N/A')}' added with key: {series_data['_id']}")
         return True
@@ -70,7 +73,7 @@ def add_or_update_language(series_key: str, language_name: str, poster_file_id: 
             break
     
     if not language_exists:
-        new_language = {"name": language_name, "seasons": [], "season_layout": []}
+        new_language = {"name": language_name, "seasons": [], "season_layout": [], "subscribers": []} # Initialize subscribers
         if poster_file_id:
             new_language["poster_file_id"] = poster_file_id
         languages.append(new_language)
@@ -92,22 +95,29 @@ def delete_language(series_key: str, language_name: str):
         return False
 
     languages = series.get("languages", [])
-    updated_languages = [lang for lang in languages if lang["name"].lower() != language_name.lower()]
+    updated_languages = []
+    deleted_language_data = None
     
-    if len(updated_languages) == len(languages):
+    for lang in languages:
+        if lang["name"].lower() == language_name.lower():
+            deleted_language_data = lang
+        else:
+            updated_languages.append(lang)
+    
+    if not deleted_language_data: # Language not found
         return False
 
     # Delete associated file links
-    for lang in languages:
-        if lang["name"].lower() == language_name.lower():
-            for season in lang.get("seasons", []):
-                for quality in season.get("qualities", []):
-                    if quality.get("link_key"):
-                        episodes_collection.delete_one({"file_link_key": quality["link_key"]})
-            break
+    if deleted_language_data:
+        for season in deleted_language_data.get("seasons", []):
+            for quality in season.get("qualities", []):
+                if quality.get("link_key"):
+                    episodes_collection.delete_one({"file_link_key": quality["link_key"]})
 
     # Update language layout
     language_layout = series.get("language_layout", [])
+    # Simple approach: if layout length is greater than updated languages, truncate
+    # A more robust solution might involve re-calculating layout based on remaining languages
     if len(language_layout) > len(updated_languages):
         language_layout = language_layout[:len(updated_languages)]
 
@@ -138,7 +148,7 @@ def add_or_update_season(series_key: str, language_name: str, season_name: str, 
                     season_exists = True
                     break
             if not season_exists:
-                new_season = {"name": season_name, "qualities": [], "quality_layout": []}
+                new_season = {"name": season_name, "qualities": [], "quality_layout": [], "subscribers": []} # Initialize subscribers
                 if poster_file_id:
                     new_season["poster_file_id"] = poster_file_id
                 seasons.append(new_season)
@@ -169,18 +179,23 @@ def delete_season(series_key: str, language_name: str, season_name: str):
     for lang in languages:
         if lang["name"].lower() == language_name.lower():
             seasons = lang.get("seasons", [])
-            updated_seasons = [s for s in seasons if s["name"].lower() != season_name.lower()]
+            updated_seasons = []
+            deleted_season_data = None
+
+            for s in seasons:
+                if s["name"].lower() == season_name.lower():
+                    deleted_season_data = s
+                else:
+                    updated_seasons.append(s)
             
-            if len(updated_seasons) == len(seasons):
+            if not deleted_season_data: # Season not found
                 return False
 
             # Delete associated file links
-            for season in seasons:
-                if season["name"].lower() == season_name.lower():
-                    for quality in season.get("qualities", []):
-                        if quality.get("link_key"):
-                            episodes_collection.delete_one({"file_link_key": quality["link_key"]})
-                    break
+            if deleted_season_data:
+                for quality in deleted_season_data.get("qualities", []):
+                    if quality.get("link_key"):
+                        episodes_collection.delete_one({"file_link_key": quality["link_key"]})
             
             # Update season layout
             season_layout = lang.get("season_layout", [])
@@ -218,7 +233,7 @@ def add_or_update_quality(series_key: str, language_name: str, season_name: str,
                             quality_exists = True
                             break
                     if not quality_exists:
-                        new_quality = {"name": quality_name}
+                        new_quality = {"name": quality_name, "subscribers": []} # Initialize subscribers
                         if link_key:
                             new_quality["link_key"] = link_key
                         qualities.append(new_quality)
@@ -267,17 +282,21 @@ def delete_quality(series_key: str, language_name: str, season_name: str, qualit
             for season in seasons:
                 if season["name"].lower() == season_name.lower():
                     qualities = season.get("qualities", [])
-                    updated_qualities = [q for q in qualities if q["name"].lower() != quality_name.lower()]
+                    updated_qualities = []
+                    deleted_quality_data = None
+
+                    for q in qualities:
+                        if q["name"].lower() == quality_name.lower():
+                            deleted_quality_data = q
+                        else:
+                            updated_qualities.append(q)
                     
-                    if len(updated_qualities) == len(qualities):
+                    if not deleted_quality_data: # Quality not found
                         return False
 
                     # Delete associated file links
-                    for quality in qualities:
-                        if quality["name"].lower() == quality_name.lower():
-                            if quality.get("link_key"):
-                                episodes_collection.delete_one({"file_link_key": quality["link_key"]})
-                            break
+                    if deleted_quality_data and deleted_quality_data.get("link_key"):
+                        episodes_collection.delete_one({"file_link_key": deleted_quality_data["link_key"]})
                     
                     # Update quality layout
                     quality_layout = season.get("quality_layout", [])
@@ -312,6 +331,7 @@ def publish_series(series_key: str):
                 if quality.get("link_key") and quality["link_key"] != "PENDING_LINK":
                     cleaned_qualities.append(quality)
                 else:
+                    # If link_key is missing or PENDING_LINK, delete associated episode entry
                     if quality.get("link_key"):
                         episodes_collection.delete_one({"file_link_key": quality["link_key"]})
             if cleaned_qualities:
@@ -330,3 +350,115 @@ def publish_series(series_key: str):
     except Exception as e:
         logger.error(f"Error publishing series: {e}")
         return False
+
+# --- Admin Channel Management Functions ---
+def add_admin_channel(admin_id: int, channel_id: int):
+    try:
+        admin_channels_collection.update_one(
+            {"_id": admin_id},
+            {"$set": {"channel_id": channel_id}},
+            upsert=True
+        )
+        logger.info(f"Admin {admin_id} assigned channel {channel_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error assigning channel to admin {admin_id}: {e}")
+        return False
+
+def get_admin_channel(admin_id: int):
+    try:
+        doc = admin_channels_collection.find_one({"_id": admin_id})
+        return doc.get("channel_id") if doc else None
+    except Exception as e:
+        logger.error(f"Error getting channel for admin {admin_id}: {e}")
+        return None
+
+# --- Notification Subscription Functions ---
+
+def add_subscriber(series_key: str, user_id: int, language_name: str = None, season_name: str = None, quality_name: str = None):
+    try:
+        if not language_name: # Subscribe to series updates
+            series_collection.update_one(
+                {"_id": series_key},
+                {"$addToSet": {"subscribers": user_id}}
+            )
+            return True
+        
+        # Find the specific language, season, or quality and add subscriber
+        update_query = {"_id": series_key}
+        
+        if quality_name:
+            update_query["languages.name"] = language_name
+            update_query["languages.seasons.name"] = season_name
+            update_query["languages.seasons.qualities.name"] = quality_name
+            update_field = "languages.$.seasons.$.qualities.$.subscribers"
+        elif season_name:
+            update_query["languages.name"] = language_name
+            update_query["languages.seasons.name"] = season_name
+            update_field = "languages.$.seasons.$.subscribers"
+        else: # language_name only
+            update_query["languages.name"] = language_name
+            update_field = "languages.$.subscribers"
+        
+        result = series_collection.update_one(
+            update_query,
+            {"$addToSet": {update_field: user_id}}
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        logger.error(f"Error adding subscriber: {e}")
+        return False
+
+def remove_subscriber(series_key: str, user_id: int, language_name: str = None, season_name: str = None, quality_name: str = None):
+    try:
+        if not language_name: # Unsubscribe from series updates
+            series_collection.update_one(
+                {"_id": series_key},
+                {"$pull": {"subscribers": user_id}}
+            )
+            return True
+        
+        update_query = {"_id": series_key}
+        
+        if quality_name:
+            update_query["languages.name"] = language_name
+            update_query["languages.seasons.name"] = season_name
+            update_query["languages.seasons.qualities.name"] = quality_name
+            update_field = "languages.$.seasons.$.qualities.$.subscribers"
+        elif season_name:
+            update_query["languages.name"] = language_name
+            update_query["languages.seasons.name"] = season_name
+            update_field = "languages.$.seasons.$.subscribers"
+        else: # language_name only
+            update_query["languages.name"] = language_name
+            update_field = "languages.$.subscribers"
+        
+        result = series_collection.update_one(
+            update_query,
+            {"$pull": {update_field: user_id}}
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        logger.error(f"Error removing subscriber: {e}")
+        return False
+
+def get_subscribers(series_key: str, language_name: str = None, season_name: str = None, quality_name: str = None):
+    series = series_collection.find_one({"_id": series_key})
+    if not series:
+        return []
+
+    if not language_name: # Get series subscribers
+        return series.get("subscribers", [])
+    
+    for lang in series.get("languages", []):
+        if lang["name"].lower() == language_name.lower():
+            if not season_name: # Get language subscribers
+                return lang.get("subscribers", [])
+            for season in lang.get("seasons", []):
+                if season["name"].lower() == season_name.lower():
+                    if not quality_name: # Get season subscribers
+                        return season.get("subscribers", [])
+                    for quality in season.get("qualities", []):
+                        if quality["name"].lower() == quality_name.lower(): # Get quality subscribers
+                            return quality.get("subscribers", [])
+    return []
