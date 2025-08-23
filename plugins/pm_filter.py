@@ -33,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Global variables
-user_requestor: Dict[str, Dict[str, Any]] = {} # Changed to store more context
+user_requestor: Dict[str, Dict[str]] = {} # Changed to store more context
 
 # Helper functions
 async def DeleteMessage(msg):
