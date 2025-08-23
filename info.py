@@ -90,6 +90,8 @@ PROTECT_CONTENT = is_enabled(environ.get('PROTECT_CONTENT', "False"), False)
 PUBLIC_FILE_STORE = is_enabled(environ.get('PUBLIC_FILE_STORE', "False"), False)
 PORT = environ.get('PORT', "8080")
 
+ADMIN_CHANNELS_COLLECTION = "adminchannel"
+
 LONG_IMDB_DESCRIPTION = "True"
 MAX_LIST_ELM = "8"
 USE_CAPTION_FILTER = "False"
