@@ -304,7 +304,7 @@ async def callback_handler(client: Client, callback_query: CallbackQuery):
         return
 
     # Handle user interface callbacks
-    elif data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_to_lang:") or data.startswith("back_to_season:"):
+    elif data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("backtolang:") or data.startswith("backtoseason:"):
         logger.info(f"User interface callback from user {user_id}")
         await user_interface_callback_handler(client, callback_query)
         return
@@ -550,7 +550,7 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             await callback_query.answer("❌ Failed to subscribe.", show_alert=True)
         return
 
-    elif data.startswith("back_to_lang:"):
+    elif data.startswith("backtolang:"):
         _, series_key = data.split(":")
         series = get_series_name(series_key)
         if not series: return
@@ -564,7 +564,7 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
         )
         return
 
-    elif data.startswith("back_to_season:"):
+    elif data.startswith("backtoseason:"):
         _, series_key, lang = data.split(":")
         series = get_series_name(series_key)
         seasons = next((l["seasons"] for l in series["languages"] if l["name"].lower()==lang.lower()), [])
