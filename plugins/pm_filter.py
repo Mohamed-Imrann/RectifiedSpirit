@@ -14,7 +14,13 @@ from pyrogram.types import (
 )
 from info import SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG, ADMINS
 from database.crazy_db import (
-    get_series, get_series_name, get_poster_manuel
+    get_series, 
+    get_series_name,
+    get_poster_manuel,
+    subscribe_to_season,
+    subscribe_to_quality,
+    get_season_subscribers,
+    get_quality_subscribers
 )
 from database.gfilters_mdb import (
     find_gfilter,
@@ -509,7 +515,9 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             if not layout:
                 await query.answer("No seasons available for this language.", show_alert=True)
                 return
-            
+
+            layout.append([InlineKeyboardButton("🔔 Notify When New Season Arrives", callback_data=f"notify_season:{series_key}:{language_name}")])
+            layout.append([InlineKeyboardButton("⬅️ Back", callback_data=f"back_to_lang:{series_key}")])
             reply_markup = InlineKeyboardMarkup(layout)
             
             try:
@@ -524,7 +532,53 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                 await query.answer("An error occurred. Please try again.", show_alert=True)
         else:
             await query.answer("Invalid selection.", show_alert=True)
-    
+
+    elif data.startswith("notify_season:"):
+        _, series_key, lang = data.split(":")
+        user_id = callback_query.from_user.id
+        if subscribe_to_season(series_key, lang, user_id):
+            await callback_query.answer("✅ You will be notified when a new Season arrives!", show_alert=True)
+        else:
+            await callback_query.answer("❌ Failed to subscribe.", show_alert=True)
+        return
+
+    elif data.startswith("notify_quality:"):
+        _, series_key, lang, season = data.split(":")
+        user_id = callback_query.from_user.id
+        if subscribe_to_quality(series_key, lang, season, user_id):
+            await callback_query.answer("✅ You will be notified when a new Quality arrives!", show_alert=True)
+        else:
+            await callback_query.answer("❌ Failed to subscribe.", show_alert=True)
+        return
+
+    elif data.startswith("back_to_lang:"):
+        _, series_key = data.split(":")
+        series = get_series_name(series_key)
+        if not series: return
+        languages = series.get("languages", [])
+        names = [l["name"] for l in languages]
+        layout = create_user_layout_from_pattern(names, series.get("language_layout", [1]*len(names)), "lang")
+        reply_markup = InlineKeyboardMarkup(layout)
+        await callback_query.message.edit_text(
+            f"○ **Title:** `{series['title']}`\n\nSelect the language you need...",
+            reply_markup=reply_markup, parse_mode=enums.ParseMode.MARKDOWN
+        )
+        return
+
+    elif data.startswith("back_to_season:"):
+        _, series_key, lang = data.split(":")
+        series = get_series_name(series_key)
+        seasons = next((l["seasons"] for l in series["languages"] if l["name"].lower()==lang.lower()), [])
+        names = [s["name"] for s in seasons]
+        layout = create_user_layout_from_pattern(names,
+            next((l.get("season_layout",[1]*len(seasons)) for l in series["languages"] if l["name"].lower()==lang.lower()), []),
+            "season")
+        layout.append([InlineKeyboardButton("🔔 Notify When New Season Arrives", callback_data=f"notify_season:{series_key}:{lang}")])
+        layout.append([InlineKeyboardButton("⬅️ Back", callback_data=f"back_to_lang:{series_key}")])
+        await query.message.edit_text(
+            f"○ **Title:** `{series['title']}`\n○ **Language:** `{lang}`\n\nSelect a season...",
+            reply_markup=InlineKeyboardMarkup(layout), parse_mode=enums.ParseMode.MARKDOWN)
+        return
     # Handle season selection
     elif callback_type == "season":
         language_index = stored_data.get("language_index")
@@ -574,7 +628,9 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             if not layout:
                 await query.answer("No qualities available for this season.", show_alert=True)
                 return
-            
+
+            layout.append([InlineKeyboardButton("🔔 Notify When New Quality Arrives", callback_data=f"notify_quality:{series_key}:{language_name}:{season_name}")])
+            layout.append([InlineKeyboardButton("⬅️ Back", callback_data=f"back_to_season:{series_key}:{language_name}")])
             reply_markup = InlineKeyboardMarkup(layout)
             
             try:
