@@ -330,3 +330,85 @@ def publish_series(series_key: str):
     except Exception as e:
         logger.error(f"Error publishing series: {e}")
         return False
+
+# -----------------------------
+# Subscriptions (NEW FUNCTIONS)
+# -----------------------------
+
+def subscribe_to_season(series_key: str, language_name: str, user_id: int):
+    """
+    Add a user to season_subscribers under the given language.
+    """
+    series = series_collection.find_one({"_id": series_key})
+    if not series:
+        return False
+
+    for lang in series.get("languages", []):
+        if lang["name"].lower() == language_name.lower():
+            subs = lang.get("season_subscribers", [])
+            if user_id not in subs:
+                subs.append(user_id)
+                lang["season_subscribers"] = subs
+            break
+
+    try:
+        series_collection.update_one({"_id": series_key}, {"$set": {"languages": series["languages"]}})
+        return True
+    except Exception as e:
+        logger.error(f"Error subscribing to season: {e}")
+        return False
+
+
+def subscribe_to_quality(series_key: str, language_name: str, season_name: str, user_id: int):
+    """
+    Add a user to quality_subscribers under a specific season.
+    """
+    series = series_collection.find_one({"_id": series_key})
+    if not series:
+        return False
+
+    for lang in series.get("languages", []):
+        if lang["name"].lower() == language_name.lower():
+            for season in lang.get("seasons", []):
+                if season["name"].lower() == season_name.lower():
+                    subs = season.get("quality_subscribers", [])
+                    if user_id not in subs:
+                        subs.append(user_id)
+                        season["quality_subscribers"] = subs
+                    break
+            break
+
+    try:
+        series_collection.update_one({"_id": series_key}, {"$set": {"languages": series["languages"]}})
+        return True
+    except Exception as e:
+        logger.error(f"Error subscribing to quality: {e}")
+        return False
+
+
+def get_season_subscribers(series_key: str, language_name: str):
+    """
+    Get all season subscribers for a language.
+    """
+    series = series_collection.find_one({"_id": series_key})
+    if not series:
+        return []
+    for lang in series.get("languages", []):
+        if lang["name"].lower() == language_name.lower():
+            return lang.get("season_subscribers", [])
+    return []
+
+
+def get_quality_subscribers(series_key: str, language_name: str, season_name: str):
+    """
+    Get all quality subscribers for a specific season of a language.
+    """
+    series = series_collection.find_one({"_id": series_key})
+    if not series:
+        return []
+    for lang in series.get("languages", []):
+        if lang["name"].lower() == language_name.lower():
+            for season in lang.get("seasons", []):
+                if season["name"].lower() == season_name.lower():
+                    return season.get("quality_subscribers", [])
+    return []
