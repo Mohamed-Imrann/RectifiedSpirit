@@ -304,7 +304,7 @@ async def callback_handler(client: Client, callback_query: CallbackQuery):
         return
 
     # Handle user interface callbacks
-    elif data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("notify_season:") or data.startswith("notify_quality:") or data.startswith("back_to_lang:") or data.startswith("back_to_season:"):
+    elif data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_to_lang:") or data.startswith("back_to_season:"):
         logger.info(f"User interface callback from user {user_id}")
         await user_interface_callback_handler(client, callback_query)
         return
@@ -516,7 +516,6 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                 await query.answer("No seasons available for this language.", show_alert=True)
                 return
 
-            layout.append([InlineKeyboardButton("🔔 Notify When New Season Arrives", callback_data=f"notify_season:{series_key}:{language_name}")])
             layout.append([InlineKeyboardButton("⬅️ Back", callback_data=f"back_to_lang:{series_key}")])
             reply_markup = InlineKeyboardMarkup(layout)
             
@@ -573,7 +572,6 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
         layout = create_user_layout_from_pattern(names,
             next((l.get("season_layout",[1]*len(seasons)) for l in series["languages"] if l["name"].lower()==lang.lower()), []),
             "season")
-        layout.append([InlineKeyboardButton("🔔 Notify When New Season Arrives", callback_data=f"notify_season:{series_key}:{lang}")])
         layout.append([InlineKeyboardButton("⬅️ Back", callback_data=f"back_to_lang:{series_key}")])
         await query.message.edit_text(
             f"○ **Title:** `{series['title']}`\n○ **Language:** `{lang}`\n\nSelect a season...",
@@ -629,7 +627,6 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                 await query.answer("No qualities available for this season.", show_alert=True)
                 return
 
-            layout.append([InlineKeyboardButton("🔔 Notify When New Quality Arrives", callback_data=f"notify_quality:{series_key}:{language_name}:{season_name}")])
             layout.append([InlineKeyboardButton("⬅️ Back", callback_data=f"back_to_season:{series_key}:{language_name}")])
             reply_markup = InlineKeyboardMarkup(layout)
             
