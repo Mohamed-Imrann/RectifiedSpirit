@@ -304,7 +304,7 @@ async def callback_handler(client: Client, callback_query: CallbackQuery):
         return
 
     # Handle user interface callbacks
-    elif data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_"):
+    elif data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("notify_season:") or data.startswith("notify_quality:") or data.startswith("back_to_lang:") or data.startswith("back_to_season:"):
         logger.info(f"User interface callback from user {user_id}")
         await user_interface_callback_handler(client, callback_query)
         return
