@@ -5,6 +5,7 @@ import asyncio
 import re
 import logging
 import random
+import time
 from typing import Dict, Optional, List
 
 from pyrogram import Client, filters, enums
@@ -14,13 +15,7 @@ from pyrogram.types import (
 )
 from info import SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG, ADMINS
 from database.crazy_db import (
-    get_series, 
-    get_series_name,
-    get_poster_manuel,
-    subscribe_to_season,
-    subscribe_to_quality,
-    get_season_subscribers,
-    get_quality_subscribers
+    get_series, get_series_name, get_poster_manuel
 )
 from database.gfilters_mdb import (
     find_gfilter,
@@ -38,7 +33,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Global variables
-user_requestor: Dict[str, Optional[int]] = {}
+user_requestor: Dict[str, Dict] = {}  # Modified to store more complex data
+request_timestamps: Dict[str, float] = {}  # Track when requests were made
 
 # Helper functions
 async def DeleteMessage(msg):
@@ -49,7 +45,27 @@ async def DeleteMessage(msg):
     except Exception as e:
         logger.warning(f"Failed to delete message {msg.id}: {e}")
 
-def create_user_layout_from_pattern(items: List[str], layout_pattern: List[int], callback_prefix: str = "user_item") -> List[List[InlineKeyboardButton]]:
+async def clean_expired_requests():
+    """Clean up user_requestor entries older than 30 minutes"""
+    while True:
+        await asyncio.sleep(600)  # Check every 10 minutes
+        current_time = time.time()
+        expired_keys = []
+        
+        for key, timestamp in request_timestamps.items():
+            if current_time - timestamp > 1800:  # 30 minutes in seconds
+                expired_keys.append(key)
+        
+        for key in expired_keys:
+            if key in user_requestor:
+                del user_requestor[key]
+            if key in request_timestamps:
+                del request_timestamps[key]
+        
+        if expired_keys:
+            logger.info(f"Cleaned {len(expired_keys)} expired requests")
+
+def create_user_layout_from_pattern(items: List[str], layout_pattern: List[int], callback_prefix: str = "user_item", add_back_button: bool = False, back_target: str = "") -> List[List[InlineKeyboardButton]]:
     """
     Create a user-facing layout without + buttons using saved layout pattern.
     
@@ -57,6 +73,8 @@ def create_user_layout_from_pattern(items: List[str], layout_pattern: List[int],
         items: List of item names
         layout_pattern: List of integers representing buttons per row
         callback_prefix: Prefix for callback data
+        add_back_button: Whether to add a back button
+        back_target: Target for the back button (e.g., "language", "season")
     
     Returns:
         List of lists of InlineKeyboardButton objects
@@ -97,6 +115,11 @@ def create_user_layout_from_pattern(items: List[str], layout_pattern: List[int],
             item_index += 1
         if row:
             layout.append(row)
+    
+    # Add back button if requested
+    if add_back_button:
+        back_button = InlineKeyboardButton("⬅️ Back", callback_data=f"back_{back_target}")
+        layout.append([back_button])
     
     return layout
 
@@ -217,7 +240,11 @@ async def series_filter(client: Client, message: Message):
                         reply_markup=reply_markup
                     )
                     reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
-                    user_requestor[f"{etho.chat.id}•{etho.id}"] = reply_etho_user_id
+                    user_requestor[f"{etho.chat.id}•{etho.id}"] = {
+                        "data": reply_etho_user_id,
+                        "timestamp": time.time()
+                    }
+                    request_timestamps[f"{etho.chat.id}•{etho.id}"] = time.time()
                     asyncio.create_task(DeleteMessage(etho))
                     logger.info(f"Sent series selection message with {len(buttons)} options")
                     return
@@ -263,9 +290,13 @@ async def series_filter(client: Client, message: Message):
             
             reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
             user_requestor[f"{etho.chat.id}•{etho.id}"] = {
-                "series_key": series_key,
-                "requested_user": reply_etho_user_id
+                "data": {
+                    "series_key": series_key,
+                    "requested_user": reply_etho_user_id
+                },
+                "timestamp": time.time()
             }
+            request_timestamps[f"{etho.chat.id}•{etho.id}"] = time.time()
             asyncio.create_task(DeleteMessage(etho))
             logger.info(f"Sent series filter response for {series['title']}")
         except Exception as e:
@@ -291,6 +322,10 @@ async def handle_message(client: Client, message: Message):
         if glob == False:
             await series_filter(client, message)
 
+# Start the cleanup scheduler when the bot starts
+async def start_scheduler():
+    asyncio.create_task(clean_expired_requests())
+
 # Callback handlers
 @Client.on_callback_query()
 async def callback_handler(client: Client, callback_query: CallbackQuery):
@@ -304,7 +339,7 @@ async def callback_handler(client: Client, callback_query: CallbackQuery):
         return
 
     # Handle user interface callbacks
-    elif data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("backtolang:") or data.startswith("backtoseason:"):
+    elif data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_"):
         logger.info(f"User interface callback from user {user_id}")
         await user_interface_callback_handler(client, callback_query)
         return
@@ -319,37 +354,43 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
     message_id = query.message.id
     logger.info(f"Processing user series callback: {data}")
 
-    # Determine who requested the menu (reply-to-user or stored requester)
-    reply_msg = query.message.reply_to_message
-    if reply_msg and getattr(reply_msg, "from_user", None):
+    reply_msg = query.message.reply_to_message  
+    if reply_msg and reply_msg.from_user:
         requested_user = reply_msg.from_user.id
     else:
-        requested_user = user_requestor.get(f"{chat_id}•{message_id}")
-
-    # If in a group, block others from using the buttons
+        stored_data = user_requestor.get(f"{chat_id}•{message_id}", {}).get("data")
+        if isinstance(stored_data, dict):
+            requested_user = stored_data.get("requested_user")
+        else:
+            requested_user = stored_data
+    
     if chat_id < 0 and requested_user and clicked_user != requested_user:
+        logger.warning(f"User {clicked_user} tried to access another user's request")
         await query.answer("Not your request!", show_alert=True)
         return
 
-    # quick passthrough
     if data == "pages":
         await query.answer()
         return
 
-    # Final quality link -> send files to user
-    if data.startswith("b:"):
+    elif data.startswith("b:"):
         file_link_key = data.split(":", 1)[1]
+        logger.info(f"Fetching files for link key: {file_link_key}")
+        
         files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(file_link_key)
+
         if not files_to_send:
+            logger.warning(f"No files found for link key: {file_link_key}")
             await query.answer("No files found for this quality.", show_alert=True)
             return
 
         await query.answer("Sending files...")
+        
         track_msgs = []
         for entry in files_to_send:
             try:
                 copied_msg = await client.send_cached_media(
-                    chat_id=query.from_user.id,
+                    chat_id=query.from_user.id, 
                     file_id=entry["file_id"],
                     caption=entry.get("caption", "")
                 )
@@ -359,6 +400,7 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             except Exception as e:
                 logger.error(f"Error sending cached media to user {query.from_user.id}: {e}")
                 await client.send_message(query.from_user.id, f"Error sending file: {e}")
+                
         if track_msgs:
             delete_data = await client.send_message(
                 chat_id=query.from_user.id,
@@ -367,19 +409,28 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             asyncio.create_task(DeleteMessage(delete_data))
         return
 
-    # Handle the hierarchical user_series menus (series -> language -> season -> quality)
-    if data.startswith("user_series:"):
-        # parts: ["user_series", series_key, maybe language, maybe season, maybe quality]
+    elif data.startswith("user_series:"):
         series_key = parts[1]
-        lang_name_from_callback = parts[2] if len(parts) > 2 else None
-        season_name_from_callback = parts[3] if len(parts) > 3 else None
-        quality_name_from_callback = parts[4] if len(parts) > 4 else None
-
+        logger.info(f"Processing series with key: {series_key}")
         series = get_series_name(series_key)
         if not series or not series.get('published', False):
+            logger.warning(f"Series not found or not published for key: {series_key}")
             await query.message.edit_text("Series not found or not available.", parse_mode=enums.ParseMode.HTML)
             return
 
+        # Store series key in user_requestor for future callbacks
+        user_requestor[f"{chat_id}•{message_id}"] = {
+            "data": {
+                "series_key": series_key,
+                "requested_user": clicked_user
+            },
+            "timestamp": time.time()
+        }
+        request_timestamps[f"{chat_id}•{message_id}"] = time.time()
+
+        languages = series.get("languages", [])
+        language_layout = series.get("language_layout", [1] * len(languages))
+        
         base_text = (
             f"○ **Title:** `{series['title']}`\n"
             f"○ **Released On:** `{series['released_on']}`\n"
@@ -387,50 +438,20 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             f"○ **Rating:** `{series['rating']}`\n"
             f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`\n"
         )
-
-        buttons = []
-        back_callback = None
-
-        # 1) Show languages
-        if not lang_name_from_callback:
-            languages = series.get("languages", [])
-            for lang_data in languages:
-                buttons.append(InlineKeyboardButton(lang_data['name'],
-                                                    callback_data=f"user_series:{series_key}:{lang_data['name']}"))
-            text = base_text + "\nSelect the language you need...!"
-
-        # 2) Show seasons for selected language
-        elif not season_name_from_callback:
-            current_lang = next((lang for lang in series.get("languages", []) if lang["name"] == lang_name_from_callback), None)
-            if current_lang:
-                seasons = current_lang.get("seasons", [])
-                for season_data in seasons:
-                    buttons.append(InlineKeyboardButton(season_data['name'],
-                                                        callback_data=f"user_series:{series_key}:{lang_name_from_callback}:{season_data['name']}"))
-            text = base_text + f"○ **Language:** `{lang_name_from_callback}`\n\nSelect the season you need...!"
-            back_callback = f"user_series:{series_key}"  # Back to languages
-
-        # 3) Show qualities for selected season
-        elif not quality_name_from_callback:
-            current_lang = next((lang for lang in series.get("languages", []) if lang["name"] == lang_name_from_callback), None)
-            current_season = next((s for s in current_lang.get("seasons", []) if s["name"] == season_name_from_callback), None) if current_lang else None
-            if current_season:
-                qualities = current_season.get("qualities", [])
-                for quality_data in qualities:
-                    file_link_key = quality_data.get('link_key')
-                    if file_link_key:
-                        buttons.append(InlineKeyboardButton(quality_data['name'], callback_data=f"b:{file_link_key}"))
-            text = base_text + f"○ **Language:** `{lang_name_from_callback}`\n○ **Season:** `{season_name_from_callback}`\n\nSelect the quality you need.!"
-            back_callback = f"user_series:{series_key}:{lang_name_from_callback}"  # Back to seasons
-
-        # chunk rows (uses your chunk_buttons helper)
-        buttons_chunked = chunk_buttons(buttons, chunk_size=2)
-
-        # Append a Back button when appropriate (labelled with arrow)
-        if back_callback:
-            buttons_chunked.append([InlineKeyboardButton("⬅️ Back", callback_data=back_callback)])
-
-        reply_markup = InlineKeyboardMarkup(buttons_chunked)
+        
+        # Get language names
+        language_names = [lang['name'] for lang in languages]
+        
+        text = base_text + "\nSelect the language you need...!"
+        
+        # Create user layout using saved pattern
+        layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
+        
+        if not layout:
+            await query.message.edit_text("No languages available for this series.")
+            return
+        
+        reply_markup = InlineKeyboardMarkup(layout)
 
         try:
             await query.message.edit_text(
@@ -441,11 +462,11 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             )
             logger.debug(f"Updated user series message for {series['title']}")
         except MessageNotModified:
-            logger.debug("Message not modified (no changes)")
+            logger.debug("Message not modified, likely no changes")
         except Exception as e:
             logger.error(f"Error editing message in user_series callback: {e}")
             await query.answer("An error occurred. Please try again.", show_alert=True)
-            
+
 async def user_interface_callback_handler(client: Client, query: CallbackQuery):
     user_id = query.from_user.id
     chat_id = query.message.chat.id
@@ -454,7 +475,9 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
     logger.info(f"Processing user interface callback: {data}")
     
     # Get stored data
-    stored_data = user_requestor.get(f"{chat_id}•{message_id}")
+    stored_entry = user_requestor.get(f"{chat_id}•{message_id}", {})
+    stored_data = stored_entry.get("data") if isinstance(stored_entry, dict) else None
+    
     if not stored_data or not isinstance(stored_data, dict):
         await query.answer("Session expired. Please search again.", show_alert=True)
         return
@@ -481,6 +504,82 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
         f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`\n"
     )
     
+    # Handle back button
+    if data.startswith("back_"):
+        target = data.split("_")[1]
+        
+        if target == "language":
+            # Go back to language selection
+            languages = series.get("languages", [])
+            language_layout = series.get("language_layout", [1] * len(languages))
+            language_names = [lang['name'] for lang in languages]
+            
+            text = base_text + "\nSelect the language you need...!"
+            
+            # Create user layout using saved pattern
+            layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
+            
+            if not layout:
+                await query.answer("No languages available for this series.", show_alert=True)
+                return
+            
+            reply_markup = InlineKeyboardMarkup(layout)
+            
+            try:
+                await query.message.edit_text(
+                    text=text,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True,
+                    parse_mode=enums.ParseMode.MARKDOWN
+                )
+                logger.debug(f"Returned to language selection for {series['title']}")
+            except Exception as e:
+                logger.error(f"Error editing message: {e}")
+                await query.answer("An error occurred. Please try again.", show_alert=True)
+            return
+        
+        elif target == "season":
+            # Go back to season selection
+            language_index = stored_data.get("language_index")
+            language_name = stored_data.get("language_name")
+            
+            if language_index is None:
+                await query.answer("Session error. Please start again.", show_alert=True)
+                return
+            
+            languages = series.get("languages", [])
+            if language_index >= len(languages):
+                await query.answer("Language not found.", show_alert=True)
+                return
+            
+            seasons = languages[language_index].get("seasons", [])
+            season_layout = languages[language_index].get("season_layout", [1] * len(seasons))
+            season_names = [season['name'] for season in seasons]
+            
+            text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
+            
+            # Create user layout using saved pattern with back button
+            layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
+            
+            if not layout:
+                await query.answer("No seasons available for this language.", show_alert=True)
+                return
+            
+            reply_markup = InlineKeyboardMarkup(layout)
+            
+            try:
+                await query.message.edit_text(
+                    text=text,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True,
+                    parse_mode=enums.ParseMode.MARKDOWN
+                )
+                logger.debug(f"Returned to season selection for {series['title']}")
+            except Exception as e:
+                logger.error(f"Error editing message: {e}")
+                await query.answer("An error occurred. Please try again.", show_alert=True)
+            return
+    
     # Parse the callback data
     callback_parts = data.split("_")
     callback_type = callback_parts[0]  # lang, season, or quality
@@ -496,11 +595,15 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             
             # Update stored data
             user_requestor[f"{chat_id}•{message_id}"] = {
-                "series_key": series_key,
-                "language_name": language_name,
-                "language_index": callback_index,
-                "requested_user": requested_user
+                "data": {
+                    "series_key": series_key,
+                    "language_name": language_name,
+                    "language_index": callback_index,
+                    "requested_user": requested_user
+                },
+                "timestamp": time.time()
             }
+            request_timestamps[f"{chat_id}•{message_id}"] = time.time()
             
             # Get seasons for this language
             seasons = languages[callback_index].get("seasons", [])
@@ -509,14 +612,13 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             
             text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
             
-            # Create user layout using saved pattern
-            layout = create_user_layout_from_pattern(season_names, season_layout, "season")
+            # Create user layout using saved pattern with back button
+            layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
             
             if not layout:
                 await query.answer("No seasons available for this language.", show_alert=True)
                 return
-
-            layout.append([InlineKeyboardButton("⬅️ Back", callback_data=f"back_to_lang:{series_key}")])
+            
             reply_markup = InlineKeyboardMarkup(layout)
             
             try:
@@ -531,52 +633,7 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                 await query.answer("An error occurred. Please try again.", show_alert=True)
         else:
             await query.answer("Invalid selection.", show_alert=True)
-
-    elif data.startswith("notify_season:"):
-        _, series_key, lang = data.split(":")
-        user_id = callback_query.from_user.id
-        if subscribe_to_season(series_key, lang, user_id):
-            await callback_query.answer("✅ You will be notified when a new Season arrives!", show_alert=True)
-        else:
-            await callback_query.answer("❌ Failed to subscribe.", show_alert=True)
-        return
-
-    elif data.startswith("notify_quality:"):
-        _, series_key, lang, season = data.split(":")
-        user_id = callback_query.from_user.id
-        if subscribe_to_quality(series_key, lang, season, user_id):
-            await callback_query.answer("✅ You will be notified when a new Quality arrives!", show_alert=True)
-        else:
-            await callback_query.answer("❌ Failed to subscribe.", show_alert=True)
-        return
-
-    elif data.startswith("backtolang:"):
-        _, series_key = data.split(":")
-        series = get_series_name(series_key)
-        if not series: return
-        languages = series.get("languages", [])
-        names = [l["name"] for l in languages]
-        layout = create_user_layout_from_pattern(names, series.get("language_layout", [1]*len(names)), "lang")
-        reply_markup = InlineKeyboardMarkup(layout)
-        await callback_query.message.edit_text(
-            f"○ **Title:** `{series['title']}`\n\nSelect the language you need...",
-            reply_markup=reply_markup, parse_mode=enums.ParseMode.MARKDOWN
-        )
-        return
-
-    elif data.startswith("backtoseason:"):
-        _, series_key, lang = data.split(":")
-        series = get_series_name(series_key)
-        seasons = next((l["seasons"] for l in series["languages"] if l["name"].lower()==lang.lower()), [])
-        names = [s["name"] for s in seasons]
-        layout = create_user_layout_from_pattern(names,
-            next((l.get("season_layout",[1]*len(seasons)) for l in series["languages"] if l["name"].lower()==lang.lower()), []),
-            "season")
-        layout.append([InlineKeyboardButton("⬅️ Back", callback_data=f"back_to_lang:{series_key}")])
-        await query.message.edit_text(
-            f"○ **Title:** `{series['title']}`\n○ **Language:** `{lang}`\n\nSelect a season...",
-            reply_markup=InlineKeyboardMarkup(layout), parse_mode=enums.ParseMode.MARKDOWN)
-        return
+    
     # Handle season selection
     elif callback_type == "season":
         language_index = stored_data.get("language_index")
@@ -598,13 +655,17 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             
             # Update stored data
             user_requestor[f"{chat_id}•{message_id}"] = {
-                "series_key": series_key,
-                "language_name": stored_data.get("language_name"),
-                "language_index": language_index,
-                "season_name": season_name,
-                "season_index": callback_index,
-                "requested_user": requested_user
+                "data": {
+                    "series_key": series_key,
+                    "language_name": stored_data.get("language_name"),
+                    "language_index": language_index,
+                    "season_name": season_name,
+                    "season_index": callback_index,
+                    "requested_user": requested_user
+                },
+                "timestamp": time.time()
             }
+            request_timestamps[f"{chat_id}•{message_id}"] = time.time()
             
             # Get qualities for this season
             qualities = seasons[callback_index].get("qualities", [])
@@ -620,14 +681,13 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             
             text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`\n○ **Season:** `{season_name}`\n\nSelect the quality you need...!"
             
-            # Create user layout using saved pattern
-            layout = create_user_layout_from_pattern(available_quality_names, quality_layout, "quality")
+            # Create user layout using saved pattern with back button
+            layout = create_user_layout_from_pattern(available_quality_names, quality_layout, "quality", add_back_button=True, back_target="season")
             
             if not layout:
                 await query.answer("No qualities available for this season.", show_alert=True)
                 return
-
-            layout.append([InlineKeyboardButton("⬅️ Back", callback_data=f"back_to_season:{series_key}:{language_name}")])
+            
             reply_markup = InlineKeyboardMarkup(layout)
             
             try:
