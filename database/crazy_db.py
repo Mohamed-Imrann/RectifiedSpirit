@@ -2,6 +2,8 @@ from pymongo import MongoClient
 from info import DATABASE_URI
 import logging
 import copy
+import os
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -10,6 +12,7 @@ client = MongoClient(DATABASE_URI)
 db = client['series_database']
 series_collection = db['series']
 episodes_collection = client["file_database"]["episodes"]
+admin_assignments_collection = db['admin_assignments']
 
 def add_series(series_data: dict):
     try:
@@ -412,3 +415,69 @@ def get_quality_subscribers(series_key: str, language_name: str, season_name: st
                 if season["name"].lower() == season_name.lower():
                     return season.get("quality_subscribers", [])
     return []
+
+
+def add_admin_assignment(user_id: int, channel_id: int):
+    """Add an admin assignment to the database"""
+    try:
+        admin_assignments_collection.update_one(
+            {"user_id": user_id},
+            {"$set": {"channel_id": channel_id}},
+            upsert=True
+        )
+        logger.info(f"Added admin assignment: {user_id} -> {channel_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error adding admin assignment: {e}")
+        return False
+
+def remove_admin_assignment(user_id: int):
+    """Remove an admin assignment from the database"""
+    try:
+        result = admin_assignments_collection.delete_one({"user_id": user_id})
+        if result.deleted_count > 0:
+            logger.info(f"Removed admin assignment for user: {user_id}")
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Error removing admin assignment: {e}")
+        return False
+
+def get_admin_assignments():
+    """Get all admin assignments from the database"""
+    try:
+        assignments = {}
+        for doc in admin_assignments_collection.find({}):
+            assignments[doc["user_id"]] = doc["channel_id"]
+        return assignments
+    except Exception as e:
+        logger.error(f"Error getting admin assignments: {e}")
+        return {}
+
+def write_admin_assignments_to_env():
+    """Write admin assignments to dynamic.env file"""
+    try:
+        assignments = get_admin_assignments()
+        env_lines = []
+        
+        # Read existing env file
+        if os.path.exists("./dynamic.env"):
+            with open("./dynamic.env", "r") as f:
+                env_lines = f.readlines()
+        
+        # Remove existing ADMIN_ASSIGNMENTS lines
+        env_lines = [line for line in env_lines if not line.startswith("ADMIN_ASSIGNMENTS=")]
+        
+        # Add new assignments
+        assignments_str = ",".join([f"{uid}:{cid}" for uid, cid in assignments.items()])
+        env_lines.append(f"ADMIN_ASSIGNMENTS={assignments_str}\n")
+        
+        # Write back to file
+        with open("./dynamic.env", "w") as f:
+            f.writelines(env_lines)
+            
+        logger.info("Admin assignments written to dynamic.env")
+        return True
+    except Exception as e:
+        logger.error(f"Error writing admin assignments to env: {e}")
+        return False
