@@ -254,10 +254,11 @@ async def get_omdb_info(query, omdb_id=None):
     
     return None
 
-async def send_poster_to_admin_channel(client, user_id, poster_url=None, photo=None, caption="#MainPoster"):
+async def send_poster_to_admin_channel(client, user_id, poster_url=None, message=None, caption="#MainPoster"):
     """
     Send a poster to the admin's assigned channel and return the file ID.
     If a poster with the same caption already exists, delete it and send a new one.
+    Uses message copying instead of downloading/uploading for efficiency.
     """
     # Get the assigned channel for this admin
     channel_id = Assigned.get(user_id)
@@ -266,28 +267,43 @@ async def send_poster_to_admin_channel(client, user_id, poster_url=None, photo=N
         channel_id = LOG_CHANNEL
     
     # First, check if there's already a message with the same caption in the channel
-    async for message in client.iter_messages(channel_id, limit=100):
-        if message.caption and message.caption.strip() == caption:
-            await message.delete()
+    async for msg in client.iter_messages(channel_id, limit=100):
+        if msg.caption and msg.caption.strip() == caption:
+            await msg.delete()
     
     # Now send the new poster
-    if poster_url:
-        response = requests.get(poster_url)
-        if response.status_code == 200:
-            temp_path = f"temp_poster_{uuid.uuid4()}.jpg"
-            with open(temp_path, 'wb') as f:
-                f.write(response.content)
-            try:
-                sent_msg = await client.send_photo(channel_id, photo=temp_path, caption=caption)
+    try:
+        if poster_url:
+            # For URL posters, we need to download and upload as Telegram can't directly send from external URLs
+            response = requests.get(poster_url)
+            if response.status_code == 200:
+                temp_path = f"temp_poster_{uuid.uuid4()}.jpg"
+                with open(temp_path, 'wb') as f:
+                    f.write(response.content)
+                try:
+                    sent_msg = await client.send_photo(channel_id, photo=temp_path, caption=caption)
+                    return sent_msg.photo.file_id
+                finally:
+                    os.remove(temp_path)
+        elif message:
+            # For user-provided media, copy directly to the channel
+            if message.photo:
+                # Copy photo message
+                sent_msg = await message.copy(chat_id=channel_id, caption=caption)
                 return sent_msg.photo.file_id
-            finally:
-                os.remove(temp_path)
-    elif photo:
-        sent_msg = await client.send_photo(channel_id, photo=photo, caption=caption)
-        return sent_msg.photo.file_id
+            elif message.video and message.video.thumbs:
+                # For videos, use the thumbnail as poster
+                thumb = message.video.thumbs[0]
+                sent_msg = await client.send_photo(
+                    chat_id=channel_id,
+                    photo=thumb.file_id,
+                    caption=caption
+                )
+                return sent_msg.photo.file_id
+    except Exception as e:
+        logger.error(f"Error sending poster to admin channel: {e}")
     
     return None
-
 
 async def is_subscribed(bot, query=None, userid=None):
     try:
