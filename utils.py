@@ -10,10 +10,11 @@ from pyrogram import enums
 from imdb import Cinemagoer
 from bs4 import BeautifulSoup
 import requests
-from fuzzywuzzy import fuzz # Import fuzzywuzzy
+from fuzzywuzzy import fuzz
+import uuid
 
-from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, AUTO_DELETE_TIME, AUTO_DELETE_MSG, NO_POSTER_FOUND_IMG
-from database.crazy_db import episodes_collection # Import the episodes collection
+from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, AUTO_DELETE_TIME, AUTO_DELETE_MSG, NO_POSTER_FOUND_IMG, TVDB_API_KEY, OMDB_API_KEY, Assigned
+from database.crazy_db import episodes_collection
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -46,6 +47,247 @@ class Temp(object):
     AUTO_DELETE_MSG = "This message will be auto-deleted in {time} seconds to save chat space."
 
 temp = Temp()
+
+async def get_poster_from_all_apis(query):
+    """
+    Try to get poster from multiple APIs (TMDB, IMDb, TVDB, OMDB)
+    Returns the first available poster URL or None
+    """
+    # Try TMDB first
+    tmdb_info = await get_tmdb_info(query, bulk=False)
+    if tmdb_info and tmdb_info.get('poster_url'):
+        return tmdb_info['poster_url']
+    
+    # Try IMDb
+    imdb_info = await get_poster(query, bulk=False)
+    if imdb_info and imdb_info.get('poster_url'):
+        return imdb_info['poster_url']
+    
+    # Try TVDB
+    tvdb_info = await get_tvdb_info(query)
+    if tvdb_info and tvdb_info.get('poster_url'):
+        return tvdb_info['poster_url']
+    
+    # Try OMDB
+    omdb_info = await get_omdb_info(query)
+    if omdb_info and omdb_info.get('poster_url'):
+        return omdb_info['poster_url']
+    
+    return None
+
+async def get_comprehensive_series_info(query):
+    """
+    Get comprehensive series information from multiple sources with fuzzy matching
+    Ensures title and released_on are always present, and tries to get rating and genre
+    """
+    info = {
+        'title': None,
+        'released_on': None,
+        'rating': None,
+        'genre': None,
+        'poster_url': None,
+        'media_type': 'series'
+    }
+    
+    # Try TMDB first
+    tmdb_results = await get_tmdb_info(query, bulk=True)
+    if tmdb_results:
+        # Use fuzzy matching to find the best result
+        best_match = find_most_similar_title(query, [r['title'] for r in tmdb_results])
+        if best_match:
+            best_match = best_match[0]  # Take the top match
+            for result in tmdb_results:
+                if result['title'] == best_match:
+                    tmdb_info = await get_tmdb_info(query, tmdb_id=result['tmdb_id'], media_type=result['media_type'])
+                    if tmdb_info:
+                        info.update({
+                            'title': tmdb_info.get('title'),
+                            'released_on': tmdb_info.get('year'),
+                            'rating': tmdb_info.get('rating'),
+                            'genre': tmdb_info.get('genres'),
+                            'poster_url': tmdb_info.get('poster_url'),
+                            'media_type': tmdb_info.get('media_type', 'series')
+                        })
+                    break
+    
+    # If title or released_on is missing, try IMDb
+    if not info.get('title') or not info.get('released_on'):
+        imdb_results = await get_poster(query, bulk=True)
+        if imdb_results:
+            best_match = find_most_similar_title(query, [r['title'] for r in imdb_results])
+            if best_match:
+                best_match = best_match[0]
+                for result in imdb_results:
+                    if result['title'] == best_match:
+                        imdb_info = await get_poster(result['imdb_id'], id=True)
+                        if imdb_info:
+                            if not info.get('title'):
+                                info['title'] = imdb_info.get('title')
+                            if not info.get('released_on'):
+                                info['released_on'] = imdb_info.get('year')
+                            if not info.get('rating'):
+                                info['rating'] = imdb_info.get('rating')
+                            if not info.get('genre'):
+                                info['genre'] = imdb_info.get('genres')
+                            if not info.get('poster_url'):
+                                info['poster_url'] = imdb_info.get('poster_url')
+                            if not info.get('media_type'):
+                                info['media_type'] = imdb_info.get('media_type', 'series')
+                        break
+    
+    # If still missing, try TVDB
+    if not info.get('title') or not info.get('released_on'):
+        tvdb_info = await get_tvdb_info(query)
+        if tvdb_info:
+            if not info.get('title'):
+                info['title'] = tvdb_info.get('title')
+            if not info.get('released_on'):
+                info['released_on'] = tvdb_info.get('year')
+            if not info.get('rating'):
+                info['rating'] = tvdb_info.get('rating')
+            if not info.get('genre'):
+                info['genre'] = tvdb_info.get('genre')
+            if not info.get('poster_url'):
+                info['poster_url'] = tvdb_info.get('poster_url')
+    
+    # If still missing, try OMDB
+    if not info.get('title') or not info.get('released_on'):
+        omdb_info = await get_omdb_info(query)
+        if omdb_info:
+            if not info.get('title'):
+                info['title'] = omdb_info.get('title')
+            if not info.get('released_on'):
+                info['released_on'] = omdb_info.get('year')
+            if not info.get('rating'):
+                info['rating'] = omdb_info.get('rating')
+            if not info.get('genre'):
+                info['genre'] = omdb_info.get('genre')
+            if not info.get('poster_url'):
+                info['poster_url'] = omdb_info.get('poster_url')
+    
+    # Ensure we have at least title and released_on
+    if not info.get('title'):
+        info['title'] = query
+    if not info.get('released_on'):
+        info['released_on'] = "N/A"
+    
+    # Format genre and rating properly
+    if info.get('genre') and isinstance(info['genre'], list):
+        info['genre'] = ', '.join(info['genre'][:3])  # Limit to 3 genres
+    
+    return info
+
+async def get_tvdb_info(query, tvdb_id=None):
+    """Fetch TV show information from TVDB API"""
+    headers = {
+        "Authorization": f"Bearer {TVDB_API_KEY}",
+        "Accept": "application/json"
+    }
+    
+    try:
+        if tvdb_id:
+            # Get specific series by ID
+            url = f"https://api.thetvdb.com/series/{tvdb_id}"
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json().get('data', {})
+            
+            # Extract the needed information
+            return {
+                'title': data.get('seriesName'),
+                'released_on': data.get('firstAired', '').split('-')[0] if data.get('firstAired') else 'N/A',
+                'rating': data.get('siteRating'),
+                'genre': ', '.join([genre for genre in data.get('genre', []) if genre]) if data.get('genre') else 'N/A',
+                'poster_url': f"https://thetvdb.com/banners/{data.get('poster')}" if data.get('poster') else None,
+                'tvdb_id': data.get('id'),
+                'media_type': 'tv'
+            }
+        else:
+            # Search for the series
+            url = f"https://api.thetvdb.com/search/series?name={query}"
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json().get('data', [])
+            
+            if data:
+                # Get the first result
+                series = data[0]
+                return {
+                    'title': series.get('seriesName'),
+                    'released_on': series.get('firstAired', '').split('-')[0] if series.get('firstAired') else 'N/A',
+                    'rating': series.get('siteRating'),
+                    'genre': ', '.join([genre for genre in series.get('genre', []) if genre]) if series.get('genre') else 'N/A',
+                    'poster_url': f"https://thetvdb.com/banners/{series.get('poster')}" if series.get('poster') else None,
+                    'tvdb_id': series.get('id'),
+                    'media_type': 'tv'
+                }
+    except Exception as e:
+        logger.error(f"TVDB API error: {e}")
+    
+    return None
+
+async def get_omdb_info(query, omdb_id=None):
+    """Fetch movie/series information from OMDB API"""
+    try:
+        if omdb_id:
+            url = f"http://www.omdbapi.com/?i={omdb_id}&apikey={OMDB_API_KEY}"
+        else:
+            url = f"http://www.omdbapi.com/?t={query}&apikey={OMDB_API_KEY}"
+        
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get('Response') == 'True':
+            # Extract the needed information
+            return {
+                'title': data.get('Title'),
+                'released_on': data.get('Year', '').split('–')[0] if data.get('Year') else 'N/A',
+                'rating': data.get('imdbRating'),
+                'genre': data.get('Genre'),
+                'poster_url': data.get('Poster') if data.get('Poster') != 'N/A' else None,
+                'imdb_id': data.get('imdbID'),
+                'media_type': 'series' if data.get('Type') == 'series' else 'movie'
+            }
+    except Exception as e:
+        logger.error(f"OMDB API error: {e}")
+    
+    return None
+
+async def send_poster_to_admin_channel(client, user_id, poster_url=None, photo=None, caption="#MainPoster"):
+    """
+    Send a poster to the admin's assigned channel and return the file ID.
+    If a poster with the same caption already exists, delete it and send a new one.
+    """
+    # Get the assigned channel for this admin
+    channel_id = Assigned.get(user_id)
+    if not channel_id:
+        # If not assigned, use the default LOG_CHANNEL
+        channel_id = LOG_CHANNEL
+    
+    # First, check if there's already a message with the same caption in the channel
+    async for message in client.iter_messages(channel_id, limit=100):
+        if message.caption and message.caption.strip() == caption:
+            await message.delete()
+    
+    # Now send the new poster
+    if poster_url:
+        response = requests.get(poster_url)
+        if response.status_code == 200:
+            temp_path = f"temp_poster_{uuid.uuid4()}.jpg"
+            with open(temp_path, 'wb') as f:
+                f.write(response.content)
+            try:
+                sent_msg = await client.send_photo(channel_id, photo=temp_path, caption=caption)
+                return sent_msg.photo.file_id
+            finally:
+                os.remove(temp_path)
+    elif photo:
+        sent_msg = await client.send_photo(channel_id, photo=photo, caption=caption)
+        return sent_msg.photo.file_id
+    
+    return None
+
 
 async def is_subscribed(bot, query=None, userid=None):
     try:
