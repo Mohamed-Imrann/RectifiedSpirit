@@ -307,49 +307,6 @@ async def get_omdb_info(query, omdb_id=None):
     
     return None
 
-async def download_and_upload_poster(client: Client, poster_url: str = None, message: Message = None):
-    logger.info("Downloading and uploading poster")
-    temp_dir = os.path.join(TMP_DOWNLOAD_DIRECTORY, str(uuid.uuid4()))
-    os.makedirs(temp_dir, exist_ok=True)
-    download_path = None
-    file_id = None
-
-    try:
-        if poster_url:
-            logger.info(f"Downloading poster from URL: {poster_url}")
-            response = requests.get(poster_url, stream=True)
-            response.raise_for_status()
-            download_path = os.path.join(temp_dir, "poster.jpg")
-            with open(download_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        elif message and message.photo and message.photo.file_id:
-            logger.info("Downloading user-provided photo")
-            download_path = await client.download_media(message.photo.file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
-        elif message and message.video and message.video.thumbs and message.video.thumbs[0].file_id:
-            logger.info("Downloading user-provided video thumbnail")
-            download_path = await client.download_media(message.video.thumbs[0].file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
-        else:
-            logger.warning("No valid poster source provided")
-            return None
-
-        if download_path:
-            logger.info("Uploading poster to LOG_CHANNEL")
-            sent_msg = await client.send_photo(LOG_CHANNEL, photo=download_path, caption="Series Poster")
-            file_id = sent_msg.photo.file_id
-            try:
-                await sent_msg.delete()
-                logger.debug("Deleted temporary poster from LOG_CHANNEL")
-            except Exception as e:
-                logger.warning(f"Could not delete temporary poster message from LOG_CHANNEL: {e}")
-    except Exception as e:
-        logger.error(f"Error downloading/uploading poster: {e}")
-    finally:
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-            logger.debug(f"Cleaned up temporary directory: {temp_dir}")
-    return file_id
-
 # Admin UI message sending functions
 async def send_series_selection_message(client: Client, user_id: int, query: str, results: list, message_id: int = None):
     logger.info(f"Sending series selection message to user {user_id}")
@@ -733,7 +690,7 @@ async def new_series_ui_command(client: Client, message: Message):
     
     # Send series details message
     await send_series_details_message(client, user_id, series_data, temp_msg.id)
-
+    
 @Client.on_message(filters.command('editseries') & filters.private)
 async def edit_series_command(client: Client, message: Message):
     """Edit an existing series (only for assigned admins)"""
@@ -922,18 +879,19 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             )
             return
         
-        poster_file_id = await download_and_upload_poster(client, poster_url=movie_details.get('poster_url') or movie_details.get('poster'))
+        poster_file_id = await send_poster_to_admin_channel(
+            client, 
+            user_id,
+            poster_url=movie_details.get('poster_url') or movie_details.get('poster'),
+            caption="#MainPoster"
+        )
+        
         if poster_file_id:
             update_series_field(series_key, "poster_file_id", poster_file_id)
             series_data["poster_file_id"] = poster_file_id
         else:
             update_series_field(series_key, "poster_file_id", NO_POSTER_FOUND_IMG[0])
             series_data["poster_file_id"] = NO_POSTER_FOUND_IMG[0]
-        
-        temp_admin_data[user_id]["current_series_key"] = series_key
-        temp_admin_data[user_id]["state"] = "SERIES_DETAILS"
-        
-        await send_series_details_message(client, user_id, series_data, main_message_id)
     
     # Handle navigation callbacks
     elif data == "search_again":
@@ -1388,8 +1346,23 @@ async def process_poster_input(client: Client, message: Message, poster_type: st
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
     
-    # Download and upload the poster
-    poster_file_id = await download_and_upload_poster(client, message=message)
+    # Determine the caption based on poster type
+    if poster_type == "series":
+        caption = "#MainPoster"
+    elif poster_type == "language":
+        caption = "#LanguagePoster"
+    elif poster_type == "season":
+        caption = "#SeasonPoster"
+    else:
+        caption = "#Poster"
+    
+    # Copy the poster directly to the admin's assigned channel
+    poster_file_id = await send_poster_to_admin_channel(
+        client, 
+        user_id,
+        message=message,
+        caption=caption
+    )
     
     if not poster_file_id:
         await message.reply("Failed to process the poster. Please try again.")
@@ -1413,7 +1386,7 @@ async def process_poster_input(client: Client, message: Message, poster_type: st
     
     # Reset state
     temp_admin_data[user_id]["state"] = "SERIES_DETAILS"
-
+    
 async def process_first_file_input(client: Client, message: Message):
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
