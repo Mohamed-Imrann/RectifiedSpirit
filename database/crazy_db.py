@@ -14,10 +14,13 @@ series_collection = db['series']
 episodes_collection = client["file_database"]["episodes"]
 admin_assignments_collection = db['admin_assignments']
 
-def add_series(series_data: dict):
+def add_series(series_data: dict, added_by: int = None):
     try:
+        series_data['added_by'] = added_by
+        series_data['edited_by'] = []  # Track future edits
+        series_data['created_at'] = datetime.utcnow()
         series_collection.insert_one(series_data)
-        logger.info(f"Series '{series_data.get('title', 'N/A')}' added with key: {series_data['_id']}")
+        logger.info(f"Series '{series_data.get('title', 'N/A')}' added with key: {series_data['_id']} by {added_by}")
         return True
     except Exception as e:
         logger.error(f"Error adding series: {e}")
@@ -480,4 +483,23 @@ def write_admin_assignments_to_env():
         return True
     except Exception as e:
         logger.error(f"Error writing admin assignments to env: {e}")
+        return False
+
+
+def track_series_edit(series_key: str, edited_by: int):
+    """Track an edit to a series"""
+    try:
+        series_collection.update_one(
+            {"_id": series_key},
+            {"$push": {
+                "edited_by": {
+                    "user_id": edited_by,
+                    "timestamp": datetime.utcnow()
+                }
+            }}
+        )
+        logger.info(f"Tracked edit to series {series_key} by {edited_by}")
+        return True
+    except Exception as e:
+        logger.error(f"Error tracking series edit: {e}")
         return False
