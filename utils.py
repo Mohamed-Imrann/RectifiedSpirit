@@ -13,7 +13,7 @@ import requests
 from fuzzywuzzy import fuzz
 import uuid
 
-from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, AUTO_DELETE_TIME, AUTO_DELETE_MSG, NO_POSTER_FOUND_IMG, TVDB_API_KEY, OMDB_API_KEY, Assigned
+from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, AUTO_DELETE_TIME, AUTO_DELETE_MSG, NO_POSTER_FOUND_IMG, TMDB_API_KEY, TVDB_API_KEY, OMDB_API_KEY, Assigned
 from database.crazy_db import episodes_collection
 
 logger = logging.getLogger(__name__)
