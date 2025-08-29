@@ -75,6 +75,90 @@ async def get_poster_from_all_apis(query):
     
     return None
 
+async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
+    logger.info(f"Fetching TMDB info: query={query}, bulk={bulk}, tmdb_id={tmdb_id}, media_type={media_type}")
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {TMDB_API_KEY}"
+    }
+
+    try:
+        if tmdb_id:
+            url = f"{TMDB_BASE_URL}/{media_type}/{tmdb_id}"
+            logger.info(f"Fetching details from {url}")
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+
+            genres = [g['name'] for g in data.get('genres', [])][:3]
+            poster_path = data.get('poster_path')
+            poster_url = f"{TMDB_IMAGE_BASE_URL}{poster_path}" if poster_path else NO_POSTER_FOUND_IMG[0]
+
+            if media_type == 'tv':
+                title = data.get('name', 'N/A')
+                year = f"{data.get('first_air_date', '').split('-')[0]} - {data.get('last_air_date', '').split('-')[0]}" if data.get('first_air_date') and data.get('last_air_date') else data.get('first_air_date', '').split('-')[0] if data.get('first_air_date') else 'N/A'
+            else: # movie
+                title = data.get('title', 'N/A')
+                year = data.get('release_date', '').split('-')[0] if data.get('release_date') else 'N/A'
+            
+            result = {
+                'title': title,
+                'year': year,
+                'genres': ', '.join(genres) if genres else 'N/A',
+                'rating': data.get('vote_average', 'N/A'),
+                'poster_url': poster_url,
+                'tmdb_id': data.get('id'),
+                'media_type': media_type,
+                'url': f'https://www.themoviedb.org/{media_type}/{data.get("id")}'
+            }
+            logger.info(f"Retrieved details for {title}")
+            return result
+        else:
+            search_results = []
+            
+            # Search TV shows
+            url_tv = f"{TMDB_BASE_URL}/search/tv"
+            logger.info(f"Searching TV shows at {url_tv} with query: {query}")
+            response_tv = requests.get(url_tv, headers=headers, params={"query": query})
+            response_tv.raise_for_status()
+            data_tv = response_tv.json()
+            for item in data_tv.get('results', [])[:5]:
+                if item.get('name'):
+                    search_results.append({
+                        'title': item.get('name'),
+                        'year': item.get('first_air_date', '').split('-')[0] if item.get('first_air_date') else 'N/A',
+                        'tmdb_id': item.get('id'),
+                        'media_type': 'tv',
+                        'source': 'tmdb'
+                    })
+            
+            # Search Movies
+            url_movie = f"{TMDB_BASE_URL}/search/movie"
+            logger.info(f"Searching movies at {url_movie} with query: {query}")
+            response_movie = requests.get(url_movie, headers=headers, params={"query": query})
+            response_movie.raise_for_status()
+            data_movie = response_movie.json()
+            for item in data_movie.get('results', [])[:5]:
+                if item.get('title'):
+                    search_results.append({
+                        'title': item.get('title'),
+                        'year': item.get('release_date', '').split('-')[0] if item.get('release_date') else 'N/A',
+                        'tmdb_id': item.get('id'),
+                        'media_type': 'movie',
+                        'source': 'tmdb'
+                    })
+            
+            logger.info(f"Found {len(search_results)} total results")
+            return search_results[:10]
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"TMDB API error: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"An unexpected error occurred with TMDB: {e}")
+        return None
+
+    
 async def get_comprehensive_series_info(query):
     """
     Get comprehensive series information from multiple sources with fuzzy matching
