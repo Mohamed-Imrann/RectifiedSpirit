@@ -173,6 +173,17 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
                 title = data.get('title', 'N/A')
                 year = data.get('release_date', '').split('-')[0] if data.get('release_date') else 'N/A'
             
+            # Try to get IMDb ID from external IDs
+            imdb_id = None
+            try:
+                external_ids_url = f"{TMDB_BASE_URL}/{media_type}/{tmdb_id}/external_ids"
+                external_response = requests.get(external_ids_url, headers=headers)
+                external_response.raise_for_status()
+                external_data = external_response.json()
+                imdb_id = external_data.get('imdb_id')
+            except:
+                pass
+            
             result = {
                 'title': title,
                 'year': year,
@@ -180,6 +191,7 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
                 'rating': data.get('vote_average', 'N/A'),
                 'poster_url': poster_url,
                 'tmdb_id': data.get('id'),
+                'imdb_id': imdb_id,
                 'media_type': media_type,
                 'url': f'https://www.themoviedb.org/{media_type}/{data.get("id")}'
             }
@@ -196,10 +208,22 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
             data_tv = response_tv.json()
             for item in data_tv.get('results', [])[:5]:
                 if item.get('name'):
+                    # Try to get IMDb ID for each result
+                    imdb_id = None
+                    try:
+                        external_ids_url = f"{TMDB_BASE_URL}/tv/{item.get('id')}/external_ids"
+                        external_response = requests.get(external_ids_url, headers=headers)
+                        external_response.raise_for_status()
+                        external_data = external_response.json()
+                        imdb_id = external_data.get('imdb_id')
+                    except:
+                        pass
+                    
                     search_results.append({
                         'title': item.get('name'),
                         'year': item.get('first_air_date', '').split('-')[0] if item.get('first_air_date') else 'N/A',
                         'tmdb_id': item.get('id'),
+                        'imdb_id': imdb_id,
                         'media_type': 'tv',
                         'source': 'tmdb'
                     })
@@ -212,10 +236,22 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
             data_movie = response_movie.json()
             for item in data_movie.get('results', [])[:5]:
                 if item.get('title'):
+                    # Try to get IMDb ID for each result
+                    imdb_id = None
+                    try:
+                        external_ids_url = f"{TMDB_BASE_URL}/movie/{item.get('id')}/external_ids"
+                        external_response = requests.get(external_ids_url, headers=headers)
+                        external_response.raise_for_status()
+                        external_data = external_response.json()
+                        imdb_id = external_data.get('imdb_id')
+                    except:
+                        pass
+                    
                     search_results.append({
                         'title': item.get('title'),
                         'year': item.get('release_date', '').split('-')[0] if item.get('release_date') else 'N/A',
                         'tmdb_id': item.get('id'),
+                        'imdb_id': imdb_id,
                         'media_type': 'movie',
                         'source': 'tmdb'
                     })
@@ -307,24 +343,54 @@ async def get_omdb_info(query, omdb_id=None):
     
     return None
 
+async def get_best_imdb_match(title, year):
+    """
+    Search IMDb by title and year, then use fuzzy matching to find the best match.
+    Returns the IMDb ID of the best match or None.
+    """
+    # Create a search query with title and year
+    search_query = f"{title} {year}" if year and year != 'N/A' else title
+    
+    # Search IMDb
+    imdb_results = await get_poster(search_query, bulk=True)
+    if not imdb_results:
+        return None
+    
+    # Extract titles from the results
+    imdb_titles = [result.get('title', '') for result in imdb_results]
+    
+    # Find the best match using fuzzy matching
+    best_matches = find_most_similar_title(title, imdb_titles)
+    if not best_matches:
+        return None
+    
+    # Get the IMDb ID of the best match
+    best_title = best_matches[0]
+    for result in imdb_results:
+        if result.get('title') == best_title:
+            return result.get('imdb_id')
+    
+    return None
+
 # Admin UI message sending functions
-async def send_series_selection_message(client: Client, user_id: int, query: str, results: list, message_id: int = None):
-    logger.info(f"Sending series selection message to user {user_id}")
-    text = f"**Select a series from below:**\n\nSearch query: `{query}`"
+async def send_tmdb_selection_message(client: Client, user_id: int, query: str, results: list, message_id: int = None):
+    logger.info(f"Sending TMDB selection message to user {user_id}")
+    text = f"**Select a series from TMDB:**\n\nSearch query: `{query}`"
     
     buttons = []
     for i, item in enumerate(results):
         unique_id = str(uuid.uuid4())
         temp_admin_data[user_id] = temp_admin_data.get(user_id, {})
         temp_admin_data[user_id][unique_id] = {
-            'id': item.get('tmdb_id') if item.get('source') == 'tmdb' else item.get('imdb_id'),
+            'id': item.get('tmdb_id'),
             'media_type': item.get('media_type'),
-            'source': item.get('source'),
+            'source': 'tmdb',
             'query': query
         }
-        button_text = f"{item.get('title', 'N/A')} ({item.get('year', 'N/A')}) - {item.get('source', '').upper()}"
+        button_text = f"{item.get('title', 'N/A')} ({item.get('year', 'N/A')})"
         buttons.append(InlineKeyboardButton(button_text, callback_data=f"sel_{unique_id}"))
     
+    buttons.append(InlineKeyboardButton("🔍 Search IMDb Instead", callback_data="search_imdb"))
     buttons.append(InlineKeyboardButton("🔍 Search Again", callback_data="search_again"))
     
     # Create layout with 1 button per row for better readability
@@ -339,7 +405,7 @@ async def send_series_selection_message(client: Client, user_id: int, query: str
                 media=InputMediaPhoto(media=NO_POSTER_FOUND_IMG[0], caption=text, parse_mode=enums.ParseMode.MARKDOWN),
                 reply_markup=reply_markup
             )
-            logger.debug(f"Edited series selection message {message_id}")
+            logger.debug(f"Edited TMDB selection message {message_id}")
             return message_id
         else:
             msg = await client.send_photo(
@@ -349,10 +415,58 @@ async def send_series_selection_message(client: Client, user_id: int, query: str
                 reply_markup=reply_markup,
                 parse_mode=enums.ParseMode.MARKDOWN
             )
-            logger.debug(f"Sent new series selection message {msg.id}")
+            logger.debug(f"Sent new TMDB selection message {msg.id}")
             return msg.id
     except Exception as e:
-        logger.error(f"Error sending series selection message: {e}")
+        logger.error(f"Error sending TMDB selection message: {e}")
+        return None
+
+async def send_imdb_selection_message(client: Client, user_id: int, query: str, results: list, message_id: int = None):
+    logger.info(f"Sending IMDb selection message to user {user_id}")
+    text = f"**Select a series from IMDb:**\n\nSearch query: `{query}`"
+    
+    buttons = []
+    for i, item in enumerate(results):
+        unique_id = str(uuid.uuid4())
+        temp_admin_data[user_id] = temp_admin_data.get(user_id, {})
+        temp_admin_data[user_id][unique_id] = {
+            'id': item.get('imdb_id'),
+            'media_type': item.get('media_type'),
+            'source': 'imdb',
+            'query': query
+        }
+        button_text = f"{item.get('title', 'N/A')} ({item.get('year', 'N/A')})"
+        buttons.append(InlineKeyboardButton(button_text, callback_data=f"sel_{unique_id}"))
+    
+    buttons.append(InlineKeyboardButton("🔍 Search TMDB Instead", callback_data="search_tmdb"))
+    buttons.append(InlineKeyboardButton("🔍 Search Again", callback_data="search_again"))
+    
+    # Create layout with 1 button per row for better readability
+    layout = [[button] for button in buttons]
+    reply_markup = InlineKeyboardMarkup(layout)
+
+    try:
+        if message_id:
+            await client.edit_message_media(
+                chat_id=user_id,
+                message_id=message_id,
+                media=InputMediaPhoto(media=NO_POSTER_FOUND_IMG[0], caption=text, parse_mode=enums.ParseMode.MARKDOWN),
+                reply_markup=reply_markup
+            )
+            logger.debug(f"Edited IMDb selection message {message_id}")
+            return message_id
+        else:
+            msg = await client.send_photo(
+                chat_id=user_id,
+                photo=NO_POSTER_FOUND_IMG[0],
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=enums.ParseMode.MARKDOWN
+            )
+            logger.debug(f"Sent new IMDb selection message {msg.id}")
+            return msg.id
+    except Exception as e:
+        logger.error(f"Error sending IMDb selection message: {e}")
         return None
 
 async def send_series_details_message(client: Client, user_id: int, series_data: dict, message_id: int = None):
@@ -637,60 +751,26 @@ async def new_series_ui_command(client: Client, message: Message):
 
     temp_msg = await message.reply_photo(
         photo="https://envs.sh/EMw.jpg",
-        caption="Searching TMDB, IMDb, TVDB, and OMDB, please wait..."
+        caption="Searching TMDB, please wait..."
     )
     
-    # Get comprehensive info from multiple sources
-    series_info = await get_comprehensive_series_info(query)
+    # First, search TMDB
+    tmdb_results = await get_tmdb_info(query, bulk=True)
     
-    if not series_info or not series_info.get('title'):
-        await temp_msg.edit_caption("No results found for the provided series name.")
+    if not tmdb_results:
+        await temp_msg.edit_caption("No results found on TMDB for the provided series name.")
         return
     
-    # Send poster to admin's assigned channel and get file ID
-    poster_file_id = await send_poster_to_admin_channel(
-        client, 
-        user_id,
-        poster_url=series_info.get('poster_url'),
-        caption="#MainPoster"
-    )
-    
-    # If we couldn't get a poster from the APIs, use the default
-    if not poster_file_id:
-        poster_file_id = NO_POSTER_FOUND_IMG[0]
-    
-    # Create series data with tracking
-    series_key = series_info['title'].lower().replace(" ", "").replace("-", "")
-    series_data = {
-        '_id': series_key,
-        'title': series_info['title'],
-        'released_on': series_info.get('released_on', 'N/A'),
-        'genre': series_info.get('genre', 'N/A'),
-        'rating': series_info.get('rating', 'N/A'),
-        'media_type': series_info.get('media_type', 'series'),
-        'poster_file_id': poster_file_id,
-        'languages': [],
-        'language_layout': [],
-        'published': False,
-        'added_by': user_id,  # Track who added it
-        'edited_by': []
-    }
-    
-    # Add to database
-    if not add_series(series_data, added_by=user_id):
-        await temp_msg.edit_caption("Failed to add new series. Please try again.")
-        return
-    
-    # Store in temp data
-    temp_admin_data[user_id] = {
-        "current_series_key": series_key,
-        "state": "SERIES_DETAILS",
-        "main_message_id": temp_msg.id
-    }
-    
-    # Send series details message
-    await send_series_details_message(client, user_id, series_data, temp_msg.id)
-    
+    # Store the results in temp data
+    temp_admin_data[user_id] = temp_admin_data.get(user_id, {})
+    temp_admin_data[user_id]["search_results"] = tmdb_results
+    temp_admin_data[user_id]["query"] = query
+    temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SEARCH_RESULTS"
+    temp_admin_data[user_id]["main_message_id"] = temp_msg.id
+
+    # Send the TMDB results as buttons
+    await send_tmdb_selection_message(client, user_id, query, tmdb_results, temp_msg.id)
+
 @Client.on_message(filters.command('editseries') & filters.private)
 async def edit_series_command(client: Client, message: Message):
     """Edit an existing series (only for assigned admins)"""
@@ -806,6 +886,54 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
     
     main_message_id = temp_admin_data[user_id].get("main_message_id")
     
+    # Handle IMDb search button
+    if data == "search_imdb":
+        await callback_query.answer("Searching IMDb...")
+        query = temp_admin_data[user_id].get("query")
+        
+        # Search IMDb
+        imdb_results = await get_poster(query, bulk=True)
+        
+        if not imdb_results:
+            await client.edit_message_caption(
+                chat_id=user_id,
+                message_id=main_message_id,
+                caption="No results found on IMDb for the provided series name."
+            )
+            return
+        
+        # Store the results in temp data
+        temp_admin_data[user_id]["search_results"] = imdb_results
+        temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SEARCH_RESULTS"
+        
+        # Send the IMDb results as buttons
+        await send_imdb_selection_message(client, user_id, query, imdb_results, main_message_id)
+        return
+    
+    # Handle TMDB search button
+    if data == "search_tmdb":
+        await callback_query.answer("Searching TMDB...")
+        query = temp_admin_data[user_id].get("query")
+        
+        # Search TMDB
+        tmdb_results = await get_tmdb_info(query, bulk=True)
+        
+        if not tmdb_results:
+            await client.edit_message_caption(
+                chat_id=user_id,
+                message_id=main_message_id,
+                caption="No results found on TMDB for the provided series name."
+            )
+            return
+        
+        # Store the results in temp data
+        temp_admin_data[user_id]["search_results"] = tmdb_results
+        temp_admin_data[user_id]["state"] = "NEW_SERIES_UI_SEARCH_RESULTS"
+        
+        # Send the TMDB results as buttons
+        await send_tmdb_selection_message(client, user_id, query, tmdb_results, main_message_id)
+        return
+    
     # Handle series selection callbacks
     if data.startswith("sel_"):
         unique_id = data.split("_", 1)[1]
@@ -823,9 +951,36 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         await callback_query.answer(f"Fetching details from {source.upper()}...")
         
         movie_details = None
+        
         if source == 'tmdb':
-            movie_details = await get_tmdb_info(query=None, tmdb_id=media_id, media_type=media_type)
+            # First get TMDB details
+            tmdb_details = await get_tmdb_info(query=None, tmdb_id=media_id, media_type=media_type)
+            
+            if tmdb_details:
+                # Try to get IMDb ID from TMDB details
+                imdb_id = tmdb_details.get('imdb_id')
+                
+                # If we don't have IMDb ID from TMDB, try to find it using fuzzy matching
+                if not imdb_id:
+                    title = tmdb_details.get('title')
+                    year = tmdb_details.get('year')
+                    imdb_id = await get_best_imdb_match(title, year)
+                
+                # If we have IMDb ID, get details from IMDb
+                if imdb_id:
+                    imdb_details = await get_poster(imdb_id, id=True)
+                    if imdb_details:
+                        # Use IMDb details if available, otherwise fall back to TMDB
+                        movie_details = imdb_details
+                    else:
+                        movie_details = tmdb_details
+                else:
+                    # Fall back to TMDB details
+                    movie_details = tmdb_details
+            else:
+                movie_details = None
         elif source == 'imdb':
+            # Already have IMDb ID, so get details directly
             movie_details = await get_poster(media_id, id=True)
         
         if not movie_details:
@@ -879,6 +1034,7 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             )
             return
         
+        # Send poster to admin's assigned channel and get file ID
         poster_file_id = await send_poster_to_admin_channel(
             client, 
             user_id,
@@ -892,6 +1048,11 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         else:
             update_series_field(series_key, "poster_file_id", NO_POSTER_FOUND_IMG[0])
             series_data["poster_file_id"] = NO_POSTER_FOUND_IMG[0]
+        
+        temp_admin_data[user_id]["current_series_key"] = series_key
+        temp_admin_data[user_id]["state"] = "SERIES_DETAILS"
+        
+        await send_series_details_message(client, user_id, series_data, main_message_id)
     
     # Handle navigation callbacks
     elif data == "search_again":
@@ -904,7 +1065,11 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             return
         
         temp_admin_data[user_id]["state"] = "SEARCH_RESULTS"
-        await send_series_selection_message(client, user_id, query, search_results, main_message_id)
+        # Determine which source to show based on the first result
+        if search_results and search_results[0].get("source") == "tmdb":
+            await send_tmdb_selection_message(client, user_id, query, search_results, main_message_id)
+        else:
+            await send_imdb_selection_message(client, user_id, query, search_results, main_message_id)
     
     elif data == "back_to_series":
         series_key = temp_admin_data[user_id].get("current_series_key")
@@ -1386,7 +1551,7 @@ async def process_poster_input(client: Client, message: Message, poster_type: st
     
     # Reset state
     temp_admin_data[user_id]["state"] = "SERIES_DETAILS"
-    
+
 async def process_first_file_input(client: Client, message: Message):
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
