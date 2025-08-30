@@ -48,6 +48,27 @@ class Temp(object):
 
 temp = Temp()
 
+def format_release_date(date_str):
+    """Format date string to 'DD Mon YYYY' or just year if full date not available"""
+    if not date_str or date_str == 'N/A':
+        return 'N/A'
+    
+    # If it's just a year (4 digits), return as is
+    if re.match(r'^\d{4}$', date_str):
+        return date_str
+    
+    try:
+        # Try to parse as YYYY-MM-DD format
+        date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+        return date_obj.strftime('%d %b %Y')
+    except ValueError:
+        try:
+            # Try to parse as YYYY format
+            year = int(date_str)
+            return str(year)
+        except:
+            return date_str
+            
 async def get_poster_from_all_apis(query):
     """
     Try to get poster from multiple APIs (TMDB, IMDb, TVDB, OMDB)
@@ -158,7 +179,6 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
         logger.error(f"An unexpected error occurred with TMDB: {e}")
         return None
 
-    
 async def get_comprehensive_series_info(query):
     """
     Get comprehensive series information from multiple sources with fuzzy matching
@@ -186,7 +206,7 @@ async def get_comprehensive_series_info(query):
                     if tmdb_info:
                         info.update({
                             'title': tmdb_info.get('title'),
-                            'released_on': tmdb_info.get('year'),
+                            'released_on': format_release_date(tmdb_info.get('year')),
                             'rating': tmdb_info.get('rating'),
                             'genre': tmdb_info.get('genres'),
                             'poster_url': tmdb_info.get('poster_url'),
@@ -208,7 +228,7 @@ async def get_comprehensive_series_info(query):
                             if not info.get('title'):
                                 info['title'] = imdb_info.get('title')
                             if not info.get('released_on'):
-                                info['released_on'] = imdb_info.get('year')
+                                info['released_on'] = format_release_date(imdb_info.get('year'))
                             if not info.get('rating'):
                                 info['rating'] = imdb_info.get('rating')
                             if not info.get('genre'):
@@ -226,7 +246,7 @@ async def get_comprehensive_series_info(query):
             if not info.get('title'):
                 info['title'] = tvdb_info.get('title')
             if not info.get('released_on'):
-                info['released_on'] = tvdb_info.get('year')
+                info['released_on'] = format_release_date(tvdb_info.get('year'))
             if not info.get('rating'):
                 info['rating'] = tvdb_info.get('rating')
             if not info.get('genre'):
@@ -241,7 +261,7 @@ async def get_comprehensive_series_info(query):
             if not info.get('title'):
                 info['title'] = omdb_info.get('title')
             if not info.get('released_on'):
-                info['released_on'] = omdb_info.get('year')
+                info['released_on'] = format_release_date(omdb_info.get('year'))
             if not info.get('rating'):
                 info['rating'] = omdb_info.get('rating')
             if not info.get('genre'):
@@ -260,7 +280,7 @@ async def get_comprehensive_series_info(query):
         info['genre'] = ', '.join(info['genre'][:3])  # Limit to 3 genres
     
     return info
-
+    
 async def get_tvdb_info(query, tvdb_id=None):
     """Fetch TV show information from TVDB API"""
     headers = {
