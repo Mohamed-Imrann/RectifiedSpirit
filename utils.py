@@ -484,83 +484,49 @@ async def delete_file(messages, client, process):
             print(f"The attempt to delete the media {msg.id} was unsuccessful: {e}")
     await process.edit_text(AUTO_DEL_SUCCESS_MSG)
 
-async def get_poster(query, bulk=False, id=False, file=None):
-    """
-    Fetches movie/TV show information from IMDb.
-    - query: search term or IMDb ID
-    - bulk: if True, returns multiple search results for selection
-    - id: if True, query is treated as an IMDb ID
-    - file: optional, used for year extraction from filename
-    """
-    if not id:
-        query = (query.strip()).lower()
-        title = query
-        year = re.findall(r'[1-2]\d{3}$', query, re.IGNORECASE)
-        if year:
-            year = list_to_str(year[:1])
-            title = (query.replace(year, "")).strip()
-        elif file is not None:
-            year = re.findall(r'[1-2]\d{3}', file, re.IGNORECASE)
-            if year:
-                year = list_to_str(year[:1]) 
+async def get_poster(query, bulk=False, id=False):
+    try:
+        if not id:
+            search_results = imdb.search_movie(query)
+            if not search_results:
+                return None
+            if bulk:
+                top_movies = []
+                for movie in search_results[:5]:
+                    try:
+                        movie_id = movie.movieID
+                        full_movie = imdb.get_movie(movie_id)
+                        top_movies.append({
+                            'title': full_movie.get('title', 'N/A'),
+                            'year': full_movie.get('year', 'N/A'),
+                            'imdb_id': movie_id
+                        })
+                    except Exception as e:
+                        print(f"Error fetching movie details: {e}")
+                        continue
+                return top_movies
+            movie = search_results[0]
+            movie_id = movie.movieID
         else:
-            year = None
-        
-        movieid = imdb.search_movie(title.lower(), results=10)
-        if not movieid:
+            movie_id = query
+        movie = imdb.get_movie(movie_id)
+        if not movie:
             return None
-        
-        if year:
-            filtered = list(filter(lambda k: str(k.get('year')) == str(year), movieid))
-            if not filtered:
-                filtered = movieid
-        else:
-            filtered = movieid
-        
-        # Prioritize 'movie' or 'tv series' kind
-        movieid = list(filter(lambda k: k.get('kind') in ['movie', 'tv series'], filtered))
-        if not movieid:
-            movieid = filtered # Fallback to any kind if no movie/tv series found
-        
-        if bulk:
-            # Return simplified list for bulk selection
-            return [{
-                'title': item.get('title'),
-                'year': item.get('year'),
-                'imdb_id': f"tt{item.get('movieID')}",
-                'media_type': item.get('kind'),
-                'poster_url': item.get('full-size cover url')
-            } for item in movieid]
-        
-        movieid = movieid[0].movieID
-    else:
-        movieid = query # If id is True, query is already the IMDb ID
-    
-    movie = imdb.get_movie(movieid)
-    if not movie:
+        return {
+            'title': movie.get('title', 'N/A'),
+            'year': movie.get('year', 'N/A'),
+            'genres': ', '.join(movie.get('genres', [])) or 'N/A',
+            'languages': ', '.join(movie.get('languages', [])) or 'Original Audio',
+            'rating': movie.get('rating', 'N/A'),
+            'plot': movie.get('plot outline') or (movie.get('plot', ['N/A'])[0]),
+            'poster': movie.get('full-size cover url', 'N/A'),
+            'imdb_id': movie_id,
+            'url': f'https://www.imdb.com/title/tt{movie_id}'
+        }
+    except Exception as e:
+        print(f"IMDb Error: {e}")
         return None
-
-    date = movie.get("original air date") or movie.get("year") or "N/A"
-    plot = movie.get('plot')
-    if plot and len(plot) > 0:
-        plot = plot[0]
-    else:
-        plot = movie.get('plot outline')
-    if plot and len(plot) > 800:
-        plot = plot[0:800] + "..."
-
-    return {
-        'title': movie.get('title'),
-        'year': movie.get('year'), # Simplified for consistency
-        'genres': list_to_str(movie.get("genres")),
-        'rating': str(movie.get("rating")),
-        'poster_url': movie.get('full-size cover url'),
-        'imdb_id': f"tt{movie.get('imdbID')}",
-        'media_type': movie.get('kind'),
-        'url': f'https://www.imdb.com/title/tt{movieid}',
-        # Other fields from original get_poster are not returned for this simplified use case
-    }
-
+        
 async def broadcast_messages(user_id, message):
     try:
         await message.copy(chat_id=user_id)
