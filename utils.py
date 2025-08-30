@@ -498,7 +498,7 @@ async def get_poster(query, bulk=False, id=False):
                         full_movie = imdb.get_movie(movie_id)
                         top_movies.append({
                             'title': full_movie.get('title', 'N/A'),
-                            'year': full_movie.get('year', 'N/A'),
+                            'released_on': str(full_movie.get('year', 'N/A')),  # Changed to 'released_on'
                             'imdb_id': movie_id
                         })
                     except Exception as e:
@@ -512,9 +512,17 @@ async def get_poster(query, bulk=False, id=False):
         movie = imdb.get_movie(movie_id)
         if not movie:
             return None
+        
+        # Format release date - IMDb only provides year
+        year = movie.get('year', 'N/A')
+        if year != 'N/A':
+            formatted_date = str(year)
+        else:
+            formatted_date = 'N/A'
+            
         return {
             'title': movie.get('title', 'N/A'),
-            'year': movie.get('year', 'N/A'),
+            'released_on': formatted_date,  # Changed to 'released_on'
             'genres': ', '.join(movie.get('genres', [])) or 'N/A',
             'languages': ', '.join(movie.get('languages', [])) or 'Original Audio',
             'rating': movie.get('rating', 'N/A'),
