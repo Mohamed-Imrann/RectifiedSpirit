@@ -164,7 +164,7 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
 
             genres = [g['name'] for g in data.get('genres', [])][:3]
             poster_path = data.get('poster_path')
-            poster_url = f"{TMDB_IMAGE_BASE_URL}{poster_path}" if poster_path else NO_POSTER_FOUND_IMG[0]
+            poster_url = f"{TMDB_IMAGE_BASE_URL}{poster_path}" if poster_path else None
 
             if media_type == 'tv':
                 title = data.get('name', 'N/A')
@@ -173,25 +173,13 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
                 title = data.get('title', 'N/A')
                 year = data.get('release_date', '').split('-')[0] if data.get('release_date') else 'N/A'
             
-            # Try to get IMDb ID from external IDs
-            imdb_id = None
-            try:
-                external_ids_url = f"{TMDB_BASE_URL}/{media_type}/{tmdb_id}/external_ids"
-                external_response = requests.get(external_ids_url, headers=headers)
-                external_response.raise_for_status()
-                external_data = external_response.json()
-                imdb_id = external_data.get('imdb_id')
-            except:
-                pass
-            
             result = {
                 'title': title,
                 'year': year,
-                'genres': ', '.join(genres) if genres else 'N/A',
-                'rating': data.get('vote_average', 'N/A'),
+                'genres': ', '.join(genres) if genres else None,
+                'rating': data.get('vote_average'),
                 'poster_url': poster_url,
                 'tmdb_id': data.get('id'),
-                'imdb_id': imdb_id,
                 'media_type': media_type,
                 'url': f'https://www.themoviedb.org/{media_type}/{data.get("id")}'
             }
@@ -208,22 +196,10 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
             data_tv = response_tv.json()
             for item in data_tv.get('results', [])[:5]:
                 if item.get('name'):
-                    # Try to get IMDb ID for each result
-                    imdb_id = None
-                    try:
-                        external_ids_url = f"{TMDB_BASE_URL}/tv/{item.get('id')}/external_ids"
-                        external_response = requests.get(external_ids_url, headers=headers)
-                        external_response.raise_for_status()
-                        external_data = external_response.json()
-                        imdb_id = external_data.get('imdb_id')
-                    except:
-                        pass
-                    
                     search_results.append({
                         'title': item.get('name'),
                         'year': item.get('first_air_date', '').split('-')[0] if item.get('first_air_date') else 'N/A',
                         'tmdb_id': item.get('id'),
-                        'imdb_id': imdb_id,
                         'media_type': 'tv',
                         'source': 'tmdb'
                     })
@@ -236,22 +212,10 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
             data_movie = response_movie.json()
             for item in data_movie.get('results', [])[:5]:
                 if item.get('title'):
-                    # Try to get IMDb ID for each result
-                    imdb_id = None
-                    try:
-                        external_ids_url = f"{TMDB_BASE_URL}/movie/{item.get('id')}/external_ids"
-                        external_response = requests.get(external_ids_url, headers=headers)
-                        external_response.raise_for_status()
-                        external_data = external_response.json()
-                        imdb_id = external_data.get('imdb_id')
-                    except:
-                        pass
-                    
                     search_results.append({
                         'title': item.get('title'),
                         'year': item.get('release_date', '').split('-')[0] if item.get('release_date') else 'N/A',
                         'tmdb_id': item.get('id'),
-                        'imdb_id': imdb_id,
                         'media_type': 'movie',
                         'source': 'tmdb'
                     })
@@ -340,35 +304,6 @@ async def get_omdb_info(query, omdb_id=None):
             }
     except Exception as e:
         logger.error(f"OMDB API error: {e}")
-    
-    return None
-
-async def get_best_imdb_match(title, year):
-    """
-    Search IMDb by title and year, then use fuzzy matching to find the best match.
-    Returns the IMDb ID of the best match or None.
-    """
-    # Create a search query with title and year
-    search_query = f"{title} {year}" if year and year != 'N/A' else title
-    
-    # Search IMDb
-    imdb_results = await get_poster(search_query, bulk=True)
-    if not imdb_results:
-        return None
-    
-    # Extract titles from the results
-    imdb_titles = [result.get('title', '') for result in imdb_results]
-    
-    # Find the best match using fuzzy matching
-    best_matches = find_most_similar_title(title, imdb_titles)
-    if not best_matches:
-        return None
-    
-    # Get the IMDb ID of the best match
-    best_title = best_matches[0]
-    for result in imdb_results:
-        if result.get('title') == best_title:
-            return result.get('imdb_id')
     
     return None
 
@@ -482,13 +417,25 @@ async def send_series_details_message(client: Client, user_id: int, series_data:
         f"○ **Media Type:** `{series_data.get('media_type', 'N/A').upper()}`\n\n"
     )
 
+    # Check if we need to add buttons for getting genre/rating from other sources
     buttons = [
         InlineKeyboardButton("🌐 Languages", callback_data="manage_languages"),
         InlineKeyboardButton("🖼️ Poster", callback_data="change_poster"),
         InlineKeyboardButton("📤 Publish", callback_data="publish_series")
     ]
     
+    # Add button to get genre/rating from IMDb if data is from TMDB and missing genre or rating
+    if series_data.get('source') == 'tmdb' and (not series_data.get('genre') or not series_data.get('rating')):
+        buttons.insert(2, InlineKeyboardButton("📊 Get Genre & Rating from IMDb", callback_data="get_genre_rating_imdb"))
+    
+    # Add button to get genre/rating from TMDB if data is from IMDb and missing genre or rating
+    if series_data.get('source') == 'imdb' and (not series_data.get('genre') or not series_data.get('rating')):
+        buttons.insert(2, InlineKeyboardButton("📊 Get Genre & Rating from TMDB", callback_data="get_genre_rating_tmdb"))
+    
     layout = [[buttons[0]], [buttons[1], buttons[2]]]
+    if len(buttons) > 3:
+        layout = [[buttons[0]], [buttons[1]], [buttons[2], buttons[3]]]
+    
     reply_markup = InlineKeyboardMarkup(layout)
 
     try:
@@ -934,6 +881,86 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         await send_tmdb_selection_message(client, user_id, query, tmdb_results, main_message_id)
         return
     
+    # Handle get genre/rating from IMDb button
+    if data == "get_genre_rating_imdb":
+        await callback_query.answer("Getting genre and rating from IMDb...")
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        series_data = get_series_by_key(series_key)
+        
+        if not series_data:
+            await callback_query.answer("Series not found.", show_alert=True)
+            return
+        
+        # Try to get IMDb ID from series data
+        imdb_id = series_data.get("imdb_id")
+        if not imdb_id:
+            # Try to find IMDb ID using title and year
+            title = series_data.get("title")
+            year = series_data.get("released_on")
+            imdb_results = await get_poster(f"{title} {year}", bulk=True)
+            if imdb_results:
+                imdb_id = imdb_results[0].get("imdb_id")
+        
+        if imdb_id:
+            # Get IMDb details
+            imdb_details = await get_poster(imdb_id, id=True)
+            if imdb_details:
+                # Update series data with IMDb genre and rating
+                update_data = {}
+                if not series_data.get("genre") and imdb_details.get("genres"):
+                    update_data["genre"] = imdb_details.get("genres")
+                if not series_data.get("rating") and imdb_details.get("rating"):
+                    update_data["rating"] = imdb_details.get("rating")
+                
+                if update_data:
+                    for field, value in update_data.items():
+                        update_series_field(series_key, field, value)
+                        series_data[field] = value
+                    
+                    await callback_query.answer("Genre and rating updated from IMDb.")
+                    await send_series_details_message(client, user_id, series_data, main_message_id)
+                    return
+        
+        await callback_query.answer("Failed to get genre and rating from IMDb.", show_alert=True)
+        return
+    
+    # Handle get genre/rating from TMDB button
+    if data == "get_genre_rating_tmdb":
+        await callback_query.answer("Getting genre and rating from TMDB...")
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        series_data = get_series_by_key(series_key)
+        
+        if not series_data:
+            await callback_query.answer("Series not found.", show_alert=True)
+            return
+        
+        # Try to get TMDB ID from series data
+        tmdb_id = series_data.get("tmdb_id")
+        media_type = series_data.get("media_type", "tv")
+        
+        if tmdb_id:
+            # Get TMDB details
+            tmdb_details = await get_tmdb_info(query=None, tmdb_id=tmdb_id, media_type=media_type)
+            if tmdb_details:
+                # Update series data with TMDB genre and rating
+                update_data = {}
+                if not series_data.get("genre") and tmdb_details.get("genres"):
+                    update_data["genre"] = tmdb_details.get("genres")
+                if not series_data.get("rating") and tmdb_details.get("rating"):
+                    update_data["rating"] = tmdb_details.get("rating")
+                
+                if update_data:
+                    for field, value in update_data.items():
+                        update_series_field(series_key, field, value)
+                        series_data[field] = value
+                    
+                    await callback_query.answer("Genre and rating updated from TMDB.")
+                    await send_series_details_message(client, user_id, series_data, main_message_id)
+                    return
+        
+        await callback_query.answer("Failed to get genre and rating from TMDB.", show_alert=True)
+        return
+    
     # Handle series selection callbacks
     if data.startswith("sel_"):
         unique_id = data.split("_", 1)[1]
@@ -953,35 +980,19 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         movie_details = None
         
         if source == 'tmdb':
-            # First get TMDB details
-            tmdb_details = await get_tmdb_info(query=None, tmdb_id=media_id, media_type=media_type)
-            
-            if tmdb_details:
-                # Try to get IMDb ID from TMDB details
-                imdb_id = tmdb_details.get('imdb_id')
-                
-                # If we don't have IMDb ID from TMDB, try to find it using fuzzy matching
-                if not imdb_id:
-                    title = tmdb_details.get('title')
-                    year = tmdb_details.get('year')
-                    imdb_id = await get_best_imdb_match(title, year)
-                
-                # If we have IMDb ID, get details from IMDb
-                if imdb_id:
-                    imdb_details = await get_poster(imdb_id, id=True)
-                    if imdb_details:
-                        # Use IMDb details if available, otherwise fall back to TMDB
-                        movie_details = imdb_details
-                    else:
-                        movie_details = tmdb_details
-                else:
-                    # Fall back to TMDB details
-                    movie_details = tmdb_details
-            else:
-                movie_details = None
+            # Get TMDB details
+            movie_details = await get_tmdb_info(query=None, tmdb_id=media_id, media_type=media_type)
+            if movie_details:
+                # Add source information
+                movie_details['source'] = 'tmdb'
         elif source == 'imdb':
-            # Already have IMDb ID, so get details directly
+            # Get IMDb details
             movie_details = await get_poster(media_id, id=True)
+            if movie_details:
+                # Add source information and map fields
+                movie_details['source'] = 'imdb'
+                movie_details['released_on'] = movie_details.get('year')
+                movie_details['genres'] = movie_details.get('genres')
         
         if not movie_details:
             await client.edit_message_caption(
@@ -1001,12 +1012,13 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             series_data = {
                 '_id': series_key,
                 'title': movie_details.get('title', 'N/A'),
-                'released_on': movie_details.get('year', 'N/A'),
+                'released_on': movie_details.get('released_on', 'N/A'),
                 'genre': movie_details.get('genres', 'N/A'),
                 'rating': movie_details.get('rating', 'N/A'),
                 'tmdb_id': movie_details.get('tmdb_id') if source == 'tmdb' else None,
                 'imdb_id': movie_details.get('imdb_id') if source == 'imdb' else None,
-                'media_type': media_type,
+                'media_type': movie_details.get('media_type', 'series'),
+                'source': source,  # Store the source
                 'poster_file_id': None,
                 'languages': [],
                 'language_layout': [],
@@ -1035,10 +1047,11 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             return
         
         # Send poster to admin's assigned channel and get file ID
+        poster_url = movie_details.get('poster_url') or movie_details.get('poster')
         poster_file_id = await send_poster_to_admin_channel(
             client, 
             user_id,
-            poster_url=movie_details.get('poster_url') or movie_details.get('poster'),
+            poster_url=poster_url,
             caption="#MainPoster"
         )
         
