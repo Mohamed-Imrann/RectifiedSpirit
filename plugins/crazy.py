@@ -24,11 +24,14 @@ from database.crazy_db import (
     get_languages, delete_language, add_or_update_season, get_seasons, delete_season,
     add_or_update_quality, get_qualities, get_quality_link, delete_quality,
     get_poster_file_id, update_poster_file_id, publish_series, episodes_collection,
-    add_admin_assignment, remove_admin_assignment, get_admin_assignments
+    add_admin_assignment, remove_admin_assignment, get_admin_assignments,
+    update_language_poster, update_season_poster, update_language_season_layout,
+    update_season_quality_layout, update_quality_codec, update_quality_link_key,
+    get_quality_link_key
 )
 from utils import (
     get_message_id, get_messages, delete_messages_from_user_chat, 
-    get_poster, find_most_similar_title
+    get_poster, find_most_similar_title, get_file_id
 )
 from fuzzywuzzy import fuzz
 from pyrogram.errors import MessageIdInvalid, FloodWait
@@ -48,12 +51,12 @@ TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
 # Helper function to check if admin is assigned
 def is_admin_assigned(user_id):
-    """检查用户是否是被分配的管理员"""
-    # 超级管理员总是有权限
+    """Check if user is an assigned admin"""
+    # Super admins always have permission
     if user_id in ADMINS:
         return True
     
-    # 检查用户是否在 Assigned 字典中
+    # Check if user is in Assigned dictionary
     return user_id in Assigned
 
 # Helper functions
@@ -573,7 +576,7 @@ async def new_series_ui_command(client: Client, message: Message):
     user_id = message.from_user.id
     logger.info(f"Admin {user_id} started new series UI")
     
-    # 检查管理员是否被分配
+    # Check if admin is assigned
     if not is_admin_assigned(user_id):
         await message.reply("❌ You are not assigned to any channel. Contact the owner to get access.")
         return
@@ -622,7 +625,7 @@ async def new_series_ui_command(client: Client, message: Message):
 
 @Client.on_message(filters.command('assignadmin') & filters.user(ADMINS))
 async def assign_admin_command(client: Client, message: Message):
-    """分配管理员到频道"""
+    """Assign admin to channel"""
     if len(message.command) != 3:
         await message.reply("Usage: `/assignadmin <user_id> <channel_id>`")
         return
@@ -634,9 +637,9 @@ async def assign_admin_command(client: Client, message: Message):
         await message.reply("Invalid user_id or channel_id. Both must be integers.")
         return
     
-    # 添加到数据库
+    # Add to database
     if add_admin_assignment(user_id, channel_id):
-        # 更新全局 Assigned 字典
+        # Update global Assigned dictionary
         global Assigned
         Assigned[user_id] = channel_id
         
@@ -646,7 +649,7 @@ async def assign_admin_command(client: Client, message: Message):
 
 @Client.on_message(filters.command('unassignadmin') & filters.user(ADMINS))
 async def unassign_admin_command(client: Client, message: Message):
-    """取消管理员分配"""
+    """Unassign admin"""
     if len(message.command) != 2:
         await message.reply("Usage: `/unassignadmin <user_id>`")
         return
@@ -657,9 +660,9 @@ async def unassign_admin_command(client: Client, message: Message):
         await message.reply("Invalid user_id. Must be an integer.")
         return
     
-    # 从数据库删除
+    # Remove from database
     if remove_admin_assignment(user_id):
-        # 更新全局 Assigned 字典
+        # Update global Assigned dictionary
         global Assigned
         if user_id in Assigned:
             del Assigned[user_id]
@@ -670,7 +673,7 @@ async def unassign_admin_command(client: Client, message: Message):
 
 @Client.on_message(filters.command('listadmins') & filters.user(ADMINS))
 async def list_admins_command(client: Client, message: Message):
-    """列出所有管理员分配"""
+    """List all admin assignments"""
     admin_assignments = get_admin_assignments()
     
     if not admin_assignments:
@@ -689,7 +692,7 @@ async def handle_admin_text_message(client: Client, message: Message):
     user_id = message.from_user.id
     logger.info(f"Received admin text message {message.id} from user {user_id}")
     
-    # 检查管理员是否被分配
+    # Check if admin is assigned
     if not is_admin_assigned(user_id):
         await message.reply("❌ You are not assigned to any channel. Contact the owner to get access.")
         return
@@ -702,7 +705,7 @@ async def handle_admin_media_message(client: Client, message: Message):
     user_id = message.from_user.id
     logger.info(f"Received admin media message {message.id} from user {user_id}")
     
-    # 检查管理员是否被分配
+    # Check if admin is assigned
     if not is_admin_assigned(user_id):
         await message.reply("❌ You are not assigned to any channel. Contact the owner to get access.")
         return
@@ -717,7 +720,7 @@ async def admin_ui_callback_handler(client: Client, callback_query: CallbackQuer
     data = callback_query.data
     logger.info(f"Received admin UI callback from user {user_id}: {data}")
 
-    # 检查管理员是否被分配
+    # Check if admin is assigned
     if not is_admin_assigned(user_id):
         await callback_query.answer("❌ You are not assigned to any channel.", show_alert=True)
         return
@@ -1188,7 +1191,6 @@ async def process_season_input(client: Client, message: Message, season_name: st
             current_layout = [count for count in current_layout if count > 0]
             
             # Update layout in database
-            from database.crazy_db import update_language_season_layout
             update_language_season_layout(series_key, language_name, current_layout)
             
             # Update the season management view
@@ -1237,7 +1239,6 @@ async def process_quality_input(client: Client, message: Message, quality_name: 
                 current_layout = [count for count in current_layout if count > 0]
                 
                 # Update layout in database
-                from database.crazy_db import update_season_quality_layout
                 update_season_quality_layout(series_key, language_name, season_name, current_layout)
                 
                 # Update the quality management view
@@ -1261,7 +1262,6 @@ async def process_codec_input(client: Client, message: Message, codec_name: str)
     await message.reply("Codec Updated", reply_markup=ReplyKeyboardRemove())
     
     # Update codec in database
-    from database.crazy_db import update_quality_codec
     if update_quality_codec(series_key, language_name, season_name, quality_name, codec_name):
         # Update the quality management view
         main_message_id = temp_admin_data[user_id].get("main_message_id")
@@ -1290,7 +1290,6 @@ async def process_poster_input(client: Client, message: Message, poster_type: st
     
     elif poster_type == "language":
         language_name = temp_admin_data[user_id].get("current_language")
-        from database.crazy_db import update_language_poster
         update_language_poster(series_key, language_name, poster_file_id)
         await send_season_management_message(client, user_id, series_key, language_name, temp_admin_data[user_id].get("main_message_id"))
         temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
@@ -1298,7 +1297,6 @@ async def process_poster_input(client: Client, message: Message, poster_type: st
     elif poster_type == "season":
         language_name = temp_admin_data[user_id].get("current_language")
         season_name = temp_admin_data[user_id].get("current_season")
-        from database.crazy_db import update_season_poster
         update_season_poster(series_key, language_name, season_name, poster_file_id)
         await send_quality_management_message(client, user_id, series_key, language_name, season_name, temp_admin_data[user_id].get("main_message_id"))
         temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
@@ -1321,7 +1319,6 @@ async def process_first_file_input(client: Client, message: Message):
     link_key = str(uuid.uuid4())
     
     # Update the quality with the link key
-    from database.crazy_db import update_quality_link_key
     update_quality_link_key(series_key, language_name, season_name, quality_name, link_key)
     
     # Store the file information in the episodes collection
@@ -1352,7 +1349,6 @@ async def process_last_file_input(client: Client, message: Message):
         return
     
     # Get the link key for this quality
-    from database.crazy_db import get_quality_link_key
     link_key = get_quality_link_key(series_key, language_name, season_name, quality_name)
     
     if not link_key:
