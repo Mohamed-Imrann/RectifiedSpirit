@@ -337,89 +337,7 @@ def publish_series(series_key: str):
         logger.error(f"Error publishing series: {e}")
         return False
 
-# -----------------------------
-# Subscriptions (NEW FUNCTIONS)
-# -----------------------------
-
-def subscribe_to_season(series_key: str, language_name: str, user_id: int):
-    """
-    Add a user to season_subscribers under the given language.
-    """
-    series = series_collection.find_one({"_id": series_key})
-    if not series:
-        return False
-
-    for lang in series.get("languages", []):
-        if lang["name"].lower() == language_name.lower():
-            subs = lang.get("season_subscribers", [])
-            if user_id not in subs:
-                subs.append(user_id)
-                lang["season_subscribers"] = subs
-            break
-
-    try:
-        series_collection.update_one({"_id": series_key}, {"$set": {"languages": series["languages"]}})
-        return True
-    except Exception as e:
-        logger.error(f"Error subscribing to season: {e}")
-        return False
-
-
-def subscribe_to_quality(series_key: str, language_name: str, season_name: str, user_id: int):
-    """
-    Add a user to quality_subscribers under a specific season.
-    """
-    series = series_collection.find_one({"_id": series_key})
-    if not series:
-        return False
-
-    for lang in series.get("languages", []):
-        if lang["name"].lower() == language_name.lower():
-            for season in lang.get("seasons", []):
-                if season["name"].lower() == season_name.lower():
-                    subs = season.get("quality_subscribers", [])
-                    if user_id not in subs:
-                        subs.append(user_id)
-                        season["quality_subscribers"] = subs
-                    break
-            break
-
-    try:
-        series_collection.update_one({"_id": series_key}, {"$set": {"languages": series["languages"]}})
-        return True
-    except Exception as e:
-        logger.error(f"Error subscribing to quality: {e}")
-        return False
-
-
-def get_season_subscribers(series_key: str, language_name: str):
-    """
-    Get all season subscribers for a language.
-    """
-    series = series_collection.find_one({"_id": series_key})
-    if not series:
-        return []
-    for lang in series.get("languages", []):
-        if lang["name"].lower() == language_name.lower():
-            return lang.get("season_subscribers", [])
-    return []
-
-
-def get_quality_subscribers(series_key: str, language_name: str, season_name: str):
-    """
-    Get all quality subscribers for a specific season of a language.
-    """
-    series = series_collection.find_one({"_id": series_key})
-    if not series:
-        return []
-    for lang in series.get("languages", []):
-        if lang["name"].lower() == language_name.lower():
-            for season in lang.get("seasons", []):
-                if season["name"].lower() == season_name.lower():
-                    return season.get("quality_subscribers", [])
-    return []
-
-
+# Admin assignment functions
 def add_admin_assignment(user_id: int, channel_id: int):
     """Add an admin assignment to the database"""
     try:
@@ -485,7 +403,6 @@ def write_admin_assignments_to_env():
         logger.error(f"Error writing admin assignments to env: {e}")
         return False
 
-
 def track_series_edit(series_key: str, edited_by: int):
     """Track an edit to a series"""
     try:
@@ -503,3 +420,187 @@ def track_series_edit(series_key: str, edited_by: int):
     except Exception as e:
         logger.error(f"Error tracking series edit: {e}")
         return False
+
+# Subscription functions
+def subscribe_to_season(series_key: str, language_name: str, user_id: int):
+    """
+    Add a user to season_subscribers under the given language.
+    """
+    series = series_collection.find_one({"_id": series_key})
+    if not series:
+        return False
+
+    for lang in series.get("languages", []):
+        if lang["name"].lower() == language_name.lower():
+            subs = lang.get("season_subscribers", [])
+            if user_id not in subs:
+                subs.append(user_id)
+                lang["season_subscribers"] = subs
+            break
+
+    try:
+        series_collection.update_one({"_id": series_key}, {"$set": {"languages": series["languages"]}})
+        return True
+    except Exception as e:
+        logger.error(f"Error subscribing to season: {e}")
+        return False
+
+def subscribe_to_quality(series_key: str, language_name: str, season_name: str, user_id: int):
+    """
+    Add a user to quality_subscribers under a specific season.
+    """
+    series = series_collection.find_one({"_id": series_key})
+    if not series:
+        return False
+
+    for lang in series.get("languages", []):
+        if lang["name"].lower() == language_name.lower():
+            for season in lang.get("seasons", []):
+                if season["name"].lower() == season_name.lower():
+                    subs = season.get("quality_subscribers", [])
+                    if user_id not in subs:
+                        subs.append(user_id)
+                        season["quality_subscribers"] = subs
+                    break
+            break
+
+    try:
+        series_collection.update_one({"_id": series_key}, {"$set": {"languages": series["languages"]}})
+        return True
+    except Exception as e:
+        logger.error(f"Error subscribing to quality: {e}")
+        return False
+
+def get_season_subscribers(series_key: str, language_name: str):
+    """
+    Get all season subscribers for a language.
+    """
+    series = series_collection.find_one({"_id": series_key})
+    if not series:
+        return []
+    for lang in series.get("languages", []):
+        if lang["name"].lower() == language_name.lower():
+            return lang.get("season_subscribers", [])
+    return []
+
+def get_quality_subscribers(series_key: str, language_name: str, season_name: str):
+    """
+    Get all quality subscribers for a specific season of a language.
+    """
+    series = series_collection.find_one({"_id": series_key})
+    if not series:
+        return []
+    for lang in series.get("languages", []):
+        if lang["name"].lower() == language_name.lower():
+            for season in lang.get("seasons", []):
+                if season["name"].lower() == season_name.lower():
+                    return season.get("quality_subscribers", [])
+    return []
+
+# Additional functions for layout and poster management
+def update_language_poster(series_key: str, language_name: str, poster_file_id: str):
+    """Update language poster in database"""
+    try:
+        result = series_collection.update_one(
+            {"_id": series_key, "languages.name": language_name},
+            {"$set": {"languages.$.poster_file_id": poster_file_id}}
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        logger.error(f"Error updating language poster: {e}")
+        return False
+
+def update_season_poster(series_key: str, language_name: str, season_name: str, poster_file_id: str):
+    """Update season poster in database"""
+    try:
+        result = series_collection.update_one(
+            {"_id": series_key, "languages.name": language_name},
+            {"$set": {"languages.$[lang].seasons.$[season].poster_file_id": poster_file_id}},
+            array_filters=[
+                {"lang.name": language_name},
+                {"season.name": season_name}
+            ]
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        logger.error(f"Error updating season poster: {e}")
+        return False
+
+def update_language_season_layout(series_key: str, language_name: str, season_layout: list):
+    """Update language season layout in database"""
+    try:
+        result = series_collection.update_one(
+            {"_id": series_key, "languages.name": language_name},
+            {"$set": {"languages.$.season_layout": season_layout}}
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        logger.error(f"Error updating language season layout: {e}")
+        return False
+
+def update_season_quality_layout(series_key: str, language_name: str, season_name: str, quality_layout: list):
+    """Update season quality layout in database"""
+    try:
+        result = series_collection.update_one(
+            {"_id": series_key, "languages.name": language_name},
+            {"$set": {"languages.$[lang].seasons.$[season].quality_layout": quality_layout}},
+            array_filters=[
+                {"lang.name": language_name},
+                {"season.name": season_name}
+            ]
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        logger.error(f"Error updating season quality layout: {e}")
+        return False
+
+def update_quality_codec(series_key: str, language_name: str, season_name: str, quality_name: str, codec_name: str):
+    """Update quality codec in database"""
+    try:
+        result = series_collection.update_one(
+            {"_id": series_key, "languages.name": language_name},
+            {"$set": {"languages.$[lang].seasons.$[season].qualities.$[quality].codec": codec_name}},
+            array_filters=[
+                {"lang.name": language_name},
+                {"season.name": season_name},
+                {"quality.name": quality_name}
+            ]
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        logger.error(f"Error updating quality codec: {e}")
+        return False
+
+def update_quality_link_key(series_key: str, language_name: str, season_name: str, quality_name: str, link_key: str):
+    """Update quality link key in database"""
+    try:
+        result = series_collection.update_one(
+            {"_id": series_key, "languages.name": language_name},
+            {"$set": {"languages.$[lang].seasons.$[season].qualities.$[quality].link_key": link_key}},
+            array_filters=[
+                {"lang.name": language_name},
+                {"season.name": season_name},
+                {"quality.name": quality_name}
+            ]
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        logger.error(f"Error updating quality link key: {e}")
+        return False
+
+def get_quality_link_key(series_key: str, language_name: str, season_name: str, quality_name: str):
+    """Get quality link key from database"""
+    series = series_collection.find_one(
+        {"_id": series_key},
+        {"languages": {"$elemMatch": {"name": language_name}}}
+    )
+    if not series:
+        return None
+
+    language = series.get("languages", [{}])[0]
+    for season in language.get("seasons", []):
+        if season.get("name") == season_name:
+            for quality in season.get("qualities", []):
+                if quality.get("name") == quality_name:
+                    return quality.get("link_key")
+    return None
