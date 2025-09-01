@@ -24,14 +24,15 @@ from database.crazy_db import (
     get_languages, delete_language, add_or_update_season, get_seasons, delete_season,
     add_or_update_quality, get_qualities, get_quality_link, delete_quality,
     get_poster_file_id, update_poster_file_id, publish_series, episodes_collection,
-    get_series, get_poster_manuel, series_collection
+    get_series, get_poster_manuel, get_admin_channel, add_admin_assignment, 
+    remove_admin_assignment, get_admin_assignments, series_collection
 )
 from utils import (
     get_message_id, get_messages, delete_messages_from_user_chat, 
     get_poster, find_most_similar_title
 )
 from fuzzywuzzy import fuzz
-from pyrogram.errors import MessageIdInvalid, FloodWait
+from pyrogram.errors import MessageIdInvalid, FloodWait, UserNotParticipant, ChatAdminRequired
 
 logging.basicConfig(
     level=logging.INFO,
@@ -516,6 +517,13 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
 async def new_series_ui_command(client: Client, message: Message):
     user_id = message.from_user.id
     logger.info(f"Admin {user_id} started new series UI")
+    
+    # Check if user has an assigned channel
+    assigned_channel = get_admin_channel(user_id)
+    if not assigned_channel:
+        await message.reply("You don't have an assigned channel. Please contact the bot owner.")
+        return
+    
     query = message.text.split(None, 1)[1] if len(message.text.split(None, 1)) > 1 else None
 
     if not query:
@@ -557,6 +565,55 @@ async def new_series_ui_command(client: Client, message: Message):
     temp_admin_data[user_id]["main_message_id"] = temp_msg.id
 
     await send_series_selection_message(client, user_id, query, all_results, temp_msg.id)
+
+@Client.on_message(filters.command('assign') & filters.user(ADMINS))
+async def assign_command(client: Client, message: Message):
+    if len(message.command) != 3:
+        await message.reply("Usage: `/assign userid channel_id`")
+        return
+    
+    try:
+        user_id = int(message.command[1])
+        channel_id = int(message.command[2])
+    except ValueError:
+        await message.reply("Invalid user ID or channel ID. Both must be integers.")
+        return
+    
+    if add_admin_assignment(user_id, channel_id):
+        await message.reply(f"Successfully assigned channel {channel_id} to admin {user_id}.")
+    else:
+        await message.reply("Failed to assign channel. Please try again.")
+
+@Client.on_message(filters.command('unassign') & filters.user(ADMINS))
+async def unassign_command(client: Client, message: Message):
+    if len(message.command) != 2:
+        await message.reply("Usage: `/unassign userid`")
+        return
+    
+    try:
+        user_id = int(message.command[1])
+    except ValueError:
+        await message.reply("Invalid user ID. Must be an integer.")
+        return
+    
+    if remove_admin_assignment(user_id):
+        await message.reply(f"Successfully removed assignment for admin {user_id}.")
+    else:
+        await message.reply("Failed to remove assignment. Please try again.")
+
+@Client.on_message(filters.command('listadmins') & filters.user(ADMINS))
+async def listadmins_command(client: Client, message: Message):
+    assignments = get_admin_assignments()
+    
+    if not assignments:
+        await message.reply("No admin assignments found.")
+        return
+    
+    text = "**Admin Assignments:**\n\n"
+    for user_id, channel_id in assignments.items():
+        text += f"• Admin: `{user_id}` → Channel: `{channel_id}`\n"
+    
+    await message.reply(text)
 
 @Client.on_message(filters.text & filters.private & filters.user(ADMINS))
 async def handle_admin_text_message(client: Client, message: Message):
@@ -744,19 +801,16 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             await callback_query.answer(f"Adding language to row {row_index + 1}...")
             temp_admin_data[user_id]["target_row"] = row_index
             
-            reply_keyboard = ReplyKeyboardMarkup(
-                [
-                    [KeyboardButton("English"), KeyboardButton("Spanish"), KeyboardButton("Japanese")],
-                    [KeyboardButton("Korean"), KeyboardButton("French"), KeyboardButton("German")]
-                ],
-                resize_keyboard=True,
-                one_time_keyboard=True
-            )
+            # Delete previous prompt if exists
+            if "ask_message_id" in temp_admin_data[user_id]:
+                try:
+                    await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+                except Exception:
+                    pass
             
             ask_msg = await client.send_message(
                 user_id,
-                f"Enter language name to add to row {row_index + 1}:",
-                reply_markup=reply_keyboard
+                f"Send language name to add to row {row_index + 1}:"
             )
             temp_admin_data[user_id]["state"] = "AWAITING_LANGUAGE_INPUT"
             temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
@@ -765,20 +819,16 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             await callback_query.answer(f"Adding season to row {row_index + 1}...")
             temp_admin_data[user_id]["target_row"] = row_index
             
-            reply_keyboard = ReplyKeyboardMarkup(
-                [
-                    [KeyboardButton("Season 1"), KeyboardButton("Season 2"), KeyboardButton("Season 3")],
-                    [KeyboardButton("Season 4"), KeyboardButton("Season 5"), KeyboardButton("Season 6")],
-                    [KeyboardButton("Part 1"), KeyboardButton("Part 2")]
-                ],
-                resize_keyboard=True,
-                one_time_keyboard=True
-            )
+            # Delete previous prompt if exists
+            if "ask_message_id" in temp_admin_data[user_id]:
+                try:
+                    await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+                except Exception:
+                    pass
             
             ask_msg = await client.send_message(
                 user_id,
-                f"Enter season name to add to row {row_index + 1}:",
-                reply_markup=reply_keyboard
+                f"Send season name to add to row {row_index + 1}:"
             )
             temp_admin_data[user_id]["state"] = "AWAITING_SEASON_INPUT"
             temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
@@ -787,19 +837,16 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             await callback_query.answer(f"Adding quality to row {row_index + 1}...")
             temp_admin_data[user_id]["target_row"] = row_index
             
-            reply_keyboard = ReplyKeyboardMarkup(
-                [
-                    [KeyboardButton("360p"), KeyboardButton("480p"), KeyboardButton("720p")],
-                    [KeyboardButton("1080p"), KeyboardButton("2160p"), KeyboardButton("H.265")]
-                ],
-                resize_keyboard=True,
-                one_time_keyboard=True
-            )
+            # Delete previous prompt if exists
+            if "ask_message_id" in temp_admin_data[user_id]:
+                try:
+                    await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+                except Exception:
+                    pass
             
             ask_msg = await client.send_message(
                 user_id,
-                f"Enter quality name to add to row {row_index + 1}:",
-                reply_markup=reply_keyboard
+                f"Send quality name to add to row {row_index + 1}:"
             )
             temp_admin_data[user_id]["state"] = "AWAITING_QUALITY_INPUT"
             temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
@@ -850,10 +897,18 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
                 temp_admin_data[user_id]["current_quality_index"] = item_index
                 temp_admin_data[user_id]["state"] = "AWAITING_FIRST_FILE"
                 
-                await client.send_message(
+                # Delete previous prompt if exists
+                if "ask_message_id" in temp_admin_data[user_id]:
+                    try:
+                        await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+                    except Exception:
+                        pass
+                
+                ask_msg = await client.send_message(
                     user_id,
-                    f"Add me to the channel as admin and forward me the first file (with tag) for {language_name}-{season_name}-{quality_name}"
+                    f"Forward me the first file (with tag) for {language_name}-{season_name}-{quality_name}"
                 )
+                temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
             else:
                 await callback_query.answer("Invalid selection.", show_alert=True)
     
@@ -972,7 +1027,15 @@ async def process_language_input(client: Client, message: Message, language_name
     series_key = temp_admin_data[user_id].get("current_series_key")
     target_row = temp_admin_data[user_id].get("target_row")
     
-    await message.reply("Language Updated", reply_markup=ReplyKeyboardRemove())
+    # Delete the prompt message
+    if "ask_message_id" in temp_admin_data[user_id]:
+        try:
+            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+        except Exception:
+            pass
+    
+    # Send confirmation message
+    confirm_msg = await message.reply("Language Added")
     
     series_data = get_series_by_key(series_key)
     if not series_data:
@@ -1009,6 +1072,9 @@ async def process_language_input(client: Client, message: Message, language_name
             
             temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
             temp_admin_data[user_id].pop("target_row", None)
+            
+            # Delete confirmation message after a delay
+            asyncio.create_task(DeleteMessage(confirm_msg))
         else:
             await message.reply(f"Failed to add language.")
     except Exception as e:
@@ -1021,7 +1087,15 @@ async def process_season_input(client: Client, message: Message, season_name: st
     language_name = temp_admin_data[user_id].get("current_language")
     target_row = temp_admin_data[user_id].get("target_row")
     
-    await message.reply("Season Updated", reply_markup=ReplyKeyboardRemove())
+    # Delete the prompt message
+    if "ask_message_id" in temp_admin_data[user_id]:
+        try:
+            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+        except Exception:
+            pass
+    
+    # Send confirmation message
+    confirm_msg = await message.reply("Season Added")
     
     series_data = get_series_by_key(series_key)
     if not series_data:
@@ -1066,6 +1140,9 @@ async def process_season_input(client: Client, message: Message, season_name: st
             
             temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
             temp_admin_data[user_id].pop("target_row", None)
+            
+            # Delete confirmation message after a delay
+            asyncio.create_task(DeleteMessage(confirm_msg))
         else:
             await message.reply(f"Failed to add season.")
     except Exception as e:
@@ -1079,7 +1156,15 @@ async def process_quality_input(client: Client, message: Message, quality_name: 
     season_name = temp_admin_data[user_id].get("current_season")
     target_row = temp_admin_data[user_id].get("target_row")
     
-    await message.reply("Quality Updated", reply_markup=ReplyKeyboardRemove())
+    # Delete the prompt message
+    if "ask_message_id" in temp_admin_data[user_id]:
+        try:
+            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+        except Exception:
+            pass
+    
+    # Send confirmation message
+    confirm_msg = await message.reply("Quality Added")
     
     series_data = get_series_by_key(series_key)
     if not series_data:
@@ -1130,6 +1215,9 @@ async def process_quality_input(client: Client, message: Message, quality_name: 
             
             temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
             temp_admin_data[user_id].pop("target_row", None)
+            
+            # Delete confirmation message after a delay
+            asyncio.create_task(DeleteMessage(confirm_msg))
         else:
             await message.reply(f"Failed to add quality.")
     except Exception as e:
@@ -1168,22 +1256,52 @@ async def process_first_file_input(client: Client, message: Message):
     season_name = temp_admin_data[user_id].get("current_season")
     quality_name = temp_admin_data[user_id].get("current_quality")
     
+    # Get the admin's assigned channel
+    assigned_channel = get_admin_channel(user_id)
+    if not assigned_channel:
+        await message.reply("You don't have an assigned channel. Please contact the bot owner.")
+        return
+    
     channel_id, msg_id = await get_message_id(client, message)
     if not channel_id or not msg_id:
         await message.reply("Invalid message format. Please forward a message from a channel.")
         return
     
-    if channel_id not in DB_CHANNEL:
-        await message.reply("This file is not from a valid channel.")
+    # Check if the channel is in the global DB_CHANNEL or RAW_DB_CHANNEL
+    if channel_id in DB_CHANNEL or (str(channel_id).lstrip('-100') in [str(ch) for ch in RAW_DB_CHANNEL]):
+        await message.reply("This file is from a global channel. Please forward from a different channel.")
         return
     
+    # Check if the bot is admin in the channel
+    try:
+        bot_info = await client.get_chat_member(channel_id, "me")
+        if bot_info.status not in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]:
+            await message.reply("Bot is not admin in this channel. Please add the bot as admin first.")
+            return
+    except UserNotParticipant:
+        await message.reply("Bot is not a member of this channel. Please add the bot first.")
+        return
+    except Exception as e:
+        logger.error(f"Error checking bot status in channel {channel_id}: {e}")
+        await message.reply("Error checking bot status in the channel.")
+        return
+    
+    # Store the first file info
     temp_admin_data[user_id]["first_file"] = {
         "channel_id": channel_id,
         "message_id": msg_id
     }
     temp_admin_data[user_id]["state"] = "AWAITING_LAST_FILE"
     
-    await message.reply(f"Now forward me the last file (with tag) for {language_name}-{season_name}-{quality_name}")
+    # Delete the prompt message
+    if "ask_message_id" in temp_admin_data[user_id]:
+        try:
+            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+        except Exception:
+            pass
+    
+    ask_msg = await message.reply(f"Now forward me the last file (with tag) for {language_name}-{season_name}-{quality_name}")
+    temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
 
 async def process_last_file_input(client: Client, message: Message):
     user_id = message.from_user.id
@@ -1192,13 +1310,34 @@ async def process_last_file_input(client: Client, message: Message):
     season_name = temp_admin_data[user_id].get("current_season")
     quality_name = temp_admin_data[user_id].get("current_quality")
     
+    # Get the admin's assigned channel
+    assigned_channel = get_admin_channel(user_id)
+    if not assigned_channel:
+        await message.reply("You don't have an assigned channel. Please contact the bot owner.")
+        return
+    
     channel_id, msg_id = await get_message_id(client, message)
     if not channel_id or not msg_id:
         await message.reply("Invalid message format. Please forward a message from a channel.")
         return
     
-    if channel_id not in DB_CHANNEL:
-        await message.reply("This file is not from a valid channel.")
+    # Check if the channel is in the global DB_CHANNEL or RAW_DB_CHANNEL
+    if channel_id in DB_CHANNEL or (str(channel_id).lstrip('-100') in [str(ch) for ch in RAW_DB_CHANNEL]):
+        await message.reply("This file is from a global channel. Please forward from a different channel.")
+        return
+    
+    # Check if the bot is admin in the channel
+    try:
+        bot_info = await client.get_chat_member(channel_id, "me")
+        if bot_info.status not in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]:
+            await message.reply("Bot is not admin in this channel. Please add the bot as admin first.")
+            return
+    except UserNotParticipant:
+        await message.reply("Bot is not a member of this channel. Please add the bot first.")
+        return
+    except Exception as e:
+        logger.error(f"Error checking bot status in channel {channel_id}: {e}")
+        await message.reply("Error checking bot status in the channel.")
         return
     
     first_file = temp_admin_data[user_id].get("first_file")
@@ -1232,6 +1371,7 @@ async def process_last_file_input(client: Client, message: Message):
         await message.reply("No files found in the specified range.")
         return
     
+    # Insert the files into the episodes collection
     episodes_collection.insert_one({
         "file_link_key": link_key,
         "files": files_data,
@@ -1240,9 +1380,37 @@ async def process_last_file_input(client: Client, message: Message):
         "last_msg_id": last_msg_id
     })
     
+    # Add the quality with the link key
     add_or_update_quality(series_key, language_name, season_name, quality_name, link_key)
     
+    # Forward the files to the admin's assigned channel
+    try:
+        await client.send_message(
+            assigned_channel,
+            f"Files for {series_data.get('title', 'N/A')} - {language_name} - {season_name} - {quality_name}:"
+        )
+        
+        for file_data in files_data:
+            try:
+                await client.send_cached_media(
+                    chat_id=assigned_channel,
+                    file_id=file_data["file_id"],
+                    caption=file_data.get("caption", "")
+                )
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Error forwarding file to assigned channel: {e}")
+    except Exception as e:
+        logger.error(f"Error sending message to assigned channel: {e}")
+    
     await message.reply(f"Successfully added {len(files_data)} files to {language_name}-{season_name}-{quality_name}")
+    
+    # Delete the prompt message
+    if "ask_message_id" in temp_admin_data[user_id]:
+        try:
+            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+        except Exception:
+            pass
     
     temp_admin_data[user_id].pop("first_file", None)
     temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
