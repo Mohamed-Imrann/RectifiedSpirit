@@ -42,9 +42,6 @@ DB_CHANNEL = [-1002480551308, -1001306691782, -1002193376815]
 RAW_DB_CHANNEL = [2480551308, 1306691782, 2193376815]
 IMGBB_API_KEY = "e74d34d56644c5a9543019e408dbd891"
 TMDB_API_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIwZjY0ZTY1MDRhYTZkY2JkNmQxMWMzMjRiZTU3MGFmYSIsIm5iZiI6MTc1MTk3MDQyMy4zNTAwMDAxLCJzdWIiOiI2ODZjZjI3N2ZmMzFhNDFhNDhlN2ZlNTMiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.dI7SXasXd9LfTedzTfZAW05gQPcOD7_TpEMHKCGNdvU"
-TVDB_API_KEY = "68AF2181E242A2.82863431"
-OMDB_API_KEY = "374c1f44"
-MPDB = "640|uGhAmJudKFn4QkjtnwrTalClbD12q25nk1x3LtEL"
 # Optional settings with defaults
 SESSION = environ.get('SESSION', 'series')
 CACHE_TIME = int(environ.get('CACHE_TIME', 300))
@@ -100,14 +97,3 @@ MAX_LIST_ELM = "8"
 USE_CAPTION_FILTER = "False"
 #userbot = Client("my_userbot", api_id=API_ID2, api_hash=API_HASH2, session_string=SESSION_STRING)
 #userbot.start()
-
-Assigned = {}
-admin_assignments_str = environ.get('ADMIN_ASSIGNMENTS', '')
-if admin_assignments_str:
-    for pair in admin_assignments_str.split(','):
-        if ':' in pair:
-            uid, cid = pair.split(':')
-            try:
-                Assigned[int(uid)] = int(cid)
-            except ValueError:
-                pass

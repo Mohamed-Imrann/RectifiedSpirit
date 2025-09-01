@@ -55,37 +55,11 @@ class Bot(Client):
       temp.U_NAME = me.username
       temp.B_NAME = me.first_name
       self.username = '@' + me.username
-      logging.info(f"{me.first_name} 𝖶𝗂𝗍𝗁 𝖥𝗈𝗋 𝖯𝗒𝗋𝗈𝗀𝗋𝖺𝗆 v{__version__} (Layer {layer}) 𝖲𝗍𝖺𝗋𝗍𝖾𝖽 𝖮𝗇 @{me.username}")
+      logging.info(f"{me.first_name} 𝖶𝗂𝗍𝗁 𝖥𝗈𝗋 𝖯𝗒𝗋𝗈𝗀𝗋𝖺𝗆 v{__version__} (Layer {layer}) 𝖲𝗍𝖺𝖺𝗋𝗍𝖾𝖽 𝖮𝗇 @{me.username}")
       app = web.AppRunner(await web_server())
       await app.setup()
       bind_address = "0.0.0.0"
       await web.TCPSite(app, bind_address, PORT).start() # PORT is used here
-      
-      # Load admin assignments from DB and write to dynamic.env
-      from database.crazy_db import get_admin_assignments, write_admin_assignments_to_env
-      admin_assignments = get_admin_assignments()
-      
-      # Write assignments to dynamic.env
-      write_admin_assignments_to_env()
-      
-      # Reload environment variables
-      load_dotenv("./dynamic.env", override=True)
-      
-      # Update the global Assigned variable
-      global Assigned
-      assigned_str = environ.get('ADMIN_ASSIGNMENTS', '')
-      Assigned = {}
-      if assigned_str:
-          for pair in assigned_str.split(','):
-              if ':' in pair:
-                  uid, cid = pair.split(':')
-                  try:
-                      Assigned[int(uid)] = int(cid)
-                  except ValueError:
-                      pass
-      
-      logging.info(f"Loaded {len(Assigned)} admin assignments from database")
-      
       if REQ_CHANNEL_ONE is None or REQ_CHANNEL_TWO is None:
           with open("./dynamic.env", "wt+", encoding="utf-8") as f:
               if REQ_CHANNEL_ONE is None:
