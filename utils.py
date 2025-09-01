@@ -62,6 +62,18 @@ async def is_subscribed(bot, query=None, userid=None):
             return True
     return False
 
+async def global_message_id(client: Client, message: types.Message):
+    if (
+        message.forward_from_chat 
+        and message.forward_from_chat.type == "enums.ChatType.CHANNEL"
+        and message.forward_from_message_id
+    ):
+        channel_id = message.forward_from_chat.id
+        msg_id = message.forward_from_message_id
+        return channel_id, msg_id
+
+    return None, None
+    
 async def get_message_id(client, message):
     if message.forward_from_chat:
         # Forwarded message case
@@ -112,8 +124,7 @@ async def get_messages(client, source_channel_id, message_ids: Union[List[int], 
             msgs = await client.get_messages(chat_id=source_channel_id, message_ids=batch_ids)
             messages.extend(msgs)
             total_fetched += len(batch_ids)
-        except FloodWait as e:
-            logger.warning(f"FloodWait during get_messages: Sleeping for {e.x} seconds")
+        except logger.warning(f"FloodWait during get_messages: Sleeping for {e.x} seconds")
             await asyncio.sleep(e.x)
         except Exception as e:
             logger.error(f"Error fetching messages from {source_channel_id}: {e}")
