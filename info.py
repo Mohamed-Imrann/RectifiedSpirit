@@ -18,9 +18,6 @@ API_ID = 19680279
 API_HASH = "a32f974ade51b2dc74e8db4bb049ad01"
 BOT_TOKEN = "5883096902:AAF-tI_T-F_zVI4oIANJPuZxDsvskqmAw6A"
 BOT_USERNAME = "MC_MovieBetaBot"
-#API_ID2 = environ['API_ID2']
-#API_HASH2 = environ['API_HASH2']
-#SESSION_STRING = environ['SESSION_STRING']
 
 # Required Database and Channel Settings
 DATABASE_URI="mongodb+srv://user:pass@cluster0.chedxq6.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
