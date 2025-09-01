@@ -30,7 +30,6 @@ def get_series_by_key(series_key: str):
     return series_collection.find_one({"_id": series_key})
 
 def get_series_name(series_key: str):
-    """Retrieves a single series document by its _id (alias for get_series_by_key)."""
     return get_series_by_key(series_key)
 
 def update_series_field(series_key: str, field: str, value):
@@ -49,12 +48,10 @@ def update_poster_file_id(series_key: str, poster_file_id: str):
     return update_series_field(series_key, "poster_file_id", poster_file_id)
 
 def get_poster_by_key(series_key: str):
-    """Retrieves the poster file_id for a series by its key."""
     series = series_collection.find_one({"_id": series_key}, {"poster_file_id": 1})
     return series.get("poster_file_id") if series else None
 
 def get_poster_manuel(series_key: str):
-    """Retrieves the poster file_id for a series by its key (alias for get_poster_by_key)."""
     return get_poster_by_key(series_key)
 
 def add_or_update_language(series_key: str, language_name: str, poster_file_id: str = None):
@@ -100,7 +97,6 @@ def delete_language(series_key: str, language_name: str):
     if len(updated_languages) == len(languages):
         return False
 
-    # Delete associated file links
     for lang in languages:
         if lang["name"].lower() == language_name.lower():
             for season in lang.get("seasons", []):
@@ -109,7 +105,6 @@ def delete_language(series_key: str, language_name: str):
                         episodes_collection.delete_one({"file_link_key": quality["link_key"]})
             break
 
-    # Update language layout
     language_layout = series.get("language_layout", [])
     if len(language_layout) > len(updated_languages):
         language_layout = language_layout[:len(updated_languages)]
@@ -177,7 +172,6 @@ def delete_season(series_key: str, language_name: str, season_name: str):
             if len(updated_seasons) == len(seasons):
                 return False
 
-            # Delete associated file links
             for season in seasons:
                 if season["name"].lower() == season_name.lower():
                     for quality in season.get("qualities", []):
@@ -185,7 +179,6 @@ def delete_season(series_key: str, language_name: str, season_name: str):
                             episodes_collection.delete_one({"file_link_key": quality["link_key"]})
                     break
             
-            # Update season layout
             season_layout = lang.get("season_layout", [])
             if len(season_layout) > len(updated_seasons):
                 season_layout = season_layout[:len(updated_seasons)]
@@ -275,14 +268,12 @@ def delete_quality(series_key: str, language_name: str, season_name: str, qualit
                     if len(updated_qualities) == len(qualities):
                         return False
 
-                    # Delete associated file links
                     for quality in qualities:
                         if quality["name"].lower() == quality_name.lower():
                             if quality.get("link_key"):
                                 episodes_collection.delete_one({"file_link_key": quality["link_key"]})
                             break
                     
-                    # Update quality layout
                     quality_layout = season.get("quality_layout", [])
                     if len(quality_layout) > len(updated_qualities):
                         quality_layout = quality_layout[:len(updated_qualities)]
@@ -334,14 +325,7 @@ def publish_series(series_key: str):
         logger.error(f"Error publishing series: {e}")
         return False
 
-# -----------------------------
-# Subscriptions (NEW FUNCTIONS)
-# -----------------------------
-
 def subscribe_to_season(series_key: str, language_name: str, user_id: int):
-    """
-    Add a user to season_subscribers under the given language.
-    """
     series = series_collection.find_one({"_id": series_key})
     if not series:
         return False
@@ -361,11 +345,7 @@ def subscribe_to_season(series_key: str, language_name: str, user_id: int):
         logger.error(f"Error subscribing to season: {e}")
         return False
 
-
 def subscribe_to_quality(series_key: str, language_name: str, season_name: str, user_id: int):
-    """
-    Add a user to quality_subscribers under a specific season.
-    """
     series = series_collection.find_one({"_id": series_key})
     if not series:
         return False
@@ -388,11 +368,7 @@ def subscribe_to_quality(series_key: str, language_name: str, season_name: str, 
         logger.error(f"Error subscribing to quality: {e}")
         return False
 
-
 def get_season_subscribers(series_key: str, language_name: str):
-    """
-    Get all season subscribers for a language.
-    """
     series = series_collection.find_one({"_id": series_key})
     if not series:
         return []
@@ -401,11 +377,7 @@ def get_season_subscribers(series_key: str, language_name: str):
             return lang.get("season_subscribers", [])
     return []
 
-
 def get_quality_subscribers(series_key: str, language_name: str, season_name: str):
-    """
-    Get all quality subscribers for a specific season of a language.
-    """
     series = series_collection.find_one({"_id": series_key})
     if not series:
         return []
@@ -416,9 +388,7 @@ def get_quality_subscribers(series_key: str, language_name: str, season_name: st
                     return season.get("quality_subscribers", [])
     return []
 
-
 def add_admin_assignment(user_id: int, channel_id: int):
-    """Add an admin assignment to the database"""
     try:
         admin_assignments_collection.update_one(
             {"user_id": user_id},
@@ -432,7 +402,6 @@ def add_admin_assignment(user_id: int, channel_id: int):
         return False
 
 def remove_admin_assignment(user_id: int):
-    """Remove an admin assignment from the database"""
     try:
         result = admin_assignments_collection.delete_one({"user_id": user_id})
         if result.deleted_count > 0:
@@ -444,7 +413,6 @@ def remove_admin_assignment(user_id: int):
         return False
 
 def get_admin_assignments():
-    """Get all admin assignments from the database"""
     try:
         assignments = {}
         for doc in admin_assignments_collection.find({}):
@@ -455,24 +423,19 @@ def get_admin_assignments():
         return {}
 
 def write_admin_assignments_to_env():
-    """Write admin assignments to dynamic.env file"""
     try:
         assignments = get_admin_assignments()
         env_lines = []
         
-        # Read existing env file
         if os.path.exists("./dynamic.env"):
             with open("./dynamic.env", "r") as f:
                 env_lines = f.readlines()
         
-        # Remove existing ADMIN_ASSIGNMENTS lines
         env_lines = [line for line in env_lines if not line.startswith("ADMIN_ASSIGNMENTS=")]
         
-        # Add new assignments
         assignments_str = ",".join([f"{uid}:{cid}" for uid, cid in assignments.items()])
         env_lines.append(f"ADMIN_ASSIGNMENTS={assignments_str}\n")
         
-        # Write back to file
         with open("./dynamic.env", "w") as f:
             f.writelines(env_lines)
             
