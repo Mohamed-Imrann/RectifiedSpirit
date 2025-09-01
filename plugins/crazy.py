@@ -28,7 +28,7 @@ from database.crazy_db import (
     remove_admin_assignment, get_admin_assignments, series_collection
 )
 from utils import (
-    get_message_id, get_messages, delete_messages_from_user_chat, 
+    get_message_id, global_message_id, get_messages, delete_messages_from_user_chat, 
     get_poster, find_most_similar_title
 )
 from fuzzywuzzy import fuzz
@@ -1262,7 +1262,7 @@ async def process_first_file_input(client: Client, message: Message):
         await message.reply("You don't have an assigned channel. Please contact the bot owner.")
         return
     
-    channel_id, msg_id = await get_message_id(client, message)
+    channel_id, msg_id = await global_message_id(client, message)
     if not channel_id or not msg_id:
         await message.reply("Invalid message format. Please forward a message from a channel.")
         return
@@ -1316,7 +1316,7 @@ async def process_last_file_input(client: Client, message: Message):
         await message.reply("You don't have an assigned channel. Please contact the bot owner.")
         return
     
-    channel_id, msg_id = await get_message_id(client, message)
+    channel_id, msg_id = await global_message_id(client, message)
     if not channel_id or not msg_id:
         await message.reply("Invalid message format. Please forward a message from a channel.")
         return
