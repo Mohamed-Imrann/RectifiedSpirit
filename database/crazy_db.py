@@ -422,6 +422,16 @@ def get_admin_assignments():
         logger.error(f"Error getting admin assignments: {e}")
         return {}
 
+def get_admin_channel(user_id: int):
+    try:
+        assignment = admin_assignments_collection.find_one({"user_id": user_id})
+        if assignment:
+            return assignment.get("channel_id")
+        return None
+    except Exception as e:
+        logger.error(f"Error getting admin channel for user {user_id}: {e}")
+        return None
+
 def write_admin_assignments_to_env():
     try:
         assignments = get_admin_assignments()
