@@ -62,46 +62,47 @@ async def is_subscribed(bot, query=None, userid=None):
             return True
     return False
 
-async def global_message_id(client: Client, message: Message):
-    if (
-        message.forward_from_chat 
-        and message.forward_from_chat.type == "enums.ChatType.CHANNEL"
-        and message.forward_from_message_id
-    ):
+async def get_message_id(client: Client, message: Message):
+    """
+    Extracts channel_id and msg_id from a forwarded message or a channel post link.
+    
+    Returns:
+        (channel_id, msg_id) if valid
+        (0, 0) otherwise
+    """
+
+    # Case 1: Forwarded message from a channel
+    if message.forward_from_chat and message.forward_from_chat.type == enums.ChatType.CHANNEL:
         channel_id = message.forward_from_chat.id
         msg_id = message.forward_from_message_id
         return channel_id, msg_id
 
-    return None, None
+    # Case 2: Text contains a Telegram post link
+    if message.text:
+        # Matches both public (t.me/ChannelName/123) and private (t.me/c/123456789/123) links
+        pattern = r"(?:https?://)?t\.me/(?:c/)?([\w\d_]+)/(\d+)"
+        matches = re.match(pattern, message.text.strip())
+
+        if matches:
+            raw_id_or_username = matches.group(1)
+            msg_id = int(matches.group(2))
+
+            # If it's numeric, it's a private channel ID (t.me/c/12345/678)
+            if raw_id_or_username.isdigit():
+                channel_id = int("-100" + raw_id_or_username)
+                return channel_id, msg_id
+
+            # Otherwise it's a public channel username -> resolve to ID
+            try:
+                chat = await client.get_chat(raw_id_or_username)
+                if chat.type == enums.ChatType.CHANNEL:
+                    return chat.id, msg_id
+            except Exception:
+                return 0, 0
+
+    # Nothing matched
+    return 0, 0
     
-async def get_message_id(client, message):
-    if message.forward_from_chat:
-        # Forwarded message case
-        channel_id = str(message.forward_from_chat.id) 
-        if int(channel_id) in DB_CHANNEL or int(channel_id) in RAW_DB_CHANNEL:
-            return channel_id, message.forward_from_message_id
-        else:
-            return 0, 0
-    elif message.text:
-        pattern = r"https://t.me/(?:c/)?(\d+)/(\d+)"
-        matches = re.match(pattern, message.text)
-        if not matches:
-            return 0, 0
-        extracted_channel_id = matches.group(1)
-        msg_id = int(matches.group(2))
-        
-        # Convert extracted_channel_id to Pyrogram's internal format if it's a raw ID
-        # Pyrogram uses -100 for supergroups, so if it's a raw ID like 12345, it becomes -10012345
-        if not extracted_channel_id.startswith('-100'):
-            extracted_channel_id = f"-100{extracted_channel_id}"
-
-        if int(extracted_channel_id) in DB_CHANNEL or int(extracted_channel_id) in RAW_DB_CHANNEL: 
-            return extracted_channel_id, msg_id
-        else:
-            return 0, 0
-    else:
-        return 0, 0
-
 async def get_messages(client, source_channel_id, message_ids: Union[List[int], range]):
     """
     Fetches messages from a source channel given a list of message IDs.
