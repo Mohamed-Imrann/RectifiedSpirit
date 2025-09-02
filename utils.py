@@ -62,18 +62,6 @@ async def is_subscribed(bot, query=None, userid=None):
             return True
     return False
 
-async def global_message_id(client: Client, message: types.Message):
-    if (
-        message.forward_from_chat 
-        and message.forward_from_chat.type == "enums.ChatType.CHANNEL"
-        and message.forward_from_message_id
-    ):
-        channel_id = message.forward_from_chat.id
-        msg_id = message.forward_from_message_id
-        return channel_id, msg_id
-
-    return None, None
-    
 async def get_message_id(client, message):
     if message.forward_from_chat:
         # Forwarded message case
@@ -124,7 +112,8 @@ async def get_messages(client, source_channel_id, message_ids: Union[List[int], 
             msgs = await client.get_messages(chat_id=source_channel_id, message_ids=batch_ids)
             messages.extend(msgs)
             total_fetched += len(batch_ids)
-        except logger.warning(f"FloodWait during get_messages: Sleeping for {e.x} seconds")
+        except FloodWait as e:
+            logger.warning(f"FloodWait during get_messages: Sleeping for {e.x} seconds")
             await asyncio.sleep(e.x)
         except Exception as e:
             logger.error(f"Error fetching messages from {source_channel_id}: {e}")
@@ -543,37 +532,72 @@ def find_most_similar_title(query: str, titles: List[str]):
     best_matches.sort(key=lambda x: x[1], reverse=True)
     return [match[0] for match in best_matches[:5]]
 
-async def get_links_for_quality(file_link_key: str):
+async def get_links_for_quality(client: Client, file_link_key: str):
     """
-    Retrieves file information from the episodes collection based on a file_link_key.
-    This function is crucial for fetching the actual media files associated with a quality.
+    Retrieves file information based on a file_link_key.
+    This function now handles the new format (get_channelid_firstmsgid_lastmsgid).
     
     Args:
-        file_link_key (str): The unique key linking to the file entries in the episodes collection.
+        client: Pyrogram client instance
+        file_link_key: The key linking to the files (reference string)
         
     Returns:
         tuple: A tuple containing:
             - list: A list of dictionaries, each containing 'file_id' and 'caption' for the media.
-            - int: Channel ID (placeholder, as it's not directly stored per link_key here).
-            - int: First message ID (placeholder).
-            - int: Last message ID (placeholder).
+            - int: Channel ID
+            - int: First message ID
+            - int: Last message ID
     """
     logger.info(f"Fetching file links for key: {file_link_key}")
     
-    # Find the document in the episodes_collection using the file_link_key
-    # Assuming each document in episodes_collection has a 'file_link_key' and 'files' field
-    # where 'files' is a list of {'file_id': '...', 'caption': '...'}
-    episode_doc = episodes_collection.find_one({"file_link_key": file_link_key})
-
-    if episode_doc and episode_doc.get("files"):
-        files_to_send = episode_doc["files"]
-        # These values might be stored in the episode_doc or derived,
-        # for now, they are placeholders.
-        channel_id = episode_doc.get("channel_id", 0) 
-        first_msg_id = episode_doc.get("first_msg_id", 0)
-        last_msg_id = episode_doc.get("last_msg_id", 0)
-        logger.info(f"Found {len(files_to_send)} files for link key {file_link_key}")
-        return files_to_send, channel_id, first_msg_id, last_msg_id
-    
-    logger.warning(f"No files found in episodes_collection for link key: {file_link_key}")
-    return [], 0, 0, 0
+    # Check if it's the new format (get_channelid_firstmsgid_lastmsgid)
+    if file_link_key.startswith("get_"):
+        try:
+            # Parse the reference string
+            parts = file_link_key.split('_')
+            if len(parts) != 4:
+                logger.error(f"Invalid reference string format: {file_link_key}")
+                return [], 0, 0, 0
+            
+            channel_id = int(f"-100{parts[1]}")
+            first_msg_id = int(parts[2])
+            last_msg_id = int(parts[3])
+            
+            # Get the messages from the channel
+            messages = await client.get_messages(
+                chat_id=channel_id,
+                message_ids=list(range(first_msg_id, last_msg_id + 1))
+            )
+            
+            if not messages:
+                logger.warning(f"No messages found for reference key: {file_link_key}")
+                return [], 0, 0, 0
+            
+            # Extract file information
+            files_to_send = []
+            for msg in messages:
+                file_info = get_file_id(msg)
+                if file_info:
+                    files_to_send.append({
+                        "file_id": file_info.file_id,
+                        "caption": msg.caption or ""
+                    })
+            
+            logger.info(f"Found {len(files_to_send)} files for reference key {file_link_key}")
+            return files_to_send, channel_id, first_msg_id, last_msg_id
+        except Exception as e:
+            logger.error(f"Error processing reference key {file_link_key}: {e}")
+            return [], 0, 0, 0
+    else:
+        # Old format: get from episodes_collection
+        episode_doc = episodes_collection.find_one({"file_link_key": file_link_key})
+        if episode_doc and episode_doc.get("files"):
+            logger.info(f"Found {len(episode_doc['files'])} files for link key {file_link_key} in episodes_collection")
+            return (
+                episode_doc["files"],
+                episode_doc.get("channel_id", 0),
+                episode_doc.get("first_msg_id", 0),
+                episode_doc.get("last_msg_id", 0)
+            )
+        logger.warning(f"No files found in episodes_collection for link key: {file_link_key}")
+        return [], 0, 0, 0
