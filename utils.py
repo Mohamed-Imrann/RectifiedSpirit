@@ -62,7 +62,7 @@ async def is_subscribed(bot, query=None, userid=None):
             return True
     return False
 
-async def global_message_id(client: Client, message: types.Message):
+async def global_message_id(client: Client, message: Message):
     if (
         message.forward_from_chat 
         and message.forward_from_chat.type == "enums.ChatType.CHANNEL"
