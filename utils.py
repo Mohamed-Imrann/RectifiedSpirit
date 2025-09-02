@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Union, List
 from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid, MessageIdInvalid
 from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, InputMediaPhoto
-from pyrogram import enums
+from pyrogram import enums, Client
 from imdb import Cinemagoer
 from bs4 import BeautifulSoup
 import requests
