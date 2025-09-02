@@ -25,7 +25,7 @@ from database.crazy_db import (
     add_or_update_quality, get_qualities, get_quality_link, delete_quality,
     get_poster_file_id, update_poster_file_id, publish_series, episodes_collection,
     get_series, get_poster_manuel, get_admin_channel, add_admin_assignment, 
-    remove_admin_assignment, get_admin_assignments, series_collection
+    remove_admin_assignment, get_admin_assignments
 )
 from utils import (
     get_message_id, global_message_id, get_messages, delete_messages_from_user_chat, 
@@ -207,7 +207,7 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
         logger.error(f"An unexpected error occurred with TMDB: {e}")
         return None
 
-async def download_and_upload_poster(client: Client, poster_url: str = None, message: Message = None):
+async def download_and_upload_poster(client: Client, poster_url: str = None, message: Message = None, send_to_log_channel: bool = True):
     logger.info("Downloading and uploading poster")
     temp_dir = os.path.join(TMP_DOWNLOAD_DIRECTORY, str(uuid.uuid4()))
     os.makedirs(temp_dir, exist_ok=True)
@@ -234,14 +234,25 @@ async def download_and_upload_poster(client: Client, poster_url: str = None, mes
             return None
 
         if download_path:
-            logger.info("Uploading poster to LOG_CHANNEL")
-            sent_msg = await client.send_photo(LOG_CHANNEL, photo=download_path, caption="Series Poster")
-            file_id = sent_msg.photo.file_id
-            try:
-                await sent_msg.delete()
-                logger.debug("Deleted temporary poster from LOG_CHANNEL")
-            except Exception as e:
-                logger.warning(f"Could not delete temporary poster message from LOG_CHANNEL: {e}")
+            if send_to_log_channel:
+                logger.info("Uploading poster to LOG_CHANNEL")
+                sent_msg = await client.send_photo(LOG_CHANNEL, photo=download_path, caption="#MainPoster")
+                file_id = sent_msg.photo.file_id
+                try:
+                    await sent_msg.delete()
+                    logger.debug("Deleted temporary poster from LOG_CHANNEL")
+                except Exception as e:
+                    logger.warning(f"Could not delete temporary poster message from LOG_CHANNEL: {e}")
+            else:
+                # For admin posters, don't send to LOG_CHANNEL
+                logger.info("Uploading poster without sending to LOG_CHANNEL")
+                sent_msg = await client.send_photo(LOG_CHANNEL, photo=download_path, caption="Series Poster")
+                file_id = sent_msg.photo.file_id
+                try:
+                    await sent_msg.delete()
+                    logger.debug("Deleted temporary poster from LOG_CHANNEL")
+                except Exception as e:
+                    logger.warning(f"Could not delete temporary poster message from LOG_CHANNEL: {e}")
     except Exception as e:
         logger.error(f"Error downloading/uploading poster: {e}")
     finally:
@@ -717,6 +728,17 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             series_data = existing_series
             await callback_query.answer("Series already exists. Loading for editing.", show_alert=True)
         else:
+            # Download and upload poster to LOG_CHANNEL with #MainPoster caption
+            poster_file_id = None
+            if movie_details.get('poster_url'):
+                poster_file_id = await download_and_upload_poster(client, poster_url=movie_details.get('poster_url'))
+                if poster_file_id:
+                    logger.info(f"Got main poster file_id: {poster_file_id}")
+                else:
+                    logger.warning("Failed to get main poster file_id")
+            else:
+                logger.info("No poster URL available")
+            
             series_data = {
                 '_id': series_key,
                 'title': movie_details.get('title', 'N/A'),
@@ -726,7 +748,7 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
                 'tmdb_id': movie_details.get('tmdb_id') if source == 'tmdb' else None,
                 'imdb_id': movie_details.get('imdb_id') if source == 'imdb' else None,
                 'media_type': media_type,
-                'poster_file_id': None,
+                'poster_file_id': poster_file_id,
                 'languages': [],
                 'language_layout': [],
                 'published': False
@@ -750,14 +772,6 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
                 caption="Failed to retrieve series data after initial setup. Please try again."
             )
             return
-        
-        poster_file_id = await download_and_upload_poster(client, poster_url=movie_details.get('poster_url') or movie_details.get('poster'))
-        if poster_file_id:
-            update_series_field(series_key, "poster_file_id", poster_file_id)
-            series_data["poster_file_id"] = poster_file_id
-        else:
-            update_series_field(series_key, "poster_file_id", NO_POSTER_FOUND_IMG[0])
-            series_data["poster_file_id"] = NO_POSTER_FOUND_IMG[0]
         
         temp_admin_data[user_id]["current_series_key"] = series_key
         temp_admin_data[user_id]["state"] = "SERIES_DETAILS"
@@ -1228,7 +1242,8 @@ async def process_poster_input(client: Client, message: Message, poster_type: st
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
     
-    poster_file_id = await download_and_upload_poster(client, message=message)
+    # For admin posters, don't send to LOG_CHANNEL
+    poster_file_id = await download_and_upload_poster(client, message=message, send_to_log_channel=False)
     if not poster_file_id:
         await message.reply("Failed to process the poster. Please try again.")
         return
@@ -1351,59 +1366,56 @@ async def process_last_file_input(client: Client, message: Message):
     if first_msg_id > last_msg_id:
         first_msg_id, last_msg_id = last_msg_id, first_msg_id
     
-    link_key = str(uuid.uuid4())
-    
+    # Get the messages from the source channel
     messages = await get_messages(client, channel_id, range(first_msg_id, last_msg_id + 1))
     if not messages:
         await message.reply("No messages found in the specified range.")
         return
     
-    files_data = []
-    for msg in messages:
-        file_info = get_file_id(msg)
-        if file_info:
-            files_data.append({
-                "file_id": file_info.file_id,
-                "caption": msg.caption or ""
-            })
-    
-    if not files_data:
-        await message.reply("No files found in the specified range.")
+    # Get series data for the header
+    series_data = get_series_by_key(series_key)
+    if not series_data:
+        await message.reply("Series not found.")
         return
     
-    # Insert the files into the episodes collection
-    episodes_collection.insert_one({
-        "file_link_key": link_key,
-        "files": files_data,
-        "channel_id": channel_id,
-        "first_msg_id": first_msg_id,
-        "last_msg_id": last_msg_id
-    })
-    
-    # Add the quality with the link key
-    add_or_update_quality(series_key, language_name, season_name, quality_name, link_key)
-    
-    # Forward the files to the admin's assigned channel
+    # Send header message to assigned channel
+    header_text = f"{series_data.get('title', 'N/A')} - {language_name} - {season_name} - {quality_name}"
     try:
-        await client.send_message(
-            assigned_channel,
-            f"Files for {series_data.get('title', 'N/A')} - {language_name} - {season_name} - {quality_name}:"
-        )
-        
-        for file_data in files_data:
+        header_msg = await client.send_message(assigned_channel, header_text)
+    except Exception as e:
+        logger.error(f"Error sending header to assigned channel: {e}")
+        await message.reply("Error sending header to assigned channel.")
+        return
+    
+    # Forward files to assigned channel and collect message IDs
+    assigned_msg_ids = []
+    for msg in messages:
+        if msg.media:
             try:
-                await client.send_cached_media(
+                forwarded = await client.forward_messages(
                     chat_id=assigned_channel,
-                    file_id=file_data["file_id"],
-                    caption=file_data.get("caption", "")
+                    from_chat_id=channel_id,
+                    message_ids=msg.id
                 )
+                assigned_msg_ids.append(forwarded.id)
                 await asyncio.sleep(0.5)
             except Exception as e:
-                logger.error(f"Error forwarding file to assigned channel: {e}")
-    except Exception as e:
-        logger.error(f"Error sending message to assigned channel: {e}")
+                logger.error(f"Error forwarding message {msg.id}: {e}")
     
-    await message.reply(f"Successfully added {len(files_data)} files to {language_name}-{season_name}-{quality_name}")
+    if not assigned_msg_ids:
+        await message.reply("Failed to forward files to assigned channel.")
+        return
+    
+    # Generate reference string
+    first_assigned_msg_id = assigned_msg_ids[0]
+    last_assigned_msg_id = assigned_msg_ids[-1]
+    assigned_channel_id_without_prefix = str(assigned_channel).lstrip('-100')
+    reference_string = f"get_{assigned_channel_id_without_prefix}_{first_assigned_msg_id}_{last_assigned_msg_id}"
+    # Update the quality with the reference string
+    if add_or_update_quality(series_key, language_name, season_name, quality_name, reference_string):
+        await message.reply("Saved Successfully.")
+    else:
+        await message.reply("Failed to save reference.")
     
     # Delete the prompt message
     if "ask_message_id" in temp_admin_data[user_id]:
