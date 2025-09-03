@@ -25,7 +25,7 @@ from database.crazy_db import (
     add_or_update_quality, get_qualities, get_quality_link, delete_quality,
     get_poster_file_id, update_poster_file_id, publish_series, episodes_collection,
     get_series, get_poster_manuel, get_admin_channel, add_admin_assignment, 
-    remove_admin_assignment, get_admin_assignments
+    remove_admin_assignment, get_admin_assignments, series_collection
 )
 from utils import (
     get_message_id, get_messages, delete_messages_from_user_chat, 
