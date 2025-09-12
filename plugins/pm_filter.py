@@ -127,6 +127,76 @@ def find_close_matches(query, possibilities, n=3, cutoff=0.6):
     import difflib
     return difflib.get_close_matches(query, possibilities, n, cutoff)
 
+async def get_links_for_quality(client: Client, file_link_key: str):
+    """
+    Retrieves file information based on a file_link_key.
+    This function now handles the new format (get_channelid_firstmsgid_lastmsgid).
+    
+    Args:
+        client: Pyrogram client instance
+        file_link_key: The key linking to the files (reference string)
+        
+    Returns:
+        tuple: A tuple containing:
+            - list: A list of dictionaries, each containing 'file_id' and 'caption' for the media.
+            - int: Channel ID
+            - int: First message ID
+            - int: Last message ID
+    """
+    logger.info(f"Fetching file links for key: {file_link_key}")
+    
+    # Check if it's the new format (get_channelid_firstmsgid_lastmsgid)
+    if file_link_key.startswith("get_"):
+        try:
+            # Parse the reference string
+            parts = file_link_key.split('_')
+            if len(parts) != 4:
+                logger.error(f"Invalid reference string format: {file_link_key}")
+                return [], 0, 0, 0
+            
+            channel_id = int(parts[1])
+            first_msg_id = int(parts[2])
+            last_msg_id = int(parts[3])
+            
+            # Get the messages from the channel
+            messages = await client.get_messages(
+                chat_id=channel_id,
+                message_ids=list(range(first_msg_id, last_msg_id + 1))
+            )
+            
+            if not messages:
+                logger.warning(f"No messages found for reference key: {file_link_key}")
+                return [], 0, 0, 0
+            
+            # Extract file information
+            files_to_send = []
+            for msg in messages:
+                file_info = get_file_id(msg)
+                if file_info:
+                    files_to_send.append({
+                        "file_id": file_info.file_id,
+                        "caption": msg.caption or ""
+                    })
+            
+            logger.info(f"Found {len(files_to_send)} files for reference key {file_link_key}")
+            return files_to_send, channel_id, first_msg_id, last_msg_id
+        except Exception as e:
+            logger.error(f"Error processing reference key {file_link_key}: {e}")
+            return [], 0, 0, 0
+    else:
+        # Old format: get from episodes_collection
+        episode_doc = episodes_collection.find_one({"file_link_key": file_link_key})
+        if episode_doc and episode_doc.get("files"):
+            logger.info(f"Found {len(episode_doc['files'])} files for link key {file_link_key} in episodes_collection")
+            return (
+                episode_doc["files"],
+                episode_doc.get("channel_id", 0),
+                episode_doc.get("first_msg_id", 0),
+                episode_doc.get("last_msg_id", 0)
+            )
+        logger.warning(f"No files found in episodes_collection for link key: {file_link_key}")
+        return [], 0, 0, 0
+        
 def get_movie_poster(series_key):
     poster_file_id = get_poster_manuel(series_key)
     return poster_file_id or NO_POSTER_FOUND_IMG[0]
