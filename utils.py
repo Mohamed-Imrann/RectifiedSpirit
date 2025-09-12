@@ -325,6 +325,39 @@ def get_file_id(msg: Message):
                 setattr(obj, "message_type", message_type)
                 return obj
 
+async def forward_messages_without_tag(client: Client, from_chat_id: int, to_chat_id: int, first_msg_id: int, last_msg_id: int):
+    """
+    Forward a range of messages from one chat to another without forward tag.
+    Returns the list of new message IDs in the destination chat.
+    """
+    new_message_ids = []
+    for msg_id in range(first_msg_id, last_msg_id + 1):
+        try:
+            # Get the message
+            msg = await client.get_messages(from_chat_id, msg_id)
+            
+            if msg.media:
+                # For media messages, send as cached media
+                sent_msg = await client.send_cached_media(
+                    chat_id=to_chat_id,
+                    file_id=get_file_id(msg).file_id,
+                    caption=msg.caption
+                )
+            else:
+                # For text messages, send as text
+                sent_msg = await client.send_message(
+                    chat_id=to_chat_id,
+                    text=msg.text,
+                    entities=msg.entities
+                )
+            
+            new_message_ids.append(sent_msg.id)
+            await asyncio.sleep(0.1)  # Small delay to avoid flooding
+        except Exception as e:
+            logger.error(f"Error forwarding message {msg_id}: {e}")
+    
+    return new_message_ids
+
 def extract_user(message: Message) -> Union[int, str]:
     """extracts the user from a message"""
     user_id = None
