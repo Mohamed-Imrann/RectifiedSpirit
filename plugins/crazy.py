@@ -29,7 +29,7 @@ from database.crazy_db import (
 )
 from utils import (
     get_message_id, get_messages, delete_messages_from_user_chat, 
-    get_poster, find_most_similar_title
+    get_poster, find_most_similar_title, forward_messages_without_tag
 )
 from fuzzywuzzy import fuzz
 from pyrogram.errors import MessageIdInvalid, FloodWait, UserNotParticipant, ChatAdminRequired
@@ -680,6 +680,389 @@ async def handle_admin_media_input(client: Client, message: Message):
     elif current_state == "AWAITING_LAST_FILE":
         await process_last_file_input(client, message)
 
+async def process_language_input(client: Client, message: Message, language_name: str):
+    user_id = message.from_user.id
+    series_key = temp_admin_data[user_id].get("current_series_key")
+    target_row = temp_admin_data[user_id].get("target_row")
+    
+    # Delete the prompt message
+    if "ask_message_id" in temp_admin_data[user_id]:
+        try:
+            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+        except Exception:
+            pass
+    
+    # Send confirmation message
+    confirm_msg = await message.reply("Language Added")
+    
+    series_data = get_series_by_key(series_key)
+    if not series_data:
+        await message.reply("Series not found.")
+        return
+    
+    languages = series_data.get("languages", [])
+    current_layout = series_data.get("language_layout", [])
+    
+    existing_language = next((lang for lang in languages if lang["name"].lower() == language_name.lower()), None)
+    if existing_language:
+        await message.reply(f"Language '{language_name}' already exists.")
+        return
+    
+    while len(current_layout) <= target_row:
+        current_layout.append(0)
+    
+    insertion_index = sum(current_layout[:target_row]) + current_layout[target_row]
+    
+    new_language = {"name": language_name, "seasons": [], "season_layout": []}
+    
+    languages.insert(insertion_index, new_language)
+    
+    current_layout[target_row] += 1
+    
+    try:
+        result = series_collection.update_one(
+            {"_id": series_key},
+            {"$set": {"languages": languages, "language_layout": current_layout}}
+        )
+        if result.modified_count > 0:
+            main_message_id = temp_admin_data[user_id].get("main_message_id")
+            await send_language_management_message(client, user_id, series_key, main_message_id)
+            
+            # Delete confirmation message after a delay
+            asyncio.create_task(DeleteMessage(confirm_msg))
+        else:
+            await message.reply("Failed to add language. Please try again.")
+    except Exception as e:
+        logger.error(f"Error adding language: {e}")
+        await message.reply(f"Error adding language: {e}")
+
+async def process_season_input(client: Client, message: Message, season_name: str):
+    user_id = message.from_user.id
+    series_key = temp_admin_data[user_id].get("current_series_key")
+    language_name = temp_admin_data[user_id].get("current_language")
+    target_row = temp_admin_data[user_id].get("target_row")
+    
+    # Delete the prompt message
+    if "ask_message_id" in temp_admin_data[user_id]:
+        try:
+            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+        except Exception:
+            pass
+    
+    # Send confirmation message
+    confirm_msg = await message.reply("Season Added")
+    
+    series_data = get_series_by_key(series_key)
+    if not series_data:
+        await message.reply("Series not found.")
+        return
+    
+    languages = series_data.get("languages", [])
+    current_lang = next((lang for lang in languages if lang["name"].lower() == language_name.lower()), None)
+    if not current_lang:
+        await message.reply("Language not found.")
+        return
+    
+    seasons = current_lang.get("seasons", [])
+    current_layout = current_lang.get("season_layout", [])
+    
+    existing_season = next((s for s in seasons if s["name"].lower() == season_name.lower()), None)
+    if existing_season:
+        await message.reply(f"Season '{season_name}' already exists.")
+        return
+    
+    while len(current_layout) <= target_row:
+        current_layout.append(0)
+    
+    insertion_index = sum(current_layout[:target_row]) + current_layout[target_row]
+    
+    new_season = {"name": season_name, "qualities": [], "quality_layout": []}
+    
+    seasons.insert(insertion_index, new_season)
+    
+    current_layout[target_row] += 1
+    
+    try:
+        result = series_collection.update_one(
+            {"_id": series_key},
+            {"$set": {"languages": languages}}
+        )
+        if result.modified_count > 0:
+            main_message_id = temp_admin_data[user_id].get("main_message_id")
+            await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+            
+            # Delete confirmation message after a delay
+            asyncio.create_task(DeleteMessage(confirm_msg))
+        else:
+            await message.reply("Failed to add season. Please try again.")
+    except Exception as e:
+        logger.error(f"Error adding season: {e}")
+        await message.reply(f"Error adding season: {e}")
+
+async def process_quality_input(client: Client, message: Message, quality_name: str):
+    user_id = message.from_user.id
+    series_key = temp_admin_data[user_id].get("current_series_key")
+    language_name = temp_admin_data[user_id].get("current_language")
+    season_name = temp_admin_data[user_id].get("current_season")
+    target_row = temp_admin_data[user_id].get("target_row")
+    
+    # Delete the prompt message
+    if "ask_message_id" in temp_admin_data[user_id]:
+        try:
+            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+        except Exception:
+            pass
+    
+    # Send confirmation message
+    confirm_msg = await message.reply("Quality Added")
+    
+    series_data = get_series_by_key(series_key)
+    if not series_data:
+        await message.reply("Series not found.")
+        return
+    
+    languages = series_data.get("languages", [])
+    current_lang = next((lang for lang in languages if lang["name"].lower() == language_name.lower()), None)
+    if not current_lang:
+        await message.reply("Language not found.")
+        return
+    
+    seasons = current_lang.get("seasons", [])
+    current_season = next((s for s in seasons if s["name"].lower() == season_name.lower()), None)
+    if not current_season:
+        await message.reply("Season not found.")
+        return
+    
+    qualities = current_season.get("qualities", [])
+    current_layout = current_season.get("quality_layout", [])
+    
+    existing_quality = next((q for q in qualities if q["name"].lower() == quality_name.lower()), None)
+    if existing_quality:
+        await message.reply(f"Quality '{quality_name}' already exists.")
+        return
+    
+    while len(current_layout) <= target_row:
+        current_layout.append(0)
+    
+    insertion_index = sum(current_layout[:target_row]) + current_layout[target_row]
+    
+    new_quality = {"name": quality_name}
+    
+    qualities.insert(insertion_index, new_quality)
+    
+    current_layout[target_row] += 1
+    
+    try:
+        result = series_collection.update_one(
+            {"_id": series_key},
+            {"$set": {"languages": languages}}
+        )
+        if result.modified_count > 0:
+            main_message_id = temp_admin_data[user_id].get("main_message_id")
+            await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+            
+            # Delete confirmation message after a delay
+            asyncio.create_task(DeleteMessage(confirm_msg))
+        else:
+            await message.reply("Failed to add quality. Please try again.")
+    except Exception as e:
+        logger.error(f"Error adding quality: {e}")
+        await message.reply(f"Error adding quality: {e}")
+
+async def process_codec_input(client: Client, message: Message, codec_name: str):
+    user_id = message.from_user.id
+    series_key = temp_admin_data[user_id].get("current_series_key")
+    language_name = temp_admin_data[user_id].get("current_language")
+    season_name = temp_admin_data[user_id].get("current_season")
+    quality_name = temp_admin_data[user_id].get("current_quality")
+    
+    # Delete the prompt message
+    if "ask_message_id" in temp_admin_data[user_id]:
+        try:
+            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+        except Exception:
+            pass
+    
+    # Send confirmation message
+    confirm_msg = await message.reply("Codec Added")
+    
+    series_data = get_series_by_key(series_key)
+    if not series_data:
+        await message.reply("Series not found.")
+        return
+    
+    languages = series_data.get("languages", [])
+    current_lang = next((lang for lang in languages if lang["name"].lower() == language_name.lower()), None)
+    if not current_lang:
+        await message.reply("Language not found.")
+        return
+    
+    seasons = current_lang.get("seasons", [])
+    current_season = next((s for s in seasons if s["name"].lower() == season_name.lower()), None)
+    if not current_season:
+        await message.reply("Season not found.")
+        return
+    
+    qualities = current_season.get("qualities", [])
+    current_quality = next((q for q in qualities if q["name"].lower() == quality_name.lower()), None)
+    if not current_quality:
+        await message.reply("Quality not found.")
+        return
+    
+    codecs = current_quality.get("codecs", [])
+    
+    if codec_name.lower() in [c.lower() for c in codecs]:
+        await message.reply(f"Codec '{codec_name}' already exists.")
+        return
+    
+    codecs.append(codec_name)
+    
+    try:
+        result = series_collection.update_one(
+            {"_id": series_key},
+            {"$set": {"languages": languages}}
+        )
+        if result.modified_count > 0:
+            main_message_id = temp_admin_data[user_id].get("main_message_id")
+            await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+            
+            # Delete confirmation message after a delay
+            asyncio.create_task(DeleteMessage(confirm_msg))
+        else:
+            await message.reply("Failed to add codec. Please try again.")
+    except Exception as e:
+        logger.error(f"Error adding codec: {e}")
+        await message.reply(f"Error adding codec: {e}")
+
+async def process_poster_input(client: Client, message: Message, poster_type: str):
+    user_id = message.from_user.id
+    series_key = temp_admin_data[user_id].get("current_series_key")
+    language_name = temp_admin_data[user_id].get("current_language")
+    season_name = temp_admin_data[user_id].get("current_season")
+    
+    # Download and upload the poster
+    poster_file_id = await download_and_upload_poster(client, message=message, send_to_log_channel=(poster_type == "series"))
+    
+    if not poster_file_id:
+        await message.reply("Failed to process the poster. Please try again.")
+        return
+    
+    # Update the appropriate poster
+    if poster_type == "series":
+        if update_poster_file_id(series_key, poster_file_id):
+            await message.reply("Series poster updated successfully.")
+        else:
+            await message.reply("Failed to update series poster. Please try again.")
+    elif poster_type == "language":
+        if add_or_update_language(series_key, language_name, poster_file_id):
+            await message.reply("Language poster updated successfully.")
+        else:
+            await message.reply("Failed to update language poster. Please try again.")
+    elif poster_type == "season":
+        if add_or_update_season(series_key, language_name, season_name, poster_file_id):
+            await message.reply("Season poster updated successfully.")
+        else:
+            await message.reply("Failed to update season poster. Please try again.")
+    
+    # Return to the appropriate screen
+    main_message_id = temp_admin_data[user_id].get("main_message_id")
+    if poster_type == "series":
+        await send_series_details_message(client, user_id, get_series_by_key(series_key), main_message_id)
+    elif poster_type == "language":
+        await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
+    elif poster_type == "season":
+        await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+
+async def process_first_file_input(client: Client, message: Message):
+    user_id = message.from_user.id
+    # Get the channel_id and message_id from the forwarded message
+    channel_id, msg_id = await get_message_id(client, message)
+    if channel_id == 0 or msg_id == 0:
+        await message.reply("Invalid message. Please forward a message from a channel.")
+        return
+
+    # Store the source channel and first message info
+    temp_admin_data[user_id]["source_channel_id"] = channel_id
+    temp_admin_data[user_id]["source_first_msg_id"] = msg_id
+
+    # Delete the previous prompt if exists
+    if "ask_message_id" in temp_admin_data[user_id]:
+        try:
+            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+        except Exception:
+            pass
+
+    # Ask for the last file
+    ask_msg = await client.send_message(
+        user_id,
+        "Forward me the last file (with tag) for this quality:"
+    )
+    temp_admin_data[user_id]["state"] = "AWAITING_LAST_FILE"
+    temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+
+async def process_last_file_input(client: Client, message: Message):
+    user_id = message.from_user.id
+    # Get the channel_id and message_id from the forwarded message
+    channel_id, msg_id = await get_message_id(client, message)
+    if channel_id == 0 or msg_id == 0:
+        await message.reply("Invalid message. Please forward a message from a channel.")
+        return
+
+    # Get the stored source channel and first message info
+    source_channel_id = temp_admin_data[user_id].get("source_channel_id")
+    source_first_msg_id = temp_admin_data[user_id].get("source_first_msg_id")
+
+    if not source_channel_id or not source_first_msg_id:
+        await message.reply("First file information not found. Please start over.")
+        return
+
+    # Check if the messages are from the same source channel
+    if channel_id != source_channel_id:
+        await message.reply("The first and last files must be from the same channel.")
+        return
+
+    # Get the assigned channel for this admin
+    assigned_channel_id = get_admin_channel(user_id)
+    if not assigned_channel_id:
+        await message.reply("You don't have an assigned channel. Please contact the bot owner.")
+        return
+
+    # Forward the range of messages to the assigned channel without forward tag
+    await message.reply("Forwarding files to assigned channel. Please wait...")
+    new_message_ids = await forward_messages_without_tag(
+        client, source_channel_id, assigned_channel_id, source_first_msg_id, msg_id
+    )
+
+    if not new_message_ids:
+        await message.reply("Failed to forward files. Please try again.")
+        return
+
+    # The new first and last message IDs in the assigned channel
+    new_first_msg_id = new_message_ids[0]
+    new_last_msg_id = new_message_ids[-1]
+
+    # Form the link_key string
+    link_key = f"get_{assigned_channel_id}_{new_first_msg_id}_{new_last_msg_id}"
+
+    # Update the quality with the new link_key
+    series_key = temp_admin_data[user_id].get("current_series_key")
+    language_name = temp_admin_data[user_id].get("current_language")
+    season_name = temp_admin_data[user_id].get("current_season")
+    quality_name = temp_admin_data[user_id].get("current_quality")
+
+    if not all([series_key, language_name, season_name, quality_name]):
+        await message.reply("Session expired. Please start over.")
+        return
+
+    # Update the quality
+    if add_or_update_quality(series_key, language_name, season_name, quality_name, link_key):
+        await message.reply(f"Quality '{quality_name}' updated successfully.")
+        # Go back to the quality management screen
+        main_message_id = temp_admin_data[user_id].get("main_message_id")
+        await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+    else:
+        await message.reply("Failed to update quality. Please try again.")
+
 async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     data = callback_query.data
@@ -906,23 +1289,52 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             
             if 0 <= item_index < len(qualities):
                 quality_name = qualities[item_index]["name"]
-                await callback_query.answer(f"Selected: {quality_name}")
-                temp_admin_data[user_id]["current_quality"] = quality_name
-                temp_admin_data[user_id]["current_quality_index"] = item_index
-                temp_admin_data[user_id]["state"] = "AWAITING_FIRST_FILE"
+                link_key = qualities[item_index].get("link_key")
                 
-                # Delete previous prompt if exists
-                if "ask_message_id" in temp_admin_data[user_id]:
+                if link_key:
+                    # This quality already has files, show options
+                    await callback_query.answer(f"Options for: {quality_name}")
+                    temp_admin_data[user_id]["current_quality"] = quality_name
+                    temp_admin_data[user_id]["current_quality_index"] = item_index
+                    temp_admin_data[user_id]["state"] = "QUALITY_OPTIONS"
+                    
+                    # Show options message
+                    text = f"Quality '{quality_name}' already has files. What would you like to do?"
+                    buttons = [
+                        [InlineKeyboardButton("🔄 Re-Add Files", callback_data="readd_quality")],
+                        [InlineKeyboardButton("🗑️ Delete Quality", callback_data="delete_quality")],
+                        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_quality")]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(buttons)
+                    
                     try:
-                        await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
-                    except Exception:
-                        pass
-                
-                ask_msg = await client.send_message(
-                    user_id,
-                    f"Forward me the first file (with tag) for {language_name}-{season_name}-{quality_name}"
-                )
-                temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+                        await client.edit_message_caption(
+                            chat_id=user_id,
+                            message_id=main_message_id,
+                            caption=text,
+                            reply_markup=reply_markup
+                        )
+                    except Exception as e:
+                        logger.error(f"Error showing quality options: {e}")
+                else:
+                    # No existing files, proceed to add files
+                    await callback_query.answer(f"Selected: {quality_name}")
+                    temp_admin_data[user_id]["current_quality"] = quality_name
+                    temp_admin_data[user_id]["current_quality_index"] = item_index
+                    temp_admin_data[user_id]["state"] = "AWAITING_FIRST_FILE"
+                    
+                    # Delete previous prompt if exists
+                    if "ask_message_id" in temp_admin_data[user_id]:
+                        try:
+                            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+                        except Exception:
+                            pass
+                    
+                    ask_msg = await client.send_message(
+                        user_id,
+                        f"Forward me the first file (with tag) for {language_name}-{season_name}-{quality_name}"
+                    )
+                    temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
             else:
                 await callback_query.answer("Invalid selection.", show_alert=True)
     
@@ -1035,450 +1447,59 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             await send_series_details_message(client, user_id, series_data, main_message_id)
         else:
             await client.send_message(user_id, "Series not found.")
-
-async def process_language_input(client: Client, message: Message, language_name: str):
-    user_id = message.from_user.id
-    series_key = temp_admin_data[user_id].get("current_series_key")
-    target_row = temp_admin_data[user_id].get("target_row")
     
-    # Delete the prompt message
-    if "ask_message_id" in temp_admin_data[user_id]:
-        try:
-            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
-        except Exception:
-            pass
-    
-    # Send confirmation message
-    confirm_msg = await message.reply("Language Added")
-    
-    series_data = get_series_by_key(series_key)
-    if not series_data:
-        await message.reply("Series not found.")
-        return
-    
-    languages = series_data.get("languages", [])
-    current_layout = series_data.get("language_layout", [])
-    
-    existing_language = next((lang for lang in languages if lang["name"].lower() == language_name.lower()), None)
-    if existing_language:
-        await message.reply(f"Language '{language_name}' already exists.")
-        return
-    
-    while len(current_layout) <= target_row:
-        current_layout.append(0)
-    
-    insertion_index = sum(current_layout[:target_row]) + current_layout[target_row]
-    
-    new_language = {"name": language_name, "seasons": [], "season_layout": []}
-    
-    languages.insert(insertion_index, new_language)
-    
-    current_layout[target_row] += 1
-    
-    try:
-        result = series_collection.update_one(
-            {"_id": series_key},
-            {"$set": {"languages": languages, "language_layout": current_layout}}
-        )
-        if result.modified_count > 0:
-            main_message_id = temp_admin_data[user_id].get("main_message_id")
-            await send_language_management_message(client, user_id, series_key, main_message_id)
-            
-            temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
-            temp_admin_data[user_id].pop("target_row", None)
-            
-            # Delete confirmation message after a delay
-            asyncio.create_task(DeleteMessage(confirm_msg))
-        else:
-            await message.reply(f"Failed to add language.")
-    except Exception as e:
-        logger.error(f"Error updating series: {e}")
-        await message.reply(f"Failed to add language.")
-
-async def process_season_input(client: Client, message: Message, season_name: str):
-    user_id = message.from_user.id
-    series_key = temp_admin_data[user_id].get("current_series_key")
-    language_name = temp_admin_data[user_id].get("current_language")
-    target_row = temp_admin_data[user_id].get("target_row")
-    
-    # Delete the prompt message
-    if "ask_message_id" in temp_admin_data[user_id]:
-        try:
-            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
-        except Exception:
-            pass
-    
-    # Send confirmation message
-    confirm_msg = await message.reply("Season Added")
-    
-    series_data = get_series_by_key(series_key)
-    if not series_data:
-        await message.reply("Series not found.")
-        return
-    
-    current_lang = next((lang for lang in series_data.get("languages", []) if lang["name"].lower() == language_name.lower()), None)
-    if not current_lang:
-        await message.reply("Language not found.")
-        return
-    
-    seasons = current_lang.get("seasons", [])
-    current_layout = current_lang.get("season_layout", [])
-    
-    existing_season = next((s for s in seasons if s["name"].lower() == season_name.lower()), None)
-    if existing_season:
-        await message.reply(f"Season '{season_name}' already exists in {language_name}.")
-        return
-    
-    while len(current_layout) <= target_row:
-        current_layout.append(0)
-    
-    insertion_index = sum(current_layout[:target_row]) + current_layout[target_row]
-    
-    new_season = {"name": season_name, "qualities": [], "quality_layout": []}
-    
-    seasons.insert(insertion_index, new_season)
-    
-    current_layout[target_row] += 1
-    
-    try:
-        result = series_collection.update_one(
-            {"_id": series_key, "languages.name": language_name},
-            {"$set": {
-                "languages.$.seasons": seasons,
-                "languages.$.season_layout": current_layout
-            }}
-        )
-        if result.modified_count > 0:
-            main_message_id = temp_admin_data[user_id].get("main_message_id")
-            await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
-            
-            temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
-            temp_admin_data[user_id].pop("target_row", None)
-            
-            # Delete confirmation message after a delay
-            asyncio.create_task(DeleteMessage(confirm_msg))
-        else:
-            await message.reply(f"Failed to add season.")
-    except Exception as e:
-        logger.error(f"Error updating series: {e}")
-        await message.reply(f"Failed to add season.")
-
-async def process_quality_input(client: Client, message: Message, quality_name: str):
-    user_id = message.from_user.id
-    series_key = temp_admin_data[user_id].get("current_series_key")
-    language_name = temp_admin_data[user_id].get("current_language")
-    season_name = temp_admin_data[user_id].get("current_season")
-    target_row = temp_admin_data[user_id].get("target_row")
-    
-    # Delete the prompt message
-    if "ask_message_id" in temp_admin_data[user_id]:
-        try:
-            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
-        except Exception:
-            pass
-    
-    # Send confirmation message
-    confirm_msg = await message.reply("Quality Added")
-    
-    series_data = get_series_by_key(series_key)
-    if not series_data:
-        await message.reply("Series not found.")
-        return
-    
-    current_lang = next((lang for lang in series_data.get("languages", []) if lang["name"].lower() == language_name.lower()), None)
-    if not current_lang:
-        await message.reply("Language not found.")
-        return
-    
-    current_season = next((s for s in current_lang.get("seasons", []) if s["name"].lower() == season_name.lower()), None)
-    if not current_season:
-        await message.reply("Season not found.")
-        return
-    
-    qualities = current_season.get("qualities", [])
-    current_layout = current_season.get("quality_layout", [])
-    
-    existing_quality = next((q for q in qualities if q["name"].lower() == quality_name.lower()), None)
-    if existing_quality:
-        await message.reply(f"Quality '{quality_name}' already exists in {language_name}-{season_name}.")
-        return
-    
-    while len(current_layout) <= target_row:
-        current_layout.append(0)
-    
-    insertion_index = sum(current_layout[:target_row]) + current_layout[target_row]
-    
-    new_quality = {"name": quality_name}
-    
-    qualities.insert(insertion_index, new_quality)
-    
-    current_layout[target_row] += 1
-    
-    try:
-        result = series_collection.update_one(
-            {"_id": series_key, "languages.name": language_name, "languages.seasons.name": season_name},
-            {"$set": {
-                "languages.$.seasons.$[season].qualities": qualities,
-                "languages.$.seasons.$[season].quality_layout": current_layout
-            }},
-            array_filters=[{"season.name": season_name}]
-        )
-        if result.modified_count > 0:
-            main_message_id = temp_admin_data[user_id].get("main_message_id")
-            await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
-            
-            temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
-            temp_admin_data[user_id].pop("target_row", None)
-            
-            # Delete confirmation message after a delay
-            asyncio.create_task(DeleteMessage(confirm_msg))
-        else:
-            await message.reply(f"Failed to add quality.")
-    except Exception as e:
-        logger.error(f"Error updating series: {e}")
-        await message.reply(f"Failed to add quality.")
-
-async def process_poster_input(client: Client, message: Message, poster_type: str):
-    user_id = message.from_user.id
-    series_key = temp_admin_data[user_id].get("current_series_key")
-    
-    # For admin posters, don't send to LOG_CHANNEL
-    poster_file_id = await download_and_upload_poster(client, message=message, send_to_log_channel=False)
-    if not poster_file_id:
-        await message.reply("Failed to process the poster. Please try again.")
-        return
-    
-    if poster_type == "series":
-        update_series_field(series_key, "poster_file_id", poster_file_id)
-        series_data = get_series_by_key(series_key)
-        await send_series_details_message(client, user_id, series_data, temp_admin_data[user_id].get("main_message_id"))
-    elif poster_type == "language":
-        language_name = temp_admin_data[user_id].get("current_language")
-        add_or_update_language(series_key, language_name, poster_file_id)
-        await send_season_management_message(client, user_id, series_key, language_name, temp_admin_data[user_id].get("main_message_id"))
-    elif poster_type == "season":
+    # Quality options handlers
+    elif data == "readd_quality":
+        # Re-add files for the quality
+        series_key = temp_admin_data[user_id].get("current_series_key")
         language_name = temp_admin_data[user_id].get("current_language")
         season_name = temp_admin_data[user_id].get("current_season")
-        add_or_update_season(series_key, language_name, season_name, poster_file_id)
-        await send_quality_management_message(client, user_id, series_key, language_name, season_name, temp_admin_data[user_id].get("main_message_id"))
-    
-    temp_admin_data[user_id]["state"] = "SERIES_DETAILS"
-
-async def process_first_file_input(client: Client, message: Message):
-    user_id = message.from_user.id
-    series_key = temp_admin_data[user_id].get("current_series_key")
-    language_name = temp_admin_data[user_id].get("current_language")
-    season_name = temp_admin_data[user_id].get("current_season")
-    quality_name = temp_admin_data[user_id].get("current_quality")
-    
-    # Get the admin's assigned channel
-    assigned_channel = get_admin_channel(user_id)
-    if not assigned_channel:
-        await message.reply("You don't have an assigned channel. Please contact the bot owner.")
-        return
-    
-    channel_id, msg_id = await get_message_id(client, message)
-    if not channel_id or not msg_id:
-        await message.reply("Invalid message format. Please forward a message from a channel.")
-        return
-    
-    # Check if the channel is in the global DB_CHANNEL or RAW_DB_CHANNEL
-    if channel_id in DB_CHANNEL or (str(channel_id).lstrip('-100') in [str(ch) for ch in RAW_DB_CHANNEL]):
-        await message.reply("This file is from a global channel. Please forward from a different channel.")
-        return
-    
-    # Check if the bot is admin in the channel
-    try:
-        bot_info = await client.get_chat_member(channel_id, "me")
-        if bot_info.status not in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]:
-            await message.reply("Bot is not admin in this channel. Please add the bot as admin first.")
-            return
-    except UserNotParticipant:
-        await message.reply("Bot is not a member of this channel. Please add the bot first.")
-        return
-    except Exception as e:
-        logger.error(f"Error checking bot status in channel {channel_id}: {e}")
-        await message.reply("Error checking bot status in the channel.")
-        return
-    
-    # Store the first file info
-    temp_admin_data[user_id]["first_file"] = {
-        "channel_id": channel_id,
-        "message_id": msg_id
-    }
-    temp_admin_data[user_id]["state"] = "AWAITING_LAST_FILE"
-    
-    # Delete the prompt message
-    if "ask_message_id" in temp_admin_data[user_id]:
-        try:
-            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
-        except Exception:
-            pass
-    
-    ask_msg = await message.reply(f"Now forward me the last file (with tag) for {language_name}-{season_name}-{quality_name}")
-    temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
-
-async def process_last_file_input(client: Client, message: Message):
-    user_id = message.from_user.id
-    series_key = temp_admin_data[user_id].get("current_series_key")
-    language_name = temp_admin_data[user_id].get("current_language")
-    season_name = temp_admin_data[user_id].get("current_season")
-    quality_name = temp_admin_data[user_id].get("current_quality")
-    
-    # Get the admin's assigned channel
-    assigned_channel = get_admin_channel(user_id)
-    if not assigned_channel:
-        await message.reply("You don't have an assigned channel. Please contact the bot owner.")
-        return
-    
-    channel_id, msg_id = await get_message_id(client, message)
-    if not channel_id or not msg_id:
-        await message.reply("Invalid message format. Please forward a message from a channel.")
-        return
-    
-    # Check if the channel is in the global DB_CHANNEL or RAW_DB_CHANNEL
-    if channel_id in DB_CHANNEL or (str(channel_id).lstrip('-100') in [str(ch) for ch in RAW_DB_CHANNEL]):
-        await message.reply("This file is from a global channel. Please forward from a different channel.")
-        return
-    
-    # Check if the bot is admin in the channel
-    try:
-        bot_info = await client.get_chat_member(channel_id, "me")
-        if bot_info.status not in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]:
-            await message.reply("Bot is not admin in this channel. Please add the bot as admin first.")
-            return
-    except UserNotParticipant:
-        await message.reply("Bot is not a member of this channel. Please add the bot first.")
-        return
-    except Exception as e:
-        logger.error(f"Error checking bot status in channel {channel_id}: {e}")
-        await message.reply("Error checking bot status in the channel.")
-        return
-    
-    first_file = temp_admin_data[user_id].get("first_file")
-    if not first_file:
-        await message.reply("First file not found. Please start over.")
-        return
-    
-    first_msg_id = first_file["message_id"]
-    last_msg_id = msg_id
-    
-    if first_msg_id > last_msg_id:
-        first_msg_id, last_msg_id = last_msg_id, first_msg_id
-    
-    # Get the messages from the source channel
-    messages = await get_messages(client, channel_id, range(first_msg_id, last_msg_id + 1))
-    if not messages:
-        await message.reply("No messages found in the specified range.")
-        return
-    
-    # Get series data for the header
-    series_data = get_series_by_key(series_key)
-    if not series_data:
-        await message.reply("Series not found.")
-        return
-    
-    # Send header message to assigned channel
-    header_text = f"{series_data.get('title', 'N/A')} - {language_name} - {season_name} - {quality_name}"
-    try:
-        header_msg = await client.send_message(assigned_channel, header_text)
-    except Exception as e:
-        logger.error(f"Error sending header to assigned channel: {e}")
-        await message.reply("Error sending header to assigned channel.")
-        return
-    
-    # Forward files to assigned channel and collect message IDs
-    assigned_msg_ids = []
-    for msg in messages:
-        if msg.media:
+        quality_name = temp_admin_data[user_id].get("current_quality")
+        
+        await callback_query.answer("Re-adding files...")
+        
+        # Set state to await first file
+        temp_admin_data[user_id]["state"] = "AWAITING_FIRST_FILE"
+        
+        # Delete previous prompt if exists
+        if "ask_message_id" in temp_admin_data[user_id]:
             try:
-                forwarded = await client.forward_messages(
-                    chat_id=assigned_channel,
-                    from_chat_id=channel_id,
-                    message_ids=msg.id
-                )
-                assigned_msg_ids.append(forwarded.id)
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                logger.error(f"Error forwarding message {msg.id}: {e}")
-    
-    if not assigned_msg_ids:
-        await message.reply("Failed to forward files to assigned channel.")
-        return
-    
-    # Generate reference string
-    first_assigned_msg_id = assigned_msg_ids[0]
-    last_assigned_msg_id = assigned_msg_ids[-1]
-    assigned_channel_id_without_prefix = str(assigned_channel).lstrip('-100')
-    reference_string = f"get_{assigned_channel_id_without_prefix}_{first_assigned_msg_id}_{last_assigned_msg_id}"
-    # Update the quality with the reference string
-    if add_or_update_quality(series_key, language_name, season_name, quality_name, reference_string):
-        await message.reply("Saved Successfully.")
-    else:
-        await message.reply("Failed to save reference.")
-    
-    # Delete the prompt message
-    if "ask_message_id" in temp_admin_data[user_id]:
-        try:
-            await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
-        except Exception:
-            pass
-    
-    temp_admin_data[user_id].pop("first_file", None)
-    temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
-    
-    main_message_id = temp_admin_data[user_id].get("main_message_id")
-    await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
-
-async def process_codec_input(client: Client, message: Message, codec_name: str):
-    user_id = message.from_user.id
-    series_key = temp_admin_data[user_id].get("current_series_key")
-    language_name = temp_admin_data[user_id].get("current_language")
-    season_name = temp_admin_data[user_id].get("current_season")
-    quality_name = temp_admin_data[user_id].get("current_quality")
-    
-    await message.reply("Codec Updated", reply_markup=ReplyKeyboardRemove())
-    
-    series_data = get_series_by_key(series_key)
-    if not series_data:
-        await message.reply("Series not found.")
-        return
-    
-    current_lang = next((lang for lang in series_data.get("languages", []) if lang["name"].lower() == language_name.lower()), None)
-    if not current_lang:
-        await message.reply("Language not found.")
-        return
-    
-    current_season = next((s for s in current_lang.get("seasons", []) if s["name"].lower() == season_name.lower()), None)
-    if not current_season:
-        await message.reply("Season not found.")
-        return
-    
-    current_quality = next((q for q in current_season.get("qualities", []) if q["name"].lower() == quality_name.lower()), None)
-    if not current_quality:
-        await message.reply("Quality not found.")
-        return
-    
-    current_quality["codec"] = codec_name
-    
-    try:
-        result = series_collection.update_one(
-            {"_id": series_key, "languages.name": language_name, "languages.seasons.name": season_name},
-            {"$set": {
-                "languages.$.seasons.$[season].qualities.$[quality].codec": codec_name
-            }},
-            array_filters=[
-                {"season.name": season_name},
-                {"quality.name": quality_name}
-            ]
+                await client.delete_messages(user_id, temp_admin_data[user_id]["ask_message_id"])
+            except Exception:
+                pass
+        
+        ask_msg = await client.send_message(
+            user_id,
+            f"Forward me the first file (with tag) for {language_name}-{season_name}-{quality_name}"
         )
-        if result.modified_count > 0:
+        temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
+        
+    elif data == "delete_quality":
+        # Delete the quality (remove the link_key)
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        language_name = temp_admin_data[user_id].get("current_language")
+        season_name = temp_admin_data[user_id].get("current_season")
+        quality_name = temp_admin_data[user_id].get("current_quality")
+        
+        await callback_query.answer("Deleting quality...")
+        
+        # Remove the link_key from the quality
+        if add_or_update_quality(series_key, language_name, season_name, quality_name, None):
+            await client.send_message(user_id, f"Quality '{quality_name}' files removed.")
+            # Go back to the quality management screen
             main_message_id = temp_admin_data[user_id].get("main_message_id")
             await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
-            
-            temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
         else:
-            await message.reply(f"Failed to update codec.")
-    except Exception as e:
-        logger.error(f"Error updating series: {e}")
-        await message.reply(f"Failed to update codec.")
+            await client.send_message(user_id, "Failed to remove quality files. Please try again.")
+        
+    elif data == "cancel_quality":
+        # Cancel and go back to quality management
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        language_name = temp_admin_data[user_id].get("current_language")
+        season_name = temp_admin_data[user_id].get("current_season")
+        
+        await callback_query.answer("Cancelled.")
+        
+        # Go back to the quality management screen
+        main_message_id = temp_admin_data[user_id].get("main_message_id")
+        await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
