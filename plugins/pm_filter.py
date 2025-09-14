@@ -91,6 +91,8 @@ async def series_filter(client, message):
             ]
             buttons_chunked = chunk_buttons(buttons, chunk_size=2)
             reply_markup = InlineKeyboardMarkup(buttons_chunked)
+            buttons_chunked.append([InlineKeyboardButton("Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
+            reply_markup = InlineKeyboardMarkup(buttons_chunked)
             etho = await message.reply_photo(photo=random.choice(SPELL), caption="<b>Choose Your Series:</b>", reply_markup=reply_markup)
             asyncio.create_task(DeleteMessage(etho))
             return
@@ -114,6 +116,8 @@ async def series_filter(client, message):
         poster_url = get_movie_poster(series_key)
         buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}·{lang.lower().replace(' ', '')}·{user_id}") for lang in languages]
         buttons_chunked = chunk_buttons(buttons, chunk_size=2)
+        reply_markup = InlineKeyboardMarkup(buttons_chunked)
+        buttons_chunked.append([InlineKeyboardButton("Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
         reply_markup = InlineKeyboardMarkup(buttons_chunked)
         try:
             if poster_url:
@@ -170,6 +174,8 @@ async def cb_handler(client, query: CallbackQuery):
             buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}·{lang.lower().replace(' ', '')}·{user_id}") for lang in languages]
             buttons_chunked = chunk_buttons(buttons, chunk_size=2)
             reply_markup = InlineKeyboardMarkup(buttons_chunked)
+            buttons_chunked.append([InlineKeyboardButton("Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
+            reply_markup = InlineKeyboardMarkup(buttons_chunked)
             try:
                 if poster_url:
                     await query.message.edit_media(media=InputMediaPhoto(poster_url), reply_markup=reply_markup)
@@ -202,6 +208,8 @@ async def cb_handler(client, query: CallbackQuery):
                 buttons_chunked = chunk_buttons(buttons)
                 buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"spellcheck-{series_key}-{user_id}")])
                 reply_markup = InlineKeyboardMarkup(buttons_chunked)
+                buttons_chunked.append([InlineKeyboardButton("Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
+                reply_markup = InlineKeyboardMarkup(buttons_chunked)
                 await query.message.edit_text(
                     text=reply_text,
                     reply_markup=reply_markup
@@ -222,6 +230,8 @@ async def cb_handler(client, query: CallbackQuery):
                 buttons_chunked = chunk_buttons(buttons, chunk_size=2)
                 if buttons_chunked:
                     buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"{series_key}·{language}·{user_id}")])
+                    reply_markup = InlineKeyboardMarkup(buttons_chunked)
+                    buttons_chunked.append([InlineKeyboardButton("Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
                     reply_markup = InlineKeyboardMarkup(buttons_chunked)
                     await query.message.edit_text(
                         text=(
