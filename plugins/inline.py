@@ -49,7 +49,7 @@ async def inline_query_handler(client, inline_query):
     for series in matching_series:
         series_key = series['key']
         title = series['title']
-        year = series['released_on'][:4] # Assuming 'released_on' is in 'YYYY-MM-DD' format
+        year = str(series['released_on']) # Assuming 'released_on' is in 'YYYY-MM-DD' format
         released_on = str(series.get('released_on', 'Unknown'))  # Fallback to 'Unknown' if key is missing
         # Get the IMDb poster or use the placeholder image
         poster_url = get_movie_poster(series_key)
@@ -69,4 +69,5 @@ async def inline_query_handler(client, inline_query):
         results.append(result)
 
     await inline_query.answer(results, cache_time=cache_time, is_personal=True)
+
                                 
