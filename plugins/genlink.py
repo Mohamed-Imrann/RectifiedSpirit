@@ -7,7 +7,7 @@ from pymongo import MongoClient
 from pyrogram.errors.exceptions.bad_request_400 import ChannelInvalid, UsernameInvalid, UsernameNotModified
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from info import ADMINS, AUTH_CHANNEL, DB_CHANNEL, DATABASE_URI
-from database.ia_filterdb import unpack_new_file_id
+₹from database.ia_filterdb import unpack_new_file_id
 from utils import temp, get_message_id
 import re
 import os
