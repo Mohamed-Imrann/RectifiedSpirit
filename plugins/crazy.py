@@ -648,6 +648,11 @@ async def admin_ui_callback_handler(client: Client, callback_query: CallbackQuer
     data = callback_query.data
     logger.info(f"Received admin UI callback from user {user_id}: {data}")
 
+    try:
+        await callback_query.answer()
+    except Exception as e:
+        logger.warning(f"Failed to acknowledge callback: {e}")
+
     await newui_callback_handler(client, callback_query)
 
 async def handle_admin_text_input(client: Client, message: Message):
@@ -1070,7 +1075,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
     
     if user_id not in temp_admin_data:
         logger.warning(f"Admin {user_id} not in temp_admin_data")
-        await callback_query.answer("Session expired. Please start again with /newseriesui.", show_alert=True)
+        try:
+            await callback_query.answer("Session expired. Please start again with /newseriesui.", show_alert=True)
+        except:
+            pass
         return
     
     main_message_id = temp_admin_data[user_id].get("main_message_id")
@@ -1079,7 +1087,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         unique_id = data.split("_", 1)[1]
         if unique_id not in temp_admin_data[user_id]:
             logger.warning(f"Invalid selection from admin {user_id}: {unique_id}")
-            await callback_query.answer("Invalid selection.", show_alert=True)
+            try:
+                await callback_query.answer("Invalid selection.", show_alert=True)
+            except:
+                pass
             return
         
         stored_data = temp_admin_data[user_id].pop(unique_id)
@@ -1088,7 +1099,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         source = stored_data['source']
         query = stored_data['query']
         
-        await callback_query.answer(f"Fetching details from {source.upper()}...")
+        try:
+            await callback_query.answer(f"Fetching details from {source.upper()}...")
+        except:
+            pass
         
         movie_details = None
         if source == 'tmdb':
@@ -1097,11 +1111,14 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             movie_details = await get_poster(media_id, id=True)
         
         if not movie_details:
-            await client.edit_message_caption(
-                chat_id=user_id,
-                message_id=main_message_id,
-                caption=f"Failed to retrieve {source.upper()} data. Please try again."
-            )
+            try:
+                await client.edit_message_caption(
+                    chat_id=user_id,
+                    message_id=main_message_id,
+                    caption=f"Failed to retrieve {source.upper()} data. Please try again."
+                )
+            except Exception as e:
+                logger.error(f"Failed to edit message: {e}")
             return
         
         series_key = movie_details.get('title', 'N/A').lower().replace(" ", "").replace("-", "")
@@ -1109,7 +1126,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         existing_series = get_series_by_key(series_key)
         if existing_series:
             series_data = existing_series
-            await callback_query.answer("Series already exists. Loading for editing.", show_alert=True)
+            try:
+                await callback_query.answer("Series already exists. Loading for editing.", show_alert=True)
+            except:
+                pass
         else:
             # Download and upload poster to LOG_CHANNEL with #MainPoster caption
             poster_file_id = None
@@ -1137,23 +1157,32 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
                 'published': False
             }
             if not add_series(series_data):
-                await callback_query.answer("Failed to add new series (might already exist). Loading existing series.", show_alert=True)
+                try:
+                    await callback_query.answer("Failed to add new series (might already exist). Loading existing series.", show_alert=True)
+                except:
+                    pass
                 series_data = get_series_by_key(series_key)
                 if not series_data:
-                    await client.edit_message_caption(
-                        chat_id=user_id,
-                        message_id=main_message_id,
-                        caption="Failed to create or load series. Please try again."
-                    )
+                    try:
+                        await client.edit_message_caption(
+                            chat_id=user_id,
+                            message_id=main_message_id,
+                            caption="Failed to create or load series. Please try again."
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to edit message: {e}")
                     return
         
         series_data = get_series_by_key(series_key)
         if not series_data:
-            await client.edit_message_caption(
-                chat_id=user_id,
-                message_id=main_message_id,
-                caption="Failed to retrieve series data after initial setup. Please try again."
-            )
+            try:
+                await client.edit_message_caption(
+                    chat_id=user_id,
+                    message_id=main_message_id,
+                    caption="Failed to retrieve series data after initial setup. Please try again."
+                )
+            except Exception as e:
+                logger.error(f"Failed to edit message: {e}")
             return
         
         temp_admin_data[user_id]["current_series_key"] = series_key
@@ -1162,12 +1191,18 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         await send_series_details_message(client, user_id, series_data, main_message_id)
     
     elif data == "search_again":
-        await callback_query.answer("Search again...")
+        try:
+            await callback_query.answer("Search again...")
+        except:
+            pass
         query = temp_admin_data[user_id].get("query")
         search_results = temp_admin_data[user_id].get("search_results", [])
         
         if not query or not search_results:
-            await callback_query.answer("No previous search data found.", show_alert=True)
+            try:
+                await callback_query.answer("No previous search data found.", show_alert=True)
+            except:
+                pass
             return
         
         temp_admin_data[user_id]["state"] = "SEARCH_RESULTS"
@@ -1177,16 +1212,25 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         series_key = temp_admin_data[user_id].get("current_series_key")
         series_data = get_series_by_key(series_key)
         if not series_data:
-            await callback_query.answer("Series not found.", show_alert=True)
+            try:
+                await callback_query.answer("Series not found.", show_alert=True)
+            except:
+                pass
             return
         
-        await callback_query.answer("Going back to series details...")
+        try:
+            await callback_query.answer("Going back to series details...")
+        except:
+            pass
         temp_admin_data[user_id]["state"] = "SERIES_DETAILS"
         await send_series_details_message(client, user_id, series_data, main_message_id)
     
     elif data == "manage_languages":
         series_key = temp_admin_data[user_id].get("current_series_key")
-        await callback_query.answer("Managing languages...")
+        try:
+            await callback_query.answer("Managing languages...")
+        except:
+            pass
         temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
         await send_language_management_message(client, user_id, series_key, main_message_id)
     
@@ -1195,7 +1239,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         current_state = temp_admin_data[user_id].get("state")
         
         if current_state == "MANAGE_LANGUAGES":
-            await callback_query.answer(f"Adding language to row {row_index + 1}...")
+            try:
+                await callback_query.answer(f"Adding language to row {row_index + 1}...")
+            except:
+                pass
             temp_admin_data[user_id]["target_row"] = row_index
             
             # Delete previous prompt if exists
@@ -1213,7 +1260,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
             
         elif current_state == "MANAGE_SEASONS":
-            await callback_query.answer(f"Adding season to row {row_index + 1}...")
+            try:
+                await callback_query.answer(f"Adding season to row {row_index + 1}...")
+            except:
+                pass
             temp_admin_data[user_id]["target_row"] = row_index
             
             # Delete previous prompt if exists
@@ -1231,7 +1281,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
             
         elif current_state == "MANAGE_QUALITIES":
-            await callback_query.answer(f"Adding quality to row {row_index + 1}...")
+            try:
+                await callback_query.answer(f"Adding quality to row {row_index + 1}...")
+            except:
+                pass
             temp_admin_data[user_id]["target_row"] = row_index
             
             # Delete previous prompt if exists
@@ -1258,13 +1311,19 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             
             if 0 <= item_index < len(languages):
                 language_name = languages[item_index]["name"]
-                await callback_query.answer(f"Selected: {language_name}")
+                try:
+                    await callback_query.answer(f"Selected: {language_name}")
+                except:
+                    pass
                 temp_admin_data[user_id]["current_language"] = language_name
                 temp_admin_data[user_id]["current_language_index"] = item_index
                 temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
                 await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
             else:
-                await callback_query.answer("Invalid selection.", show_alert=True)
+                try:
+                    await callback_query.answer("Invalid selection.", show_alert=True)
+                except:
+                    pass
                 
         elif current_state == "MANAGE_SEASONS":
             series_key = temp_admin_data[user_id].get("current_series_key")
@@ -1273,13 +1332,19 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
             
             if 0 <= item_index < len(seasons):
                 season_name = seasons[item_index]["name"]
-                await callback_query.answer(f"Selected: {season_name}")
+                try:
+                    await callback_query.answer(f"Selected: {season_name}")
+                except:
+                    pass
                 temp_admin_data[user_id]["current_season"] = season_name
                 temp_admin_data[user_id]["current_season_index"] = item_index
                 temp_admin_data[user_id]["state"] = "MANAGE_QUALITIES"
                 await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
             else:
-                await callback_query.answer("Invalid selection.", show_alert=True)
+                try:
+                    await callback_query.answer("Invalid selection.", show_alert=True)
+                except:
+                    pass
                 
         elif current_state == "MANAGE_QUALITIES":
             series_key = temp_admin_data[user_id].get("current_series_key")
@@ -1293,7 +1358,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
                 
                 if link_key:
                     # This quality already has files, show options
-                    await callback_query.answer(f"Options for: {quality_name}")
+                    try:
+                        await callback_query.answer(f"Options for: {quality_name}")
+                    except:
+                        pass
                     temp_admin_data[user_id]["current_quality"] = quality_name
                     temp_admin_data[user_id]["current_quality_index"] = item_index
                     temp_admin_data[user_id]["state"] = "QUALITY_OPTIONS"
@@ -1318,7 +1386,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
                         logger.error(f"Error showing quality options: {e}")
                 else:
                     # No existing files, proceed to add files
-                    await callback_query.answer(f"Selected: {quality_name}")
+                    try:
+                        await callback_query.answer(f"Selected: {quality_name}")
+                    except:
+                        pass
                     temp_admin_data[user_id]["current_quality"] = quality_name
                     temp_admin_data[user_id]["current_quality_index"] = item_index
                     temp_admin_data[user_id]["state"] = "AWAITING_FIRST_FILE"
@@ -1336,34 +1407,52 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
                     )
                     temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
             else:
-                await callback_query.answer("Invalid selection.", show_alert=True)
+                try:
+                    await callback_query.answer("Invalid selection.", show_alert=True)
+                except:
+                    pass
     
     elif data == "back_to_languages":
         series_key = temp_admin_data[user_id].get("current_series_key")
-        await callback_query.answer("Going back to languages...")
+        try:
+            await callback_query.answer("Going back to languages...")
+        except:
+            pass
         temp_admin_data[user_id]["state"] = "MANAGE_LANGUAGES"
         await send_language_management_message(client, user_id, series_key, main_message_id)
     
     elif data == "back_to_seasons":
         series_key = temp_admin_data[user_id].get("current_series_key")
         language_name = temp_admin_data[user_id].get("current_language")
-        await callback_query.answer("Going back to seasons...")
+        try:
+            await callback_query.answer("Going back to seasons...")
+        except:
+            pass
         temp_admin_data[user_id]["state"] = "MANAGE_SEASONS"
         await send_season_management_message(client, user_id, series_key, language_name, main_message_id)
     
     elif data == "change_poster":
-        await callback_query.answer("Send a new poster...")
+        try:
+            await callback_query.answer("Send a new poster...")
+        except:
+            pass
         temp_admin_data[user_id]["state"] = "AWAITING_SERIES_POSTER"
         await client.send_message(user_id, "Please send a photo or video to use as the series poster:")
     
     elif data == "change_lang_poster":
-        await callback_query.answer("Send a new poster...")
+        try:
+            await callback_query.answer("Send a new poster...")
+        except:
+            pass
         temp_admin_data[user_id]["state"] = "AWAITING_LANGUAGE_POSTER"
         language_name = temp_admin_data[user_id].get("current_language")
         await client.send_message(user_id, f"Please send a photo or video to use as the poster for {language_name}:")
     
     elif data == "change_season_poster":
-        await callback_query.answer("Send a new poster...")
+        try:
+            await callback_query.answer("Send a new poster...")
+        except:
+            pass
         temp_admin_data[user_id]["state"] = "AWAITING_SEASON_POSTER"
         language_name = temp_admin_data[user_id].get("current_language")
         season_name = temp_admin_data[user_id].get("current_season")
@@ -1372,7 +1461,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
     elif data == "delete_language":
         series_key = temp_admin_data[user_id].get("current_series_key")
         language_name = temp_admin_data[user_id].get("current_language")
-        await callback_query.answer(f"Deleting {language_name}...")
+        try:
+            await callback_query.answer(f"Deleting {language_name}...")
+        except:
+            pass
         
         if delete_language(series_key, language_name):
             await client.send_message(user_id, f"Language '{language_name}' deleted successfully.")
@@ -1384,7 +1476,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         series_key = temp_admin_data[user_id].get("current_series_key")
         language_name = temp_admin_data[user_id].get("current_language")
         season_name = temp_admin_data[user_id].get("current_season")
-        await callback_query.answer(f"Deleting {season_name}...")
+        try:
+            await callback_query.answer(f"Deleting {season_name}...")
+        except:
+            pass
         
         if delete_season(series_key, language_name, season_name):
             await client.send_message(user_id, f"Season '{season_name}' deleted successfully.")
@@ -1394,7 +1489,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
     
     elif data == "publish_series":
         series_key = temp_admin_data[user_id].get("current_series_key")
-        await callback_query.answer("Publishing series...")
+        try:
+            await callback_query.answer("Publishing series...")
+        except:
+            pass
         
         text = (
             "Do you want to publish this series?\n\n"
@@ -1422,25 +1520,37 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
     
     elif data == "confirm_publish":
         series_key = temp_admin_data[user_id].get("current_series_key")
-        await callback_query.answer("Publishing...")
+        try:
+            await callback_query.answer("Publishing...")
+        except:
+            pass
         
         if publish_series(series_key):
-            await client.edit_message_caption(
-                chat_id=user_id,
-                message_id=main_message_id,
-                caption="✅ Published Successfully"
-            )
+            try:
+                await client.edit_message_caption(
+                    chat_id=user_id,
+                    message_id=main_message_id,
+                    caption="✅ Published Successfully"
+                )
+            except Exception as e:
+                logger.error(f"Failed to edit message: {e}")
             temp_admin_data[user_id]["state"] = "PUBLISHED"
         else:
-            await client.edit_message_caption(
-                chat_id=user_id,
-                message_id=main_message_id,
-                caption="❌ Failed to publish series. Please try again."
-            )
+            try:
+                await client.edit_message_caption(
+                    chat_id=user_id,
+                    message_id=main_message_id,
+                    caption="❌ Failed to publish series. Please try again."
+                )
+            except Exception as e:
+                logger.error(f"Failed to edit message: {e}")
     
     elif data == "cancel_publish":
         series_key = temp_admin_data[user_id].get("current_series_key")
-        await callback_query.answer("Cancelling publish...")
+        try:
+            await callback_query.answer("Cancelling publish...")
+        except:
+            pass
         
         series_data = get_series_by_key(series_key)
         if series_data:
@@ -1456,7 +1566,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         season_name = temp_admin_data[user_id].get("current_season")
         quality_name = temp_admin_data[user_id].get("current_quality")
         
-        await callback_query.answer("Re-adding files...")
+        try:
+            await callback_query.answer("Re-adding files...")
+        except:
+            pass
         
         # Set state to await first file
         temp_admin_data[user_id]["state"] = "AWAITING_FIRST_FILE"
@@ -1481,7 +1594,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         season_name = temp_admin_data[user_id].get("current_season")
         quality_name = temp_admin_data[user_id].get("current_quality")
         
-        await callback_query.answer("Deleting quality...")
+        try:
+            await callback_query.answer("Deleting quality...")
+        except:
+            pass
         
         # Remove the link_key from the quality
         if add_or_update_quality(series_key, language_name, season_name, quality_name, None):
@@ -1498,7 +1614,10 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         language_name = temp_admin_data[user_id].get("current_language")
         season_name = temp_admin_data[user_id].get("current_season")
         
-        await callback_query.answer("Cancelled.")
+        try:
+            await callback_query.answer("Cancelled.")
+        except:
+            pass
         
         # Go back to the quality management screen
         main_message_id = temp_admin_data[user_id].get("main_message_id")
