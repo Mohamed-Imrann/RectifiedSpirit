@@ -839,7 +839,7 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                 await query.answer("Invalid selection.", show_alert=True)
             except:
                 pass
-answer("An error occurred. Please try again.", show_alert=True)
+                await query.answer("An error occurred. Please try again.", show_alert=True)
                 except:
                     pass
         else:
