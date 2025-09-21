@@ -1047,7 +1047,14 @@ async def process_last_file_input(client: Client, message: Message):
     new_last_msg_id = new_message_ids[-1]
 
     # Form the link_key string
-    link_key = f"get_{assigned_channel_id}_{new_first_msg_id}_{new_last_msg_id}"
+    channel_id_str = str(assigned_channel_id)
+    if channel_id_str.startswith("-100"):
+        clean_channel_id = channel_id_str[4:]  # Remove -100 prefix
+    else:
+        clean_channel_id = channel_id_str[4:]
+
+    # Form the link_key string without -100 prefix
+    link_key = f"get_{clean_channel_id}_{new_first_msg_id}_{new_last_msg_id}"
 
     # Update the quality with the new link_key
     series_key = temp_admin_data[user_id].get("current_series_key")
