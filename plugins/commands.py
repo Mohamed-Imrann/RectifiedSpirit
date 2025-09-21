@@ -104,7 +104,14 @@ async def start_command(client, message):
                 return
 
             try:
-                messages = await get_messages(client, f"-100{channel_id}", ids)
+                messages = await asyncio.wait_for(
+                    get_messages(client, f"-100{channel_id}", ids),
+                    timeout=30.0
+                )
+            except asyncio.TimeoutError:
+                logger.error("Timeout while fetching messages")
+                await temp_msg.edit("Request timeout. Please try again.")
+                return
             except Exception as e:
                 logger.error(f"Error fetching messages: {e}")
                 await temp_msg.edit(f"Error while fetching messages")
@@ -139,6 +146,7 @@ async def start_command(client, message):
                         track_msgs.append(copied_msg)
                 except Exception as e:
                     logger.error(f"Error copying message: {e}")
+                    continue
 
             if track_msgs:
                 delete_data = await client.send_message(
@@ -182,6 +190,7 @@ async def start_command(client, message):
                         track_msgs.append(sent_msg)
                 except Exception as e:
                     logger.error(f"Error sending cached media: {e}")
+                    continue
 
             if track_msgs:
                 delete_data = await client.send_message(
