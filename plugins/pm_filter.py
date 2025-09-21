@@ -832,18 +832,10 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                 logger.error(f"Error editing message: {e}")
                 try:
                     await query.answer("An error occurred. Please try again.", show_alert=True)
-                except:
+                except Exception:
                     pass
         else:
             try:
                 await query.answer("Invalid selection.", show_alert=True)
-            except:
-                pass
-                await query.answer("An error occurred. Please try again.", show_alert=True)
-                except:
-                    pass
-        else:
-            try:
-                await query.answer("Invalid selection.", show_alert=True)
-            except:
+            except Exception:
                 pass
