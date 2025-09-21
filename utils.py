@@ -16,14 +16,13 @@ import requests
 from database.join_reqs import JoinReqs as db2
 from pyrogram.errors.exceptions.bad_request_400 import UserNotParticipant
 from pyrogram.errors import FloodWait
-import hashlib
-import time
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 BTN_URL_REGEX = re.compile(
-    r"(\[([^\[]+?)\]$$(buttonurl|buttonalert):(?:/{0,2})(.+?)(:same)?$$)"
+    r"(\[([^\[]+?)\]\((buttonurl|buttonalert):(?:/{0,2})(.+?)(:same)?\))"
 )
 temp_requests = {}
 AUTO_DEL_SUCCESS_MSG = """Your File Has Been Deleted To Avoid BOT Copyright.\nYou Can Request Again If You Want!🫵🏻"""
@@ -31,79 +30,10 @@ AUTO_DELETE_TIME = 600
 imdb = Cinemagoer() 
 
 BANNED = {}
-SMART_OPEN = '"'
-SMART_CLOSE = '"'
+SMART_OPEN = '“'
+SMART_CLOSE = '”'
 START_CHAR = ('\'', '"', SMART_OPEN)
-
-class CallbackDataManager:
-    """Manages callback data optimization using short IDs and temporary storage"""
-    def __init__(self):
-        self.temp_storage = {}
-        self.cleanup_interval = 1200  # 20 minutes
-        self.last_cleanup = time.time()
-    
-    def generate_short_id(self, data: str) -> str:
-        """Generate a short hash ID for callback data"""
-        timestamp = str(int(time.time()))[-4:]  # Last 4 digits of timestamp
-        hash_part = hashlib.md5(data.encode()).hexdigest()[:4]  # First 4 chars of hash
-        return f"{timestamp}{hash_part}"
-    
-    def store_callback_data(self, full_data: str, user_id: int, msg_id: int = None) -> str:
-        """Store full callback data and return short ID"""
-        short_id = self.generate_short_id(full_data)
-        
-        storage_key = f"{user_id}•{short_id}"
-        if msg_id:
-            storage_key = f"{user_id}•{msg_id}•{short_id}"
-        
-        self.temp_storage[storage_key] = {
-            'data': full_data,
-            'timestamp': time.time(),
-            'user_id': user_id,
-            'msg_id': msg_id
-        }
-        
-        # Cleanup old entries periodically
-        self._cleanup_old_entries()
-        
-        return short_id
-    
-    def get_callback_data(self, short_id: str, user_id: int, msg_id: int = None) -> str:
-        """Retrieve full callback data from short ID"""
-        possible_keys = [
-            f"{user_id}•{msg_id}•{short_id}" if msg_id else None,
-            f"{user_id}•{short_id}",
-        ]
-        
-        for storage_key in filter(None, possible_keys):
-            stored_data = self.temp_storage.get(storage_key)
-            if stored_data and stored_data['user_id'] == user_id:
-                stored_data['timestamp'] = time.time()
-                return stored_data['data']
-        
-        return None
-    
-    def _cleanup_old_entries(self):
-        """Remove entries older than cleanup_interval"""
-        current_time = time.time()
-        if current_time - self.last_cleanup < 300:  # Only cleanup every 5 minutes
-            return
-        
-        expired_keys = []
-        for key, data in self.temp_storage.items():
-            if current_time - data['timestamp'] > self.cleanup_interval:
-                expired_keys.append(key)
-        
-        for key in expired_keys:
-            del self.temp_storage[key]
-        
-        self.last_cleanup = current_time
-        if expired_keys:
-            logger.info(f"Cleaned up {len(expired_keys)} expired callback entries")
-
-# Global callback data manager instance
-callback_manager = CallbackDataManager()
-
+ 
 class temp(object):
     START_TIME = 0
     BANNED_USERS = []
@@ -117,27 +47,6 @@ class temp(object):
     B_NAME = None
     SETTINGS = {}
 
-def create_optimized_callback(data: str, user_id: int, msg_id: int = None) -> str:
-    """Create optimized callback data using short IDs"""
-    if len(data) <= 40:  # If data is already short, use as-is
-        return data
-    
-    short_id = callback_manager.store_callback_data(data, user_id, msg_id)
-    return f"cb:{short_id}"
-
-def parse_optimized_callback(callback_data: str, user_id: int, msg_id: int = None) -> str:
-    """Parse optimized callback data back to full data"""
-    if not callback_data.startswith("cb:"):
-        return callback_data  # Not optimized, return as-is
-    
-    short_id = callback_data[3:]  # Remove "cb:" prefix
-    full_data = callback_manager.get_callback_data(short_id, user_id, msg_id)
-    
-    if full_data is None:
-        logger.warning(f"Failed to retrieve callback data for ID: {short_id}, user: {user_id}")
-        return "expired"
-    
-    return full_data
 
 async def is_subscribed(bot, query):
     
@@ -504,17 +413,16 @@ def gfilterparser(text, keyword):
             note_data += text[prev:match.start(1)]
             prev = match.end(1)
             if match.group(3) == "buttonalert":
-                callback_data = f"gfilteralert:{i}:{keyword}"
-                optimized_callback = create_optimized_callback(callback_data, 0)
+                # create a thruple with button label, url, and newline status
                 if bool(match.group(5)) and buttons:
                     buttons[-1].append(InlineKeyboardButton(
                         text=match.group(2),
-                        callback_data=optimized_callback[:64]  # Telegram limit
+                        callback_data=f"gfilteralert:{i}:{keyword}"
                     ))
                 else:
                     buttons.append([InlineKeyboardButton(
                         text=match.group(2),
-                        callback_data=optimized_callback[:64]  # Telegram limit
+                        callback_data=f"gfilteralert:{i}:{keyword}"
                     )])
                 i += 1
                 alerts.append(match.group(4))
@@ -561,17 +469,16 @@ def parser(text, keyword):
             note_data += text[prev:match.start(1)]
             prev = match.end(1)
             if match.group(3) == "buttonalert":
-                callback_data = f"alertmessage:{i}:{keyword}"
-                optimized_callback = create_optimized_callback(callback_data, 0)
+                # create a thruple with button label, url, and newline status
                 if bool(match.group(5)) and buttons:
                     buttons[-1].append(InlineKeyboardButton(
                         text=match.group(2),
-                        callback_data=optimized_callback[:64]  # Telegram limit
+                        callback_data=f"alertmessage:{i}:{keyword}"
                     ))
                 else:
                     buttons.append([InlineKeyboardButton(
                         text=match.group(2),
-                        callback_data=optimized_callback[:64]  # Telegram limit
+                        callback_data=f"alertmessage:{i}:{keyword}"
                     )])
                 i += 1
                 alerts.append(match.group(4))
@@ -600,7 +507,7 @@ def parser(text, keyword):
 def remove_escapes(text: str) -> str:
     res = ""
     is_escaped = False
-    for counter in range(len(text)):
+    for counter in range((text)):
         if is_escaped:
             res += text[counter]
             is_escaped = False
