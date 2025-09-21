@@ -5,7 +5,7 @@ from info import ADMINS
 from database.crazy_db import (
     get_series, get_links, get_series_name, get_languages, get_seasons, get_poster_manuel
 )
-from utils import temp
+from utils import temp, create_optimized_callback, parse_optimized_callback
 from imdb import Cinemagoer
 import asyncio
 import difflib
@@ -85,12 +85,13 @@ async def series_filter(client, message):
             close_matches = [name for name in series_names if name.lower().startswith(first_word.lower())]
         
         if close_matches:
-            buttons = [
-                InlineKeyboardButton(match, callback_data=f"spellcheck·{series_infos[series_names.index(match)]['key']}·{user_id}")
-                for match in close_matches
-            ]
+            buttons = []
+            for match in close_matches:
+                full_callback = f"spellcheck·{series_infos[series_names.index(match)]['key']}·{user_id}"
+                optimized_callback = create_optimized_callback(full_callback, int(user_id), message.id)
+                buttons.append(InlineKeyboardButton(match, callback_data=optimized_callback))
+            
             buttons_chunked = chunk_buttons(buttons, chunk_size=2)
-            reply_markup = InlineKeyboardMarkup(buttons_chunked)
             buttons_chunked.append([InlineKeyboardButton("Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
             reply_markup = InlineKeyboardMarkup(buttons_chunked)
             etho = await message.reply_photo(photo=random.choice(SPELL), caption="<b>Choose Your Series:</b>", reply_markup=reply_markup)
@@ -114,11 +115,17 @@ async def series_filter(client, message):
             "Available Languages:\n"
         )
         poster_url = get_movie_poster(series_key)
-        buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}·{lang.lower().replace(' ', '')}·{user_id}") for lang in languages]
+        
+        buttons = []
+        for lang in languages:
+            full_callback = f"{series_key}·{lang.lower().replace(' ', '')}·{user_id}"
+            optimized_callback = create_optimized_callback(full_callback, int(user_id), message.id)
+            buttons.append(InlineKeyboardButton(lang, callback_data=optimized_callback))
+        
         buttons_chunked = chunk_buttons(buttons, chunk_size=2)
-        reply_markup = InlineKeyboardMarkup(buttons_chunked)
         buttons_chunked.append([InlineKeyboardButton("Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
         reply_markup = InlineKeyboardMarkup(buttons_chunked)
+        
         try:
             if poster_url:
                 etho = await message.reply_photo(photo=poster_url, caption=reply_text, reply_markup=reply_markup)
@@ -135,7 +142,19 @@ async def series_filter(client, message):
 async def cb_handler(client, query: CallbackQuery):
     data = query.data
     user_id = str(query.from_user.id)
+    
+    if data.startswith("cb:"):
+        full_data = parse_optimized_callback(data, int(user_id), query.message.id)
+        if full_data == "expired":
+            await query.answer("This button has expired. Please search again.", show_alert=True)
+            return
+        elif full_data is None:
+            await query.answer("Invalid callback data.", show_alert=True)
+            return
+        data = full_data
+    
     parts = data.split("·")
+    
     if data == "close_data":
         await query.message.delete()
     elif data == "pages":
@@ -171,11 +190,17 @@ async def cb_handler(client, query: CallbackQuery):
                 f"○ <b>Title:</b> <code>{series['title']}</code>\n○ <b>Released On:</b> <code>{series['released_on']}</code>\n○ <b>Genre:</b> <code>{series['genre']}</code>\n○ <b>Rating:</b> <code>{series['rating']}</code>\n\n"
                 "Available Languages:\n"
             )
-            buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}·{lang.lower().replace(' ', '')}·{user_id}") for lang in languages]
+            
+            buttons = []
+            for lang in languages:
+                full_callback = f"{series_key}·{lang.lower().replace(' ', '')}·{user_id}"
+                optimized_callback = create_optimized_callback(full_callback, int(user_id), query.message.id)
+                buttons.append(InlineKeyboardButton(lang, callback_data=optimized_callback))
+            
             buttons_chunked = chunk_buttons(buttons, chunk_size=2)
-            reply_markup = InlineKeyboardMarkup(buttons_chunked)
             buttons_chunked.append([InlineKeyboardButton("Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
             reply_markup = InlineKeyboardMarkup(buttons_chunked)
+            
             try:
                 if poster_url:
                     await query.message.edit_media(media=InputMediaPhoto(poster_url), reply_markup=reply_markup)
@@ -204,12 +229,20 @@ async def cb_handler(client, query: CallbackQuery):
                     "Available Seasons:\n"
                 )
                 
-                buttons = [InlineKeyboardButton(season, callback_data=f"{series_key}·{language}·{season.lower().replace(' ', '')}·{user_id}") for season in seasons]
+                buttons = []
+                for season in seasons:
+                    full_callback = f"{series_key}·{language}·{season.lower().replace(' ', '')}·{user_id}"
+                    optimized_callback = create_optimized_callback(full_callback, int(user_id), query.message.id)
+                    buttons.append(InlineKeyboardButton(season, callback_data=optimized_callback))
+                
                 buttons_chunked = chunk_buttons(buttons)
-                buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"spellcheck-{series_key}-{user_id}")])
-                reply_markup = InlineKeyboardMarkup(buttons_chunked)
+                
+                back_callback = f"spellcheck·{series_key}·{user_id}"
+                optimized_back = create_optimized_callback(back_callback, int(user_id), query.message.id)
+                buttons_chunked.append([InlineKeyboardButton("Back", callback_data=optimized_back)])
                 buttons_chunked.append([InlineKeyboardButton("Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
                 reply_markup = InlineKeyboardMarkup(buttons_chunked)
+                
                 await query.message.edit_text(
                     text=reply_text,
                     reply_markup=reply_markup
@@ -229,10 +262,12 @@ async def cb_handler(client, query: CallbackQuery):
                 ]
                 buttons_chunked = chunk_buttons(buttons, chunk_size=2)
                 if buttons_chunked:
-                    buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"{series_key}·{language}·{user_id}")])
-                    reply_markup = InlineKeyboardMarkup(buttons_chunked)
+                    back_callback = f"{series_key}·{language}·{user_id}"
+                    optimized_back = create_optimized_callback(back_callback, int(user_id), query.message.id)
+                    buttons_chunked.append([InlineKeyboardButton("Back", callback_data=optimized_back)])
                     buttons_chunked.append([InlineKeyboardButton("Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
                     reply_markup = InlineKeyboardMarkup(buttons_chunked)
+                    
                     await query.message.edit_text(
                         text=(
                             f"○ <b>Title:</b> <code>{series['title'].title()}</code>\n"
@@ -258,5 +293,4 @@ async def cb_handler(client, query: CallbackQuery):
                     text="No links found for the selected season and language.",
                     disable_web_page_preview=True,
                     parse_mode=enums.ParseMode.HTML
-)
-    
+                )
