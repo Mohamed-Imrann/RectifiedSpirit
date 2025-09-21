@@ -403,7 +403,31 @@ async def callback_handler(client: Client, callback_query: CallbackQuery):
     data = callback_query.data
     logger.info(f"Received callback query from user {user_id}: {data}")
 
-    if data.startswith("user_series:") or data.startswith("b:"):
+    if data.startswith("b:"):
+        # Handle b: callbacks immediately with acknowledgment
+        file_link_key = data.split(":", 1)[1]
+        logger.info(f"Processing b: callback for link key: {file_link_key}")
+        
+        try:
+            await callback_query.answer("Processing request...")
+        except Exception as e:
+            logger.warning(f"Failed to acknowledge callback: {e}")
+        
+        bot_username = temp.U_NAME
+        start_url = f"https://t.me/{bot_username}?start={file_link_key}"
+        
+        try:
+            await client.send_message(
+                chat_id=user_id,
+                text=f"Click the button below to get your files:\n\n[🎬 Get Files]({start_url})",
+                parse_mode=enums.ParseMode.MARKDOWN,
+                disable_web_page_preview=True
+            )
+        except Exception as e:
+            logger.error(f"Error sending start URL to user {user_id}: {e}")
+        return
+
+    if data.startswith("user_series:"):
         logger.info(f"User series callback from user {user_id}")
         await user_series_callback_handler(client, callback_query)
         return
@@ -424,6 +448,11 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
     message_id = query.message.id
     logger.info(f"Processing user series callback: {data}")
 
+    try:
+        await query.answer()
+    except Exception as e:
+        logger.warning(f"Failed to acknowledge callback: {e}")
+
     reply_msg = query.message.reply_to_message  
     if reply_msg and reply_msg.from_user:
         requested_user = reply_msg.from_user.id
@@ -436,47 +465,13 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
     
     if chat_id < 0 and requested_user and clicked_user != requested_user:
         logger.warning(f"User {clicked_user} tried to access another user's request")
-        await query.answer("Not your request!", show_alert=True)
+        try:
+            await query.answer("Not your request!", show_alert=True)
+        except:
+            pass
         return
 
     if data == "pages":
-        await query.answer()
-        return
-
-    elif data.startswith("b:"):
-        file_link_key = data.split(":", 1)[1]
-        logger.info(f"Fetching files for link key: {file_link_key}")
-        
-        files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(file_link_key)
-
-        if not files_to_send:
-            logger.warning(f"No files found for link key: {file_link_key}")
-            await query.answer("No files found for this quality.", show_alert=True)
-            return
-
-        await query.answer("Sending files...")
-        
-        track_msgs = []
-        for entry in files_to_send:
-            try:
-                copied_msg = await client.send_cached_media(
-                    chat_id=query.from_user.id, 
-                    file_id=entry["file_id"],
-                    caption=entry.get("caption", "")
-                )
-                if copied_msg and temp.AUTO_DELETE_TIME and temp.AUTO_DELETE_TIME > 0:
-                    track_msgs.append(copied_msg)
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                logger.error(f"Error sending cached media to user {query.from_user.id}: {e}")
-                await client.send_message(query.from_user.id, f"Error sending file: {e}")
-                
-        if track_msgs:
-            delete_data = await client.send_message(
-                chat_id=query.from_user.id,
-                text=temp.AUTO_DELETE_MSG.format(time=temp.AUTO_DELETE_TIME)
-            )
-            asyncio.create_task(DeleteMessage(delete_data))
         return
 
     elif data.startswith("user_series:"):
@@ -485,7 +480,10 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         series = get_series_name(series_key)
         if not series or not series.get('published', False):
             logger.warning(f"Series not found or not published for key: {series_key}")
-            await query.message.edit_text("Series not found or not available.", parse_mode=enums.ParseMode.HTML)
+            try:
+                await query.message.edit_text("Series not found or not available.", parse_mode=enums.ParseMode.HTML)
+            except Exception as e:
+                logger.error(f"Failed to edit message: {e}")
             return
 
         # Store series key in user_requestor for future callbacks
@@ -518,7 +516,10 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
         
         if not layout:
-            await query.message.edit_text("No languages available for this series.")
+            try:
+                await query.message.edit_text("No languages available for this series.")
+            except Exception as e:
+                logger.error(f"Failed to edit message: {e}")
             return
         
         reply_markup = InlineKeyboardMarkup(layout)
@@ -535,7 +536,10 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             logger.debug("Message not modified, likely no changes")
         except Exception as e:
             logger.error(f"Error editing message in user_series callback: {e}")
-            await query.answer("An error occurred. Please try again.", show_alert=True)
+            try:
+                await query.answer("An error occurred. Please try again.", show_alert=True)
+            except:
+                pass
 
 async def user_interface_callback_handler(client: Client, query: CallbackQuery):
     user_id = query.from_user.id
@@ -544,12 +548,20 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
     data = query.data
     logger.info(f"Processing user interface callback: {data}")
     
+    try:
+        await query.answer()
+    except Exception as e:
+        logger.warning(f"Failed to acknowledge callback: {e}")
+    
     # Get stored data
     stored_entry = user_requestor.get(f"{chat_id}•{message_id}", {})
     stored_data = stored_entry.get("data") if isinstance(stored_entry, dict) else None
     
     if not stored_data or not isinstance(stored_data, dict):
-        await query.answer("Session expired. Please search again.", show_alert=True)
+        try:
+            await query.answer("Session expired. Please search again.", show_alert=True)
+        except:
+            pass
         return
     
     series_key = stored_data.get("series_key")
@@ -558,12 +570,18 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
     # Check if user is authorized
     if chat_id < 0 and requested_user and user_id != requested_user:
         logger.warning(f"User {user_id} tried to access another user's request")
-        await query.answer("Not your request!", show_alert=True)
+        try:
+            await query.answer("Not your request!", show_alert=True)
+        except:
+            pass
         return
     
     series = get_series_name(series_key)
     if not series or not series.get('published', False):
-        await query.answer("Series not found or not available.", show_alert=True)
+        try:
+            await query.answer("Series not found or not available.", show_alert=True)
+        except:
+            pass
         return
     
     base_text = (
@@ -590,7 +608,10 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
             
             if not layout:
-                await query.answer("No languages available for this series.", show_alert=True)
+                try:
+                    await query.answer("No languages available for this series.", show_alert=True)
+                except:
+                    pass
                 return
             
             reply_markup = InlineKeyboardMarkup(layout)
@@ -605,7 +626,10 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                 logger.debug(f"Returned to language selection for {series['title']}")
             except Exception as e:
                 logger.error(f"Error editing message: {e}")
-                await query.answer("An error occurred. Please try again.", show_alert=True)
+                try:
+                    await query.answer("An error occurred. Please try again.", show_alert=True)
+                except:
+                    pass
             return
         
         elif target == "season":
@@ -614,12 +638,18 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             language_name = stored_data.get("language_name")
             
             if language_index is None:
-                await query.answer("Session error. Please start again.", show_alert=True)
+                try:
+                    await query.answer("Session error. Please start again.", show_alert=True)
+                except:
+                    pass
                 return
             
             languages = series.get("languages", [])
             if language_index >= len(languages):
-                await query.answer("Language not found.", show_alert=True)
+                try:
+                    await query.answer("Language not found.", show_alert=True)
+                except:
+                    pass
                 return
             
             seasons = languages[language_index].get("seasons", [])
@@ -632,7 +662,10 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
             
             if not layout:
-                await query.answer("No seasons available for this language.", show_alert=True)
+                try:
+                    await query.answer("No seasons available for this language.", show_alert=True)
+                except:
+                    pass
                 return
             
             reply_markup = InlineKeyboardMarkup(layout)
@@ -647,7 +680,10 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                 logger.debug(f"Returned to season selection for {series['title']}")
             except Exception as e:
                 logger.error(f"Error editing message: {e}")
-                await query.answer("An error occurred. Please try again.", show_alert=True)
+                try:
+                    await query.answer("An error occurred. Please try again.", show_alert=True)
+                except:
+                    pass
             return
     
     # Parse the callback data
@@ -661,7 +697,6 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
         
         if 0 <= callback_index < len(languages):
             language_name = languages[callback_index]["name"]
-            await query.answer(f"Selected: {language_name}")
             
             # Update stored data
             user_requestor[f"{chat_id}•{message_id}"] = {
@@ -686,7 +721,10 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
             
             if not layout:
-                await query.answer("No seasons available for this language.", show_alert=True)
+                try:
+                    await query.answer("No seasons available for this language.", show_alert=True)
+                except:
+                    pass
                 return
             
             reply_markup = InlineKeyboardMarkup(layout)
@@ -700,28 +738,39 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                 )
             except Exception as e:
                 logger.error(f"Error editing message: {e}")
-                await query.answer("An error occurred. Please try again.", show_alert=True)
+                try:
+                    await query.answer("An error occurred. Please try again.", show_alert=True)
+                except:
+                    pass
         else:
-            await query.answer("Invalid selection.", show_alert=True)
+            try:
+                await query.answer("Invalid selection.", show_alert=True)
+            except:
+                pass
     
     # Handle season selection
     elif callback_type == "season":
         language_index = stored_data.get("language_index")
         
         if language_index is None:
-            await query.answer("Session error. Please start again.", show_alert=True)
+            try:
+                await query.answer("Session error. Please start again.", show_alert=True)
+            except:
+                pass
             return
         
         languages = series.get("languages", [])
         if language_index >= len(languages):
-            await query.answer("Language not found.", show_alert=True)
+            try:
+                await query.answer("Language not found.", show_alert=True)
+            except:
+                pass
             return
         
         seasons = languages[language_index].get("seasons", [])
         
         if 0 <= callback_index < len(seasons):
             season_name = seasons[callback_index]["name"]
-            await query.answer(f"Selected: {season_name}")
             
             # Update stored data
             user_requestor[f"{chat_id}•{message_id}"] = {
@@ -751,11 +800,23 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             
             text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`\n○ **Season:** `{season_name}`\n\nSelect the quality you need...!"
             
-            # Create user layout using saved pattern with back button
-            layout = create_user_layout_from_pattern(available_quality_names, quality_layout, "quality", add_back_button=True, back_target="season")
+            layout = []
+            for i, quality in enumerate(available_qualities):
+                quality_button = InlineKeyboardButton(
+                    quality['name'], 
+                    callback_data=f"b:{quality['link_key']}"
+                )
+                layout.append([quality_button])
+            
+            # Add back button
+            back_button = InlineKeyboardButton("⬅️ Back", callback_data="back_season")
+            layout.append([back_button])
             
             if not layout:
-                await query.answer("No qualities available for this season.", show_alert=True)
+                try:
+                    await query.answer("No qualities available for this season.", show_alert=True)
+                except:
+                    pass
                 return
             
             reply_markup = InlineKeyboardMarkup(layout)
@@ -769,73 +830,20 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                 )
             except Exception as e:
                 logger.error(f"Error editing message: {e}")
-                await query.answer("An error occurred. Please try again.", show_alert=True)
-        else:
-            await query.answer("Invalid selection.", show_alert=True)
-    
-    # Handle quality selection
-    elif callback_type == "quality":
-        language_index = stored_data.get("language_index")
-        season_index = stored_data.get("season_index")
-        
-        if language_index is None or season_index is None:
-            await query.answer("Session error. Please start again.", show_alert=True)
-            return
-        
-        languages = series.get("languages", [])
-        if language_index >= len(languages):
-            await query.answer("Language not found.", show_alert=True)
-            return
-        
-        seasons = languages[language_index].get("seasons", [])
-        if season_index >= len(seasons):
-            await query.answer("Season not found.", show_alert=True)
-            return
-        
-        qualities = seasons[season_index].get("qualities", [])
-        
-        # Filter available qualities (those with link_key)
-        available_qualities = [q for q in qualities if q.get("link_key")]
-        
-        if 0 <= callback_index < len(available_qualities):
-            quality_name = available_qualities[callback_index]["name"]
-            link_key = available_qualities[callback_index].get("link_key")
-            
-            if not link_key:
-                await query.answer("No files available for this quality.", show_alert=True)
-                return
-            
-            await query.answer(f"Selected: {quality_name}")
-            
-            # Fetch and send files
-            files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(link_key)
-
-            if not files_to_send:
-                await query.answer("No files found for this quality.", show_alert=True)
-                return
-
-            await query.answer("Sending files...")
-            
-            track_msgs = []
-            for entry in files_to_send:
                 try:
-                    copied_msg = await client.send_cached_media(
-                        chat_id=query.from_user.id, 
-                        file_id=entry["file_id"],
-                        caption=entry.get("caption", "")
-                    )
-                    if copied_msg and temp.AUTO_DELETE_TIME and temp.AUTO_DELETE_TIME > 0:
-                        track_msgs.append(copied_msg)
-                    await asyncio.sleep(0.5)
-                except Exception as e:
-                    logger.error(f"Error sending cached media to user {query.from_user.id}: {e}")
-                    await client.send_message(query.from_user.id, f"Error sending file: {e}")
-                    
-            if track_msgs:
-                delete_data = await client.send_message(
-                    chat_id=query.from_user.id,
-                    text=temp.AUTO_DELETE_MSG.format(time=temp.AUTO_DELETE_TIME)
-                )
-                asyncio.create_task(DeleteMessage(delete_data))
+                    await query.answer("An error occurred. Please try again.", show_alert=True)
+                except:
+                    pass
         else:
-            await query.answer("Invalid selection.", show_alert=True)
+            try:
+                await query.answer("Invalid selection.", show_alert=True)
+            except:
+                pass
+answer("An error occurred. Please try again.", show_alert=True)
+                except:
+                    pass
+        else:
+            try:
+                await query.answer("Invalid selection.", show_alert=True)
+            except:
+                pass
