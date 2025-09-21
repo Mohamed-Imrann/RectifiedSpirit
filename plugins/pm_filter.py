@@ -87,7 +87,7 @@ async def series_filter(client, message):
         if close_matches:
             buttons = []
             for match in close_matches:
-                full_callback = f"spellcheck·{series_infos[series_names.index(match)]['key']}·{user_id}"
+                full_callback = f"spell·{series_infos[series_names.index(match)]['key']}·{user_id}"
                 optimized_callback = create_optimized_callback(full_callback, int(user_id), message.id)
                 buttons.append(InlineKeyboardButton(match, callback_data=optimized_callback))
             
@@ -118,7 +118,8 @@ async def series_filter(client, message):
         
         buttons = []
         for lang in languages:
-            full_callback = f"{series_key}·{lang.lower().replace(' ', '')}·{user_id}"
+            lang_code = lang.lower().replace(' ', '')[:3]
+            full_callback = f"{series_key}·{lang_code}·{user_id}"
             optimized_callback = create_optimized_callback(full_callback, int(user_id), message.id)
             buttons.append(InlineKeyboardButton(lang, callback_data=optimized_callback))
         
@@ -146,10 +147,10 @@ async def cb_handler(client, query: CallbackQuery):
     if data.startswith("cb:"):
         full_data = parse_optimized_callback(data, int(user_id), query.message.id)
         if full_data == "expired":
-            await query.answer("This button has expired. Please search again.", show_alert=True)
+            await query.answer("⚠️ This button has expired. Please search again.", show_alert=True)
             return
         elif full_data is None:
-            await query.answer("Invalid callback data.", show_alert=True)
+            await query.answer("❌ Invalid callback data. Please try again.", show_alert=True)
             return
         data = full_data
     
@@ -175,7 +176,7 @@ async def cb_handler(client, query: CallbackQuery):
             await query.answer(url=f"https://t.me/{temp.U_NAME}?start={start_parameter}")
         except pyrogram.errors.exceptions.bad_request_400.UrlInvalid:
             await query.answer("Invalid URL provided.", show_alert=True)
-    elif data.startswith("spellcheck·"):
+    elif data.startswith("spell·") or data.startswith("spellcheck·"):
         series_key = parts[1]
         query_user_id = parts[2]
         if query_user_id != user_id:
@@ -193,7 +194,8 @@ async def cb_handler(client, query: CallbackQuery):
             
             buttons = []
             for lang in languages:
-                full_callback = f"{series_key}·{lang.lower().replace(' ', '')}·{user_id}"
+                lang_code = lang.lower().replace(' ', '')[:3]
+                full_callback = f"{series_key}·{lang_code}·{user_id}"
                 optimized_callback = create_optimized_callback(full_callback, int(user_id), query.message.id)
                 buttons.append(InlineKeyboardButton(lang, callback_data=optimized_callback))
             
@@ -231,13 +233,14 @@ async def cb_handler(client, query: CallbackQuery):
                 
                 buttons = []
                 for season in seasons:
-                    full_callback = f"{series_key}·{language}·{season.lower().replace(' ', '')}·{user_id}"
+                    season_code = season.lower().replace(' ', '')[:5]
+                    full_callback = f"{series_key}·{language}·{season_code}·{user_id}"
                     optimized_callback = create_optimized_callback(full_callback, int(user_id), query.message.id)
                     buttons.append(InlineKeyboardButton(season, callback_data=optimized_callback))
                 
                 buttons_chunked = chunk_buttons(buttons)
                 
-                back_callback = f"spellcheck·{series_key}·{user_id}"
+                back_callback = f"spell·{series_key}·{user_id}"
                 optimized_back = create_optimized_callback(back_callback, int(user_id), query.message.id)
                 buttons_chunked.append([InlineKeyboardButton("Back", callback_data=optimized_back)])
                 buttons_chunked.append([InlineKeyboardButton("Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
