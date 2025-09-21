@@ -404,27 +404,14 @@ async def callback_handler(client: Client, callback_query: CallbackQuery):
     logger.info(f"Received callback query from user {user_id}: {data}")
 
     if data.startswith("b:"):
-        # Handle b: callbacks immediately with acknowledgment
-        file_link_key = data.split(":", 1)[1]
-        logger.info(f"Processing b: callback for link key: {file_link_key}")
-        
+        start_parameter = data.split(":", 1)[1]
         try:
-            await callback_query.answer("Processing request...")
+            test_string = f"https://t.me/{temp.U_NAME}?start={start_parameter}"
+            print(test_string)
+            await callback_query.answer(url=f"https://t.me/{temp.U_NAME}?start={start_parameter}")
         except Exception as e:
-            logger.warning(f"Failed to acknowledge callback: {e}")
-        
-        bot_username = temp.U_NAME
-        start_url = f"https://t.me/{bot_username}?start={file_link_key}"
-        
-        try:
-            await client.send_message(
-                chat_id=user_id,
-                text=f"Click the button below to get your files:\n\n[🎬 Get Files]({start_url})",
-                parse_mode=enums.ParseMode.MARKDOWN,
-                disable_web_page_preview=True
-            )
-        except Exception as e:
-            logger.error(f"Error sending start URL to user {user_id}: {e}")
+            logger.error(f"Error in b: callback: {e}")
+            await callback_query.answer("Invalid URL provided.", show_alert=True)
         return
 
     if data.startswith("user_series:"):
@@ -832,10 +819,10 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                 logger.error(f"Error editing message: {e}")
                 try:
                     await query.answer("An error occurred. Please try again.", show_alert=True)
-                except Exception:
+                except:
                     pass
         else:
             try:
                 await query.answer("Invalid selection.", show_alert=True)
-            except Exception:
+            except:
                 pass
