@@ -29,7 +29,7 @@ from database.crazy_db import (
 )
 from utils import (
     get_message_id, get_messages, delete_messages_from_user_chat, 
-    get_poster, find_most_similar_title, forward_messages_without_tag
+    get_poster, find_most_similar_title, forward_messages_without_tag, copy_messages_range
 )
 from fuzzywuzzy import fuzz
 from pyrogram.errors import MessageIdInvalid, FloodWait, UserNotParticipant, ChatAdminRequired
@@ -1023,31 +1023,39 @@ async def process_last_file_input(client: Client, message: Message):
 
     # Check if the messages are from the same source channel
     if channel_id != source_channel_id:
-        await message.reply("The first and last files must be from the same channel.")
+        await message.reply("Both files must be from the same channel.")
         return
 
-    # Get the assigned channel for this admin
-    assigned_channel_id = get_admin_channel(user_id)
+    # Copy messages to the assigned channel
+    assigned_channel_id = temp_admin_data[user_id].get("assigned_channel_id")
     if not assigned_channel_id:
-        await message.reply("You don't have an assigned channel. Please contact the bot owner.")
-        return
+        # If assigned_channel_id is not set, get it from the admin assignment
+        assigned_channel_id = get_admin_channel(user_id)
+        if not assigned_channel_id:
+            await message.reply("You don't have an assigned channel. Please contact the bot owner.")
+            return
+        temp_admin_data[user_id]["assigned_channel_id"] = assigned_channel_id # Store it for future use
 
-    # Forward the range of messages to the assigned channel without forward tag
-    await message.reply("Forwarding files to assigned channel. Please wait...")
-    new_message_ids = await forward_messages_without_tag(
-        client, source_channel_id, assigned_channel_id, source_first_msg_id, msg_id
-    )
-
+    # Copy all messages from first to last
+    new_message_ids = await copy_messages_range(client, source_channel_id, source_first_msg_id, msg_id, assigned_channel_id)
+    
     if not new_message_ids:
-        await message.reply("Failed to forward files. Please try again.")
+        await message.reply("Failed to copy messages. Please try again.")
         return
 
     # The new first and last message IDs in the assigned channel
     new_first_msg_id = new_message_ids[0]
     new_last_msg_id = new_message_ids[-1]
 
-    # Form the link_key string
-    link_key = f"get_{assigned_channel_id}_{new_first_msg_id}_{new_last_msg_id}"
+    # Convert channel ID to string and remove -100 prefix if present
+    channel_id_str = str(assigned_channel_id)
+    if channel_id_str.startswith("-100"):
+        clean_channel_id = channel_id_str[4:]  # Remove -100 prefix
+    else:
+        clean_channel_id = channel_id_str
+
+    # Form the link_key string without -100 prefix
+    link_key = f"get_{clean_channel_id}_{new_first_msg_id}_{new_last_msg_id}"
 
     # Update the quality with the new link_key
     series_key = temp_admin_data[user_id].get("current_series_key")
@@ -1621,4 +1629,6 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         
         # Go back to the quality management screen
         main_message_id = temp_admin_data[user_id].get("main_message_id")
+        await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+main_message_id")
         await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
