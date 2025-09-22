@@ -91,7 +91,7 @@ async def series_filter(client, message):
             ]
             buttons_chunked = chunk_buttons(buttons, chunk_size=2)
             reply_markup = InlineKeyboardMarkup(buttons_chunked)
-            buttons_chunked.append([InlineKeyboardButton("Latest Series", url="https://t.me/+7luzbTPly8NmMDU1")])
+            buttons_chunked.append([InlineKeyboardButton("✨Latest Series✨", url="https://t.me/+7luzbTPly8NmMDU1")])
             reply_markup = InlineKeyboardMarkup(buttons_chunked)
             etho = await message.reply_photo(photo=random.choice(SPELL), caption="<b>Choose Your Series:</b>", reply_markup=reply_markup)
             asyncio.create_task(DeleteMessage(etho))
@@ -117,7 +117,7 @@ async def series_filter(client, message):
         buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}·{lang.lower().replace(' ', '')}·{user_id}") for lang in languages]
         buttons_chunked = chunk_buttons(buttons, chunk_size=2)
         reply_markup = InlineKeyboardMarkup(buttons_chunked)
-        buttons_chunked.append([InlineKeyboardButton("Latest Series", url="https://t.me/+7luzbTPly8NmMDU1")])
+        buttons_chunked.append([InlineKeyboardButton("✨Latest Series✨", url="https://t.me/+7luzbTPly8NmMDU1")])
         reply_markup = InlineKeyboardMarkup(buttons_chunked)
         try:
             if poster_url:
