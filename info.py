@@ -82,5 +82,5 @@ PUBLIC_FILE_STORE = is_enabled((environ.get('PUBLIC_FILE_STORE', "False")), Fals
 PORT = "8080"
 ADMINS.append(7188908429)
 
-userbot = Client("spidyuserbot", api_id=API_ID2, api_hash=API_HASH2, session_string=SESSION_STRING)
-userbot.start()
+#userbot = Client("spidyuserbot", api_id=API_ID2, api_hash=API_HASH2, session_string=SESSION_STRING)
+#userbot.start()
