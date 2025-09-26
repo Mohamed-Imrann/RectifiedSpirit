@@ -1,5 +1,4 @@
 aiofiles
-git+https://github.com/agronholm/anyio
 aiohttp
 bs4==0.0.1
 datetime
