@@ -96,7 +96,9 @@ class MongoToMongoMigration:
                         language_obj = {
                             "name": language_name,
                             "seasons": [],
-                            "season_layout":import os
+                            "season_layout":
+                            
+                            import os
 import asyncio
 import logging
 from datetime import datetime
