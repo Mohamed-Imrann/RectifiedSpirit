@@ -41,7 +41,7 @@ auth_users = [int(user) if id_pattern.search(user) else user for user in environ
 AUTH_USERS = (auth_users + ADMINS) if auth_users else []
 # For migration
 NEW_DATABASE_URI = "mongodb+srv://sp:sp@cluster0.eh3zdcl.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-MIGRATION_MODE = False  # Set to True during migration, then False after
+MIGRATION_MODE = True  # Set to True during migration, then False after
 
 STIC = ('CAACAgUAAxkBAAJ5iGaibnAzoinskJ5B2LDpA66GpMKlAAIgAwAClbKhVx_qcsdH29wKHgQ CAACAgUAAxkBAAJ5hGaibjRA5dyi2XAQrO1JSxz4dXUuAALdBAACQ7YIVvz4vy3OyyQAAR4E CAACAgUAAxkBAAJ5jGaibp7C2RDX1OgS1ex0j3GedHoeAAJAAQACqjqpV0SUvBwyov-QHgQ').split()
 
