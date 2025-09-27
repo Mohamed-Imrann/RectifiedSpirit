@@ -497,8 +497,7 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         # Get language names
         language_names = [lang['name'] for lang in languages]
         
-        text = base_text + "
-Select the language you need...!"
+        text = base_text + "Select the language you need...!"
         
         # Create user layout using saved pattern
         layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
@@ -590,8 +589,7 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             language_layout = series.get("language_layout", [1] * len(languages))
             language_names = [lang['name'] for lang in languages]
             
-            text = base_text + "
-Select the language you need...!"
+            text = base_text + "Select the language you need...!"
             
             # Create user layout using saved pattern
             layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
