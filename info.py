@@ -14,29 +14,29 @@ def is_enabled(value, default):
     else: return default
 
 # Required API Credentials and Bot Settings
-API_ID = 19680279
-API_HASH = "a32f974ade51b2dc74e8db4bb049ad01"
-BOT_TOKEN = "5883096902:AAF-tI_T-F_zVI4oIANJPuZxDsvskqmAw6A"
-BOT_USERNAME = "MC_MovieBetaBot"
+API_ID = '20400973' #bots
+API_HASH = '047838cb76d54bc445e155a7cab44664'
+BOT_TOKEN = '7448922857:AAEiLcjbuhP_XNSl0KOiCj70OpBJWFWKbCA'
+BOT_USERNAME = "Spidy_Series_bot"
 
 # Required Database and Channel Settings
-DATABASE_URI="mongodb+srv://user:pass@cluster0.chedxq6.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-DATABASE_URL="mongodb+srv://user:pass@cluster0.chedxq6.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-DATABASE_NAME = "cluster0"
-COLLECTION_NAME = "thernello_unda"
-ADMINS = [int(admin) if id_pattern.search(admin) else admin for admin in environ.get('ADMINS', '1129673243 5394954571 7188908429 7144888498 7874364809').split()]
+DATABASE_URI="mongodb+srv://sp:sp@cluster0.eh3zdcl.mongodb.net/?retryWrites=true&w=majority"
+DATABASE_URL="mongodb+srv://sp:sp@cluster0.eh3zdcl.mongodb.net/?retryWrites=true&w=majority"
+DATABASE_NAME = "series_collection"
+COLLECTION_NAME = "series"
+ADMINS = [int(admin) if id_pattern.search(admin) else admin for admin in environ.get('ADMINS', '7144888498 7188908429 7874364809').split()]
 CHANNELS = [int(ch) if id_pattern.search(ch) else ch for ch in environ.get('CHANNELS', '-1001306691782').split()]
 auth_channel = environ.get('AUTH_CHANNEL', '')
 AUTH_CHANNEL = int(auth_channel) if auth_channel and id_pattern.search(auth_channel) else None
 # Your request to join channel Ids
-REQ_CHANNEL_ONE =environ.get("REQ_CHANNEL_ONE", None)
+REQ_CHANNEL_ONE =environ.get("REQ_CHANNEL_ONE", '-1003456')
 REQ_CHANNEL_ONE = (int(REQ_CHANNEL_ONE) if REQ_CHANNEL_ONE and id_pattern.search(REQ_CHANNEL_ONE) else False) if REQ_CHANNEL_ONE is not None else None
-REQ_CHANNEL_TWO =environ.get("REQ_CHANNEL_TWO", None)
+REQ_CHANNEL_TWO =environ.get("REQ_CHANNEL_TWO", '-1004567')
 REQ_CHANNEL_TWO = (int(REQ_CHANNEL_TWO) if REQ_CHANNEL_TWO and id_pattern.search(REQ_CHANNEL_TWO) else False) if REQ_CHANNEL_TWO is not None else None
 
-LOG_CHANNEL = "-1002480551308"
-DB_CHANNEL = [-1002480551308, -1001306691782, -1002193376815]
-RAW_DB_CHANNEL = [2480551308, 1306691782, 2193376815]
+LOG_CHANNEL = "-1002361556192"
+DB_CHANNEL = [-1002400599577]
+RAW_DB_CHANNEL = 2400599577]
 IMGBB_API_KEY = "e74d34d56644c5a9543019e408dbd891"
 TMDB_API_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIwZjY0ZTY1MDRhYTZkY2JkNmQxMWMzMjRiZTU3MGFmYSIsIm5iZiI6MTc1MTk3MDQyMy4zNTAwMDAxLCJzdWIiOiI2ODZjZjI3N2ZmMzFhNDFhNDhlN2ZlNTMiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.dI7SXasXd9LfTedzTfZAW05gQPcOD7_TpEMHKCGNdvU"
 # Optional settings with defaults
@@ -75,7 +75,7 @@ UPDATES_CHANNEL_LINK = os.environ.get("UPDATES_CHANNEL_LINK", "https://t.me/Sfli
 
 # Optional: Bot owner link.
 BOT_OWNER_LINK = os.environ.get("BOT_OWNER_LINK", "t.me/Sflixbots")
-START_TXT = environ.get('START_TXT', "𝗅'm Mᴀᴇᴠᴇ Wʏʟɪᴇ 🌸, ᴀ Gʀᴏᴜᴘ ᴍᴀɴᴀɢᴇʀ Bᴏᴛ Cʀᴇᴀᴛᴇᴅ ғᴏʀ Sᴇʀɪᴇs X, ᴏɴʟʏ ᴀᴜᴛʜᴏʀɪsᴇᴅ ᴀᴅᴍɪɴs ᴄᴀɴ ᴀᴄᴄᴇss ᴅᴏɴ'ᴛ ᴡᴀsᴛᴇ ʏᴏᴜʀ ᴛɪᴍᴇ 😌")
+START_TXT = environ.get('START_TXT', "𝗅'm SflixSeriesBot, ᴀ Gʀᴏᴜᴘ ᴍᴀɴᴀɢᴇʀ Bᴏᴛ Cʀᴇᴀᴛᴇᴅ ғᴏʀ Sflicb, ᴏɴʟʏ ᴀᴜᴛʜᴏʀɪsᴇᴅ ᴀᴅᴍɪɴs ᴄᴀɴ ᴀᴄᴄᴇss ᴅᴏɴ'ᴛ ᴡᴀsᴛᴇ ʏᴏᴜʀ ᴛɪᴍᴇ 😌")
 NO_POSTER_FOUND_IMG = environ.get('NO_POSTER_FOUND_IMG', "https://envs.sh/EMw.jpg").split()
 SPELL_CHECK_IMAGE = environ.get('SPELL_CHECK_IMAGE', 'https://envs.sh/EMw.jpg').split()
 JOIN_REQS_DB = environ.get("JOIN_REQS_DB", DATABASE_URI)
