@@ -330,16 +330,11 @@ async def series_filter(client: Client, message: Message):
         language_layout = series.get("language_layout", [1] * len(languages))
         
         reply_text = (
-            f"○ **Title:** `{series['title']}`
-"
-            f"○ **Released On:** `{series['released_on']}`
-"
-            f"○ **Genre:** `{series['genre']}`
-"
-            f"○ **Rating:** `{series['rating']}`
-"
-            f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`
-"
+            f"○ **Title:** `{series['title']}`"
+            f"○ **Released On:** `{series['released_on']}`"
+            f"○ **Genre:** `{series['genre']}`"
+            f"○ **Rating:** `{series['rating']}`"
+            f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`"
             "Select the language you need...!"
         )
         poster_url = get_movie_poster(series_key)
