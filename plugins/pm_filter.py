@@ -487,16 +487,11 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         language_layout = series.get("language_layout", [1] * len(languages))
         
         base_text = (
-            f"○ **Title:** `{series['title']}`
-"
-            f"○ **Released On:** `{series['released_on']}`
-"
-            f"○ **Genre:** `{series['genre']}`
-"
-            f"○ **Rating:** `{series['rating']}`
-"
-            f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`
-"
+            f"○ **Title:** `{series['title']}`"
+            f"○ **Released On:** `{series['released_on']}`"
+            f"○ **Genre:** `{series['genre']}`"
+            f"○ **Rating:** `{series['rating']}`"
+            f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`"
         )
         
         # Get language names
@@ -578,16 +573,11 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
         return
     
     base_text = (
-        f"○ **Title:** `{series['title']}`
-"
-        f"○ **Released On:** `{series['released_on']}`
-"
-        f"○ **Genre:** `{series['genre']}`
-"
-        f"○ **Rating:** `{series['rating']}`
-"
-        f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`
-"
+        f"○ **Title:** `{series['title']}`"
+        f"○ **Released On:** `{series['released_on']}`"
+        f"○ **Genre:** `{series['genre']}`"
+        f"○ **Rating:** `{series['rating']}`"
+        f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`"
     )
     
     # Handle back button
