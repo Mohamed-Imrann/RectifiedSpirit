@@ -154,7 +154,7 @@ async def get_links_for_quality(client: Client, file_link_key: str):
                 logger.error(f"Invalid reference string format: {file_link_key}")
                 return [], 0, 0, 0
             
-            channel_id = int(parts[1])
+            channel_id = int(f"-100{parts[1]}")
             first_msg_id = int(parts[2])
             last_msg_id = int(parts[3])
             
@@ -215,7 +215,7 @@ async def global_filters(client: Client, message: Message, text=False) -> bool:
             logger.info(f"Global filter matched keyword: {keyword}")
             reply_text, btn, alert, fileid = await find_gfilter("gfilters", keyword)
             if reply_text:
-                reply_text = reply_text.replace("\\n", "").replace("\\t", "\t")
+                reply_text = reply_text.replace("\\n", "\n").replace("\\t", "\t")
             
             try:
                 if fileid == "None":
@@ -330,11 +330,11 @@ async def series_filter(client: Client, message: Message):
         language_layout = series.get("language_layout", [1] * len(languages))
         
         reply_text = (
-            f"○ **Title:** `{series['title']}`"
-            f"○ **Released On:** `{series['released_on']}`"
-            f"○ **Genre:** `{series['genre']}`"
-            f"○ **Rating:** `{series['rating']}`"
-            f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`"
+            f"○ **Title:** `{series['title']}`\n"
+            f"○ **Released On:** `{series['released_on']}`\n"
+            f"○ **Genre:** `{series['genre']}`\n"
+            f"○ **Rating:** `{series['rating']}`\n"
+            f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`\n\n"
             "Select the language you need...!"
         )
         poster_url = get_movie_poster(series_key)
@@ -487,17 +487,17 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         language_layout = series.get("language_layout", [1] * len(languages))
         
         base_text = (
-            f"○ **Title:** `{series['title']}`"
-            f"○ **Released On:** `{series['released_on']}`"
-            f"○ **Genre:** `{series['genre']}`"
-            f"○ **Rating:** `{series['rating']}`"
-            f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`"
+            f"○ **Title:** `{series['title']}`\n"
+            f"○ **Released On:** `{series['released_on']}`\n"
+            f"○ **Genre:** `{series['genre']}`\n"
+            f"○ **Rating:** `{series['rating']}`\n"
+            f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`\n"
         )
         
         # Get language names
         language_names = [lang['name'] for lang in languages]
         
-        text = base_text + "Select the language you need...!"
+        text = base_text + "\nSelect the language you need...!"
         
         # Create user layout using saved pattern
         layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
@@ -512,12 +512,23 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         reply_markup = InlineKeyboardMarkup(layout)
 
         try:
-            await query.message.edit_text(
-                text=text,
-                reply_markup=reply_markup,
-                disable_web_page_preview=True,
-                parse_mode=enums.ParseMode.MARKDOWN
-            )
+            # Check if the original message has a photo
+            if query.message.photo:
+                await query.message.edit_media(
+                    media=InputMediaPhoto(
+                        media=query.message.photo.file_id,
+                        caption=text,
+                        parse_mode=enums.ParseMode.MARKDOWN
+                    ),
+                    reply_markup=reply_markup
+                )
+            else:
+                await query.message.edit_text(
+                    text=text,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True,
+                    parse_mode=enums.ParseMode.MARKDOWN
+                )
             logger.debug(f"Updated user series message for {series['title']}")
         except MessageNotModified:
             logger.debug("Message not modified, likely no changes")
@@ -572,11 +583,11 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
         return
     
     base_text = (
-        f"○ **Title:** `{series['title']}`"
-        f"○ **Released On:** `{series['released_on']}`"
-        f"○ **Genre:** `{series['genre']}`"
-        f"○ **Rating:** `{series['rating']}`"
-        f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`"
+        f"○ **Title:** `{series['title']}`\n"
+        f"○ **Released On:** `{series['released_on']}`\n"
+        f"○ **Genre:** `{series['genre']}`\n"
+        f"○ **Rating:** `{series['rating']}`\n"
+        f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`\n"
     )
     
     # Handle back button
@@ -589,7 +600,7 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             language_layout = series.get("language_layout", [1] * len(languages))
             language_names = [lang['name'] for lang in languages]
             
-            text = base_text + "Select the language you need...!"
+            text = base_text + "\nSelect the language you need...!"
             
             # Create user layout using saved pattern
             layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
@@ -603,13 +614,34 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             
             reply_markup = InlineKeyboardMarkup(layout)
             
+            # Update state: remove language and season info
+            user_requestor[f"{chat_id}•{message_id}"] = {
+                "data": {
+                    "series_key": series_key,
+                    "requested_user": requested_user
+                },
+                "timestamp": time.time()
+            }
+            request_timestamps[f"{chat_id}•{message_id}"] = time.time()
+            
             try:
-                await query.message.edit_text(
-                    text=text,
-                    reply_markup=reply_markup,
-                    disable_web_page_preview=True,
-                    parse_mode=enums.ParseMode.MARKDOWN
-                )
+                # Check if the original message has a photo
+                if query.message.photo:
+                    await query.message.edit_media(
+                        media=InputMediaPhoto(
+                            media=query.message.photo.file_id,
+                            caption=text,
+                            parse_mode=enums.ParseMode.MARKDOWN
+                        ),
+                        reply_markup=reply_markup
+                    )
+                else:
+                    await query.message.edit_text(
+                        text=text,
+                        reply_markup=reply_markup,
+                        disable_web_page_preview=True,
+                        parse_mode=enums.ParseMode.MARKDOWN
+                    )
                 logger.debug(f"Returned to language selection for {series['title']}")
             except Exception as e:
                 logger.error(f"Error editing message: {e}")
@@ -639,4 +671,235 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                     pass
                 return
             
-         
+            seasons = languages[language_index].get("seasons", [])
+            season_layout = languages[language_index].get("season_layout", [1] * len(seasons))
+            season_names = [season['name'] for season in seasons]
+            
+            text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
+            
+            # Create user layout using saved pattern with back button
+            layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
+            
+            if not layout:
+                try:
+                    await query.answer("No seasons available for this language.", show_alert=True)
+                except:
+                    pass
+                return
+            
+            reply_markup = InlineKeyboardMarkup(layout)
+            
+            # Update state: remove season info, keep language
+            user_requestor[f"{chat_id}•{message_id}"] = {
+                "data": {
+                    "series_key": series_key,
+                    "language_name": language_name,
+                    "language_index": language_index,
+                    "requested_user": requested_user
+                },
+                "timestamp": time.time()
+            }
+            request_timestamps[f"{chat_id}•{message_id}"] = time.time()
+            
+            try:
+                # Check if the original message has a photo
+                if query.message.photo:
+                    await query.message.edit_media(
+                        media=InputMediaPhoto(
+                            media=query.message.photo.file_id,
+                            caption=text,
+                            parse_mode=enums.ParseMode.MARKDOWN
+                        ),
+                        reply_markup=reply_markup
+                    )
+                else:
+                    await query.message.edit_text(
+                        text=text,
+                        reply_markup=reply_markup,
+                        disable_web_page_preview=True,
+                        parse_mode=enums.ParseMode.MARKDOWN
+                    )
+                logger.debug(f"Returned to season selection for {series['title']}")
+            except Exception as e:
+                logger.error(f"Error editing message: {e}")
+                try:
+                    await query.answer("An error occurred. Please try again.", show_alert=True)
+                except:
+                    pass
+            return
+    
+    # Parse the callback data
+    callback_parts = data.split("_")
+    callback_type = callback_parts[0]  # lang, season, or quality
+    callback_index = int(callback_parts[1])  # Index
+    
+    # Handle language selection
+    if callback_type == "lang":
+        languages = series.get("languages", [])
+        
+        if 0 <= callback_index < len(languages):
+            language_name = languages[callback_index]["name"]
+            
+            # Update stored data
+            user_requestor[f"{chat_id}•{message_id}"] = {
+                "data": {
+                    "series_key": series_key,
+                    "language_name": language_name,
+                    "language_index": callback_index,
+                    "requested_user": requested_user
+                },
+                "timestamp": time.time()
+            }
+            request_timestamps[f"{chat_id}•{message_id}"] = time.time()
+            
+            # Get seasons for this language
+            seasons = languages[callback_index].get("seasons", [])
+            season_layout = languages[callback_index].get("season_layout", [1] * len(seasons))
+            season_names = [season['name'] for season in seasons]
+            
+            text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
+            
+            # Create user layout using saved pattern with back button
+            layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
+            
+            if not layout:
+                try:
+                    await query.answer("No seasons available for this language.", show_alert=True)
+                except:
+                    pass
+                return
+            
+            reply_markup = InlineKeyboardMarkup(layout)
+            
+            try:
+                # Check if the original message has a photo
+                if query.message.photo:
+                    await query.message.edit_media(
+                        media=InputMediaPhoto(
+                            media=query.message.photo.file_id,
+                            caption=text,
+                            parse_mode=enums.ParseMode.MARKDOWN
+                        ),
+                        reply_markup=reply_markup
+                    )
+                else:
+                    await query.message.edit_text(
+                        text=text,
+                        reply_markup=reply_markup,
+                        disable_web_page_preview=True,
+                        parse_mode=enums.ParseMode.MARKDOWN
+                    )
+            except Exception as e:
+                logger.error(f"Error editing message: {e}")
+                try:
+                    await query.answer("An error occurred. Please try again.", show_alert=True)
+                except:
+                    pass
+        else:
+            try:
+                await query.answer("Invalid selection.", show_alert=True)
+            except:
+                pass
+    
+    # Handle season selection
+    elif callback_type == "season":
+        language_index = stored_data.get("language_index")
+        
+        if language_index is None:
+            try:
+                await query.answer("Session error. Please start again.", show_alert=True)
+            except:
+                pass
+            return
+        
+        languages = series.get("languages", [])
+        if language_index >= len(languages):
+            try:
+                await query.answer("Language not found.", show_alert=True)
+            except:
+                pass
+            return
+        
+        seasons = languages[language_index].get("seasons", [])
+        
+        if 0 <= callback_index < len(seasons):
+            season_name = seasons[callback_index]["name"]
+            
+            # Update stored data
+            user_requestor[f"{chat_id}•{message_id}"] = {
+                "data": {
+                    "series_key": series_key,
+                    "language_name": stored_data.get("language_name"),
+                    "language_index": language_index,
+                    "season_name": season_name,
+                    "season_index": callback_index,
+                    "requested_user": requested_user
+                },
+                "timestamp": time.time()
+            }
+            request_timestamps[f"{chat_id}•{message_id}"] = time.time()
+            
+            # Get qualities for this season
+            qualities = seasons[callback_index].get("qualities", [])
+            quality_layout = seasons[callback_index].get("quality_layout", [1] * len(qualities))
+            
+            # Filter qualities that have files
+            available_qualities = []
+            available_quality_names = []
+            for quality in qualities:
+                if quality.get("link_key"):
+                    available_qualities.append(quality)
+                    available_quality_names.append(quality['name'])
+            
+            text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`\n○ **Season:** `{season_name}`\n\nSelect the quality you need...!"
+            
+            layout = []
+            for i, quality in enumerate(available_qualities):
+                quality_button = InlineKeyboardButton(
+                    quality['name'], 
+                    callback_data=f"b:{quality['link_key']}"
+                )
+                layout.append([quality_button])
+            
+            # Add back button
+            back_button = InlineKeyboardButton("⬅️ Back", callback_data="back_season")
+            layout.append([back_button])
+            
+            if not layout:
+                try:
+                    await query.answer("No qualities available for this season.", show_alert=True)
+                except:
+                    pass
+                return
+            
+            reply_markup = InlineKeyboardMarkup(layout)
+            
+            try:
+                # Check if the original message has a photo
+                if query.message.photo:
+                    await query.message.edit_media(
+                        media=InputMediaPhoto(
+                            media=query.message.photo.file_id,
+                            caption=text,
+                            parse_mode=enums.ParseMode.MARKDOWN
+                        ),
+                        reply_markup=reply_markup
+                    )
+                else:
+                    await query.message.edit_text(
+                        text=text,
+                        reply_markup=reply_markup,
+                        disable_web_page_preview=True,
+                        parse_mode=enums.ParseMode.MARKDOWN
+                    )
+            except Exception as e:
+                logger.error(f"Error editing message: {e}")
+                try:
+                    await query.answer("An error occurred. Please try again.", show_alert=True)
+                except:
+                    pass
+        else:
+            try:
+                await query.answer("Invalid selection.", show_alert=True)
+            except:
+                pass
