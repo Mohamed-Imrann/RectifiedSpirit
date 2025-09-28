@@ -274,7 +274,7 @@ async def series_filter(client: Client, message: Message):
                 for match in close_matches:
                     s_info = next((s for s in published_series if s['title'] == match), None)
                     if s_info:
-                        buttons.append(InlineKeyboardButton(match, callback_data=f"user_series:{s_info['_id']}"))
+                        buttons.append(InlineKeyboardButton(match, callback_data=f"user_series>{s_info['_id']}"))
                 
                 if buttons:
                     layout = [[button] for button in buttons]
@@ -395,7 +395,7 @@ async def callback_handler(client: Client, callback_query: CallbackQuery):
             await callback_query.answer("Invalid URL provided.", show_alert=True)
         return
 
-    if data.startswith("user_series:"):
+    if data.startswith("user_series>"):
         logger.info(f"User series callback from user {user_id}")
         await user_series_callback_handler(client, callback_query)
         return
@@ -409,7 +409,7 @@ async def callback_handler(client: Client, callback_query: CallbackQuery):
 
 async def user_series_callback_handler(client: Client, query: CallbackQuery):
     data = query.data
-    parts = data.split(":")
+    parts = data.split(">")
     clicked_user = query.from_user.id
     chat_id = query.message.chat.id
     message_id = query.message.id
@@ -441,7 +441,7 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
     if data == "pages":
         return
 
-    elif data.startswith("user_series:"):
+    elif data.startswith("user_series>"):
         series_key = parts[1]
         logger.info(f"Processing series with key: {series_key}")
         series = get_series_name(series_key)
@@ -469,7 +469,7 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             f"○ **Title:** `{series['title']}`\n"
             f"○ **Released On:** `{series['released_on']}`\n"
             f"○ **Genre:** `{series['genre']}`\n"
-            f"○ **Rating:** `{series['rating']}`\n"
+            f"○ **Rating:** `{series['rating']}`\n\n"
         )
         
         language_names = [lang['name'] for lang in languages]
