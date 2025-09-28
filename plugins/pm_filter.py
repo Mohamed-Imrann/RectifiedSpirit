@@ -13,10 +13,11 @@ from pyrogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery, 
     InputMediaPhoto
 )
-from info import SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG, ADMINS
+from info import SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG, ADMINS, CHANNELS
 from database.crazy_db import (
-    get_series, get_series_name, get_poster_manuel
+    get_series, get_series_name, get_poster_manuel, get_poster_manuel
 )
+from pyrogram.errors import MessageNotModified
 from database.gfilters_mdb import (
     find_gfilter,
     get_gfilters
@@ -197,9 +198,102 @@ async def get_links_for_quality(client: Client, file_link_key: str):
         logger.warning(f"No files found in episodes_collection for link key: {file_link_key}")
         return [], 0, 0, 0
         
-def get_movie_poster(series_key):
+import imdb
+import difflib
+import aiohttp
+import os
+from io import BytesIO
+from pyrogram.types import InputMediaPhoto
+
+# Reuse your existing logger
+logger = logging.getLogger(__name__)
+
+# Initialize IMDb (can be global)
+ia = imdb.IMDb()
+
+def find_most_similar_title(query: str, search_results: list) -> dict:
+    titles = [movie.get('title', '').lower() for movie in search_results]
+    matches = difflib.get_close_matches(query.lower(), titles, n=1, cutoff=0.6)
+    if matches:
+        target = matches[0]
+        for movie in search_results:
+            if movie.get('title', '').lower() == target:
+                return movie
+    return None
+
+async def download_image_to_bytes(url: str) -> BytesIO:
+    """Download image from URL into BytesIO buffer."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            if resp.status == 200:
+                return BytesIO(await resp.read())
+            else:
+                raise Exception(f"Failed to download image: HTTP {resp.status}")
+
+async def get_main_poster(client: Client, series_key: str) -> str:
+    """
+    Get poster as Telegram file_id.
+    1. Check DB (poster_file_id)
+    2. Fallback to IMDb → download → upload to Telegram → cache file_id
+    """
+    # Step 1: Check if already cached in DB
     poster_file_id = get_poster_manuel(series_key)
-    return poster_file_id or NO_POSTER_FOUND_IMG[0]
+    if poster_file_id:
+        return poster_file_id
+
+    # Step 2: Get series title
+    series = get_series_name(series_key)
+    if not series or not series.get('title'):
+        logger.warning(f"No title found for series key: {series_key}")
+        return NO_POSTER_FOUND_IMG[0]
+
+    title = series['title'].strip()
+    logger.info(f"Fetching poster for '{title}' (key: {series_key}) via IMDb")
+
+    try:
+        # Step 3: Search IMDb
+        search_results = ia.search_movie(title, results=10)
+        if not search_results:
+            logger.warning(f"No IMDb results for '{title}'")
+            return NO_POSTER_FOUND_IMG[0]
+
+        # Step 4: Find best match
+        best_match = find_most_similar_title(title, search_results)
+        if not best_match:
+            logger.warning(f"No close match on IMDb for '{title}'")
+            return NO_POSTER_FOUND_IMG[0]
+
+        # Step 5: Get poster URL
+        poster_url = best_match.get('full-size cover url') or best_match.get('cover url')
+        if not poster_url:
+            logger.warning(f"No poster URL for IMDb match: {best_match.get('title')}")
+            return NO_POSTER_FOUND_IMG[0]
+
+        logger.debug(f"Found IMDb poster URL: {poster_url}")
+        try:
+            # Upload as photo (Telegram will compress if needed)
+            uploaded = await client.send_photo(
+                chat_id=ADMINS[0],  # send to an admin (or temp chat)
+                photo=poster_url,
+                caption=f"Auto-fetched poster for {title}"
+            )
+            poster_file_id = uploaded.photo.file_id
+        except Exception as e:
+            logger.error(f"Failed to upload poster to Telegram: {e}")
+            return NO_POSTER_FOUND_IMG[0]
+
+        # Step 8: Save file_id to DB
+        try:
+            update_poster_file_id(series_key, poster_file_id)
+            logger.info(f"Cached poster file_id for {series_key}")
+        except Exception as e:
+            logger.error(f"Failed to save poster file_id to DB: {e}")
+
+        return poster_file_id
+
+    except Exception as e:
+        logger.exception(f"Error in get_main_poster for '{title}': {e}")
+        return NO_POSTER_FOUND_IMG[0]
 
 # Global filter function
 async def global_filters(client: Client, message: Message, text=False) -> bool:
@@ -337,7 +431,7 @@ async def series_filter(client: Client, message: Message):
             f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`\n\n"
             "Select the language you need...!"
         )
-        poster_url = get_movie_poster(series_key)
+        poster_url = await get_main_poster(client, series_key)
         
         # Get language names
         language_names = [lang['name'] for lang in languages]
@@ -375,9 +469,19 @@ async def series_filter(client: Client, message: Message):
 # Message handlers
 @Client.on_message(filters.text & (filters.private | filters.group))
 async def handle_message(client: Client, message: Message):
-    user_id = message.from_user.id
+    if message.from_user is None:
+        if message.chat.type == enums.ChatType.PRIVATE:
+            user_id = message.chat.id
+            logger.debug(f"Using chat.id as user_id for private message {message.id}")
+        else:
+            logger.warning(f"Message {message.id} in group {message.chat.id} has no from_user; skipping")
+            return
+    else:
+        user_id = message.from_user.id
+
     chat_id = message.chat.id
     logger.info(f"Received text message {message.id} from user {user_id} in chat {chat_id}")
+    # ... rest unchanged
     
     if message.chat.type != enums.ChatType.PRIVATE:
         logger.info(f"Message is in group {chat_id}, applying filters")
@@ -386,7 +490,7 @@ async def handle_message(client: Client, message: Message):
             await series_filter(client, message)
         return
     
-    if user_id not in ADMINS:
+    if user_id not in CHANNELS:
         logger.info(f"Applying filters for user {user_id}")
         glob = await global_filters(client, message)
         if glob == False:
@@ -510,34 +614,32 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             return
         
         reply_markup = InlineKeyboardMarkup(layout)
-
+        poster = await get_main_poster(client, series_key)
         try:
-            # Check if the original message has a photo
-            if query.message.photo:
+            if poster:
                 await query.message.edit_media(
                     media=InputMediaPhoto(
-                        media=query.message.photo.file_id,
-                        caption=text,
-                        parse_mode=enums.ParseMode.MARKDOWN
-                    ),
-                    reply_markup=reply_markup
-                )
-            else:
-                await query.message.edit_text(
-                    text=text,
-                    reply_markup=reply_markup,
-                    disable_web_page_preview=True,
+                    media=poster,
+                    caption=text,
                     parse_mode=enums.ParseMode.MARKDOWN
-                )
-            logger.debug(f"Updated user series message for {series['title']}")
-        except MessageNotModified:
-            logger.debug("Message not modified, likely no changes")
-        except Exception as e:
-            logger.error(f"Error editing message in user_series callback: {e}")
-            try:
-                await query.answer("An error occurred. Please try again.", show_alert=True)
-            except:
-                pass
+                ),
+                reply_markup=reply_markup
+            )
+        else:
+            await query.message.edit_text(
+                text=text,
+                reply_markup=reply_markup,
+                disable_web_page_preview=True,
+                parse_mode=enums.ParseMode.MARKDOWN
+            )
+    except MessageNotModified:
+        logger.debug("Message content identical; no update needed")
+    except Exception as e:
+        logger.error(f"Error editing message: {e}")
+        try:
+            await query.answer("An error occurred. Please try again.", show_alert=True)
+        except:
+            pass
 
 async def user_interface_callback_handler(client: Client, query: CallbackQuery):
     user_id = query.from_user.id
@@ -623,32 +725,32 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
                 "timestamp": time.time()
             }
             request_timestamps[f"{chat_id}•{message_id}"] = time.time()
-            
+            poster = await get_main_poster(client, series_key)
             try:
-                # Check if the original message has a photo
-                if query.message.photo:
+                if poster:
                     await query.message.edit_media(
                         media=InputMediaPhoto(
-                            media=query.message.photo.file_id,
-                            caption=text,
-                            parse_mode=enums.ParseMode.MARKDOWN
-                        ),
-                        reply_markup=reply_markup
-                    )
-                else:
-                    await query.message.edit_text(
-                        text=text,
-                        reply_markup=reply_markup,
-                        disable_web_page_preview=True,
+                        media=poster,
+                        caption=text,
                         parse_mode=enums.ParseMode.MARKDOWN
-                    )
-                logger.debug(f"Returned to language selection for {series['title']}")
-            except Exception as e:
-                logger.error(f"Error editing message: {e}")
-                try:
-                    await query.answer("An error occurred. Please try again.", show_alert=True)
-                except:
-                    pass
+                    ),
+                    reply_markup=reply_markup
+                )
+            else:
+                await query.message.edit_text(
+                    text=text,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True,
+                    parse_mode=enums.ParseMode.MARKDOWN
+                )
+        except MessageNotModified:
+            logger.debug("Message content identical; no update needed")
+        except Exception as e:
+            logger.error(f"Error editing message: {e}")
+            try:
+                await query.answer("An error occurred. Please try again.", show_alert=True)
+            except:
+                pass
             return
         
         elif target == "season":
@@ -702,30 +804,30 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             request_timestamps[f"{chat_id}•{message_id}"] = time.time()
             
             try:
-                # Check if the original message has a photo
                 if query.message.photo:
                     await query.message.edit_media(
                         media=InputMediaPhoto(
-                            media=query.message.photo.file_id,
-                            caption=text,
-                            parse_mode=enums.ParseMode.MARKDOWN
-                        ),
-                        reply_markup=reply_markup
-                    )
-                else:
-                    await query.message.edit_text(
-                        text=text,
-                        reply_markup=reply_markup,
-                        disable_web_page_preview=True,
+                        media=query.message.photo.file_id,
+                        caption=text,
                         parse_mode=enums.ParseMode.MARKDOWN
-                    )
-                logger.debug(f"Returned to season selection for {series['title']}")
-            except Exception as e:
-                logger.error(f"Error editing message: {e}")
-                try:
-                    await query.answer("An error occurred. Please try again.", show_alert=True)
-                except:
-                    pass
+                    ),
+                    reply_markup=reply_markup
+                )
+            else:
+                await query.message.edit_text(
+                    text=text,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True,
+                    parse_mode=enums.ParseMode.MARKDOWN
+                )
+        except MessageNotModified:
+            logger.debug("Message content identical; no update needed")
+        except Exception as e:
+            logger.error(f"Error editing message: {e}")
+            try:
+                await query.answer("An error occurred. Please try again.", show_alert=True)
+            except:
+                pass
             return
     
     # Parse the callback data
@@ -772,29 +874,30 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             reply_markup = InlineKeyboardMarkup(layout)
             
             try:
-                # Check if the original message has a photo
                 if query.message.photo:
                     await query.message.edit_media(
                         media=InputMediaPhoto(
-                            media=query.message.photo.file_id,
-                            caption=text,
-                            parse_mode=enums.ParseMode.MARKDOWN
-                        ),
-                        reply_markup=reply_markup
-                    )
-                else:
-                    await query.message.edit_text(
-                        text=text,
-                        reply_markup=reply_markup,
-                        disable_web_page_preview=True,
+                        media=query.message.photo.file_id,
+                        caption=text,
                         parse_mode=enums.ParseMode.MARKDOWN
-                    )
-            except Exception as e:
-                logger.error(f"Error editing message: {e}")
-                try:
-                    await query.answer("An error occurred. Please try again.", show_alert=True)
-                except:
-                    pass
+                    ),
+                    reply_markup=reply_markup
+                )
+            else:
+                await query.message.edit_text(
+                    text=text,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True,
+                    parse_mode=enums.ParseMode.MARKDOWN
+                )
+        except MessageNotModified:
+            logger.debug("Message content identical; no update needed")
+        except Exception as e:
+            logger.error(f"Error editing message: {e}")
+            try:
+                await query.answer("An error occurred. Please try again.", show_alert=True)
+            except:
+                pass
         else:
             try:
                 await query.answer("Invalid selection.", show_alert=True)
@@ -875,29 +978,30 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             reply_markup = InlineKeyboardMarkup(layout)
             
             try:
-                # Check if the original message has a photo
                 if query.message.photo:
                     await query.message.edit_media(
                         media=InputMediaPhoto(
-                            media=query.message.photo.file_id,
-                            caption=text,
-                            parse_mode=enums.ParseMode.MARKDOWN
-                        ),
-                        reply_markup=reply_markup
-                    )
-                else:
-                    await query.message.edit_text(
-                        text=text,
-                        reply_markup=reply_markup,
-                        disable_web_page_preview=True,
+                        media=query.message.photo.file_id,
+                        caption=text,
                         parse_mode=enums.ParseMode.MARKDOWN
-                    )
-            except Exception as e:
-                logger.error(f"Error editing message: {e}")
-                try:
-                    await query.answer("An error occurred. Please try again.", show_alert=True)
-                except:
-                    pass
+                    ),
+                    reply_markup=reply_markup
+                )
+            else:
+                await query.message.edit_text(
+                    text=text,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True,
+                    parse_mode=enums.ParseMode.MARKDOWN
+                )
+        except MessageNotModified:
+            logger.debug("Message content identical; no update needed")
+        except Exception as e:
+            logger.error(f"Error editing message: {e}")
+            try:
+                await query.answer("An error occurred. Please try again.", show_alert=True)
+            except:
+                pass
         else:
             try:
                 await query.answer("Invalid selection.", show_alert=True)
