@@ -282,7 +282,7 @@ async def series_filter(client: Client, message: Message):
                     
                     etho = await message.reply_photo(
                         photo=random.choice(SPELL_CHECK_IMAGE), 
-                        caption="<b>Choose Your Series:\n Powered By SflixBots</b>", 
+                        caption="<b>Choose Your Series:\n Powered By @SflixBots</b>", 
                         reply_markup=reply_markup
                     )
                     reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
@@ -805,7 +805,7 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             
             qualities = seasons[callback_index].get("qualities", [])
             
-            text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`\n○ **Season:** `{season_name}`\nSelect the quality you need...!\n Powered By SflixBots"
+            text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`\n○ **Season:** `{season_name}`\nSelect the quality you need...!\n Powered By @SflixBots"
             
             layout = []
             for quality in qualities:
