@@ -75,7 +75,7 @@ async def start_command(client, message):
                 return
             
             btn = [[InlineKeyboardButton("❆ Jᴏɪɴ Oᴜʀ Bᴀᴄᴋ-Uᴘ Cʜᴀɴɴᴇʟ ❆", url=invite_link.invite_link)]]
-            if message.command[1] != "subscribe":
+            if len(message.command) > 1 and message.command[1] != "subscribe":
                 btn.append([InlineKeyboardButton("⏳ Try Again ⏳", callback_data=f"b:{deep_link}")])
 
             await client.send_message(
@@ -88,7 +88,7 @@ async def start_command(client, message):
 
         btn = await create_request_forcesub_buttons(message.from_user.id)
         if btn:
-            if message.command[1] != "subscribe":
+            if len(message.command) > 1 and message.command[1] != "subscribe":
                 logger.info(message.command)
                 btn.append([InlineKeyboardButton("↻ Tʀʏ Aɢᴀɪɴ", callback_data=f"b:{deep_link}")])
                 
