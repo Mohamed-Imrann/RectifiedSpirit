@@ -58,30 +58,15 @@ PM_TXT = environ.get('PM_TXT', "Hello! Please send me a series title or key to g
 SPELL_CHECK_TXT = environ.get('SPELL_CHECK_TXT', "Did you mean something else? Please check your spelling or try a different title.")
 CHANNELS_TXT = environ.get('CHANNELS_TXT', "Join our channels for more content!")
 
-# Optional Bot messages and settings
-WELCOME_MESSAGE = os.environ.get("WELCOME_MESSAGE", "Hello {mention}! I am an advanced auto-filter bot. Send me the name of a movie or series to get started.")
-
-# Optional: About message.
-ABOUT_MESSAGE = os.environ.get("ABOUT_MESSAGE", "I am an advanced auto-filter bot created by @cold_onez.")
-
-# Optional: Start message for deep links.
-START_DEEPLINK_MESSAGE = os.environ.get("START_DEEPLINK_MESSAGE", "Click the button below to get your file.")
-
-# Optional: Support group link.
-SUPPORT_GROUP_LINK = os.environ.get("SUPPORT_GROUP_LINK", "https://t.me/Sflixbots")
-
-# Optional: Updates channel link.
-UPDATES_CHANNEL_LINK = os.environ.get("UPDATES_CHANNEL_LINK", "https://t.me/SflixBots")
-
 # Optional: Bot owner link.
 BOT_OWNER_LINK = os.environ.get("BOT_OWNER_LINK", "t.me/Sflixbots")
 START_TXT = environ.get('START_TXT', "𝗅'm SflixSeriesBot, ᴀ Gʀᴏᴜᴘ ᴍᴀɴᴀɢᴇʀ Bᴏᴛ Cʀᴇᴀᴛᴇᴅ ғᴏʀ Sflicb, ᴏɴʟʏ ᴀᴜᴛʜᴏʀɪsᴇᴅ ᴀᴅᴍɪɴs ᴄᴀɴ ᴀᴄᴄᴇss ᴅᴏɴ'ᴛ ᴡᴀsᴛᴇ ʏᴏᴜʀ ᴛɪᴍᴇ 😌")
 NO_POSTER_FOUND_IMG = environ.get('NO_POSTER_FOUND_IMG', "https://envs.sh/EMw.jpg").split()
-SPELL_CHECK_IMAGE = environ.get('SPELL_CHECK_IMAGE', 'https://envs.sh/EMw.jpg').split()
+SPELL_CHECK_IMAGE = environ.get('SPELL_CHECK_IMAGE', 'https://files.catbox.moe/dd4uyq.jpg').split()
 JOIN_REQS_DB = environ.get("JOIN_REQS_DB", DATABASE_URI)
 CUSTOM_FILE_CAPTION = environ.get("CUSTOM_FILE_CAPTION", "{previouscaption}")
 BATCH_FILE_CAPTION = environ.get("BATCH_FILE_CAPTION", '{previouscaption}')
-AUTO_DELETE_TIME = int(environ.get('AUTO_DELETE_TIME', 600))
+AUTO_DELETE_TIME = int(environ.get('AUTO_DELETE_TIME', 0)) #Set To 600 for 20mins Else Set 0
 AUTO_DELETE_MSG = environ.get('AUTO_DELETE_MSG', """<blockquote>⚠️ 𝙁𝙞𝙡𝙚 𝙒𝙞𝙡𝙡 𝘽𝙚 𝘿𝙚𝙡𝙚𝙩𝙚𝙙 𝙄𝙣 10 𝙈𝙞𝙣𝙪𝙩𝙚𝙨.</blockquote>""")
 PROTECT_CONTENT = is_enabled(environ.get('PROTECT_CONTENT', "False"), False)
 PUBLIC_FILE_STORE = is_enabled(environ.get('PUBLIC_FILE_STORE', "False"), False)
