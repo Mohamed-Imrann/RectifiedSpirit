@@ -24,7 +24,7 @@ DATABASE_URI="mongodb+srv://sp:sp@cluster0.eh3zdcl.mongodb.net/?retryWrites=true
 DATABASE_URL="mongodb+srv://sp:sp@cluster0.eh3zdcl.mongodb.net/?retryWrites=true&w=majority"
 DATABASE_NAME = "series_collection"
 COLLECTION_NAME = "series"
-ADMINS = [int(admin) if id_pattern.search(admin) else admin for admin in environ.get('ADMINS', '7144888498 7188908429 7874364809').split()]
+ADMINS = [int(admin) if id_pattern.search(admin) else admin for admin in environ.get('ADMINS', '7144888498 7188908429').split()]
 CHANNELS = [int(ch) if id_pattern.search(ch) else ch for ch in environ.get('CHANNELS', '-1001306691782').split()]
 auth_channel = environ.get('AUTH_CHANNEL', '')
 AUTH_CHANNEL = int(auth_channel) if auth_channel and id_pattern.search(auth_channel) else None
