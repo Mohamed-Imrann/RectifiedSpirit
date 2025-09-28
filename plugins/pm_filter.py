@@ -26,7 +26,6 @@ from utils import temp, get_links_for_quality
 import imdb
 import difflib
 import aiohttp
-from io import BytesIO
 
 # Configure logging
 logging.basicConfig(
@@ -193,56 +192,6 @@ def find_most_similar_title(query: str, search_results: list) -> dict:
                 return movie
     return None
 
-async def get_links_for_quality(client: Client, file_link_key: str):
-    logger.info(f"Fetching file links for key: {file_link_key}")
-    
-    if file_link_key.startswith("get_"):
-        try:
-            parts = file_link_key.split('_')
-            if len(parts) != 4:
-                logger.error(f"Invalid reference string format: {file_link_key}")
-                return [], 0, 0, 0
-            
-            channel_id = int(f"-100{parts[1]}")
-            first_msg_id = int(parts[2])
-            last_msg_id = int(parts[3])
-            
-            messages = await client.get_messages(
-                chat_id=channel_id,
-                message_ids=list(range(first_msg_id, last_msg_id + 1))
-            )
-            
-            if not messages:
-                logger.warning(f"No messages found for reference key: {file_link_key}")
-                return [], 0, 0, 0
-            
-            files_to_send = []
-            for msg in messages:
-                file_info = get_file_id(msg)
-                if file_info:
-                    files_to_send.append({
-                        "file_id": file_info.file_id,
-                        "caption": msg.caption or ""
-                    })
-            
-            logger.info(f"Found {len(files_to_send)} files for reference key {file_link_key}")
-            return files_to_send, channel_id, first_msg_id, last_msg_id
-        except Exception as e:
-            logger.error(f"Error processing reference key {file_link_key}: {e}")
-            return [], 0, 0, 0
-    else:
-        episode_doc = episodes_collection.find_one({"file_link_key": file_link_key})
-        if episode_doc and episode_doc.get("files"):
-            logger.info(f"Found {len(episode_doc['files'])} files for link key {file_link_key} in episodes_collection")
-            return (
-                episode_doc["files"],
-                episode_doc.get("channel_id", 0),
-                episode_doc.get("first_msg_id", 0),
-                episode_doc.get("last_msg_id", 0)
-            )
-        logger.warning(f"No files found in episodes_collection for link key: {file_link_key}")
-        return [], 0, 0, 0
-
 # Global filter function
 async def global_filters(client: Client, message: Message, text=False) -> bool:
     logger.info(f"Applying global filters to message {message.id} from user {message.from_user.id}")
@@ -342,7 +291,7 @@ async def series_filter(client: Client, message: Message):
                     
                     etho = await message.reply_photo(
                         photo=random.choice(SPELL_CHECK_IMAGE), 
-                        caption="<b>Choose Your Series:</b>", 
+                        caption="<b>Choose Your Series:\n Powered By SflixBots</b>", 
                         reply_markup=reply_markup
                     )
                     reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
@@ -369,8 +318,7 @@ async def series_filter(client: Client, message: Message):
             f"○ **Title:** `{series['title']}`\n"
             f"○ **Released On:** `{series['released_on']}`\n"
             f"○ **Genre:** `{series['genre']}`\n"
-            f"○ **Rating:** `{series['rating']}`\n"
-            f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`\n"
+            f"○ **Rating:** `{series['rating']}`\n\n"
             "Select the language you need...!"
         )
         poster_url = await get_main_poster(client, series_key)
@@ -531,7 +479,6 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             f"○ **Released On:** `{series['released_on']}`\n"
             f"○ **Genre:** `{series['genre']}`\n"
             f"○ **Rating:** `{series['rating']}`\n"
-            f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`"
         )
         
         language_names = [lang['name'] for lang in languages]
@@ -619,8 +566,7 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
         f"○ **Title:** `{series['title']}`\n"
         f"○ **Released On:** `{series['released_on']}`\n"
         f"○ **Genre:** `{series['genre']}`\n"
-        f"○ **Rating:** `{series['rating']}`\n"
-        f"○ **Media Type:** `{series.get('media_type', 'N/A').upper()}`"
+        f"○ **Rating:** `{series['rating']}`\n\n"
     )
     
     if data.startswith("back_"):
@@ -703,7 +649,7 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             season_layout = languages[language_index].get("season_layout", [1] * len(seasons))
             season_names = [season['name'] for season in seasons]
             
-            text = base_text + f"○ **Language:** `{language_name}`\nSelect the season you need...!"
+            text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
             
             layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
             
@@ -868,7 +814,7 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             
             qualities = seasons[callback_index].get("qualities", [])
             
-            text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`\n○ **Season:** `{season_name}`\nSelect the quality you need...!"
+            text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`\n○ **Season:** `{season_name}`\nSelect the quality you need...!\n Powered By SflixBots"
             
             layout = []
             for quality in qualities:
