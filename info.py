@@ -60,17 +60,28 @@ CHANNELS_TXT = environ.get('CHANNELS_TXT', "Join our channels for more content!"
 
 # Optional: Bot owner link.
 BOT_OWNER_LINK = os.environ.get("BOT_OWNER_LINK", "t.me/Sflixbots")
-START_TXT = environ.get('START_TXT', "𝗅'm SflixSeriesBot, ᴀ Gʀᴏᴜᴘ ᴍᴀɴᴀɢᴇʀ Bᴏᴛ Cʀᴇᴀᴛᴇᴅ ғᴏʀ Sflicb, ᴏɴʟʏ ᴀᴜᴛʜᴏʀɪsᴇᴅ ᴀᴅᴍɪɴs ᴄᴀɴ ᴀᴄᴄᴇss ᴅᴏɴ'ᴛ ᴡᴀsᴛᴇ ʏᴏᴜʀ ᴛɪᴍᴇ 😌")
+START_TXT = environ.get('START_TXT', "𝗅'm SflixSeriesBot, ᴀ Gʀᴏᴜᴘ ᴍᴀɴᴀɢᴇʀ Bᴏᴛ Cʀᴇᴀᴛᴇᴅ ғᴏʀ Series, ᴏɴʟʏ ᴀᴜᴛʜᴏʀɪsᴇᴅ ᴀᴅᴍɪɴs ᴄᴀɴ ᴀᴄᴄᴇss ᴅᴏɴ'ᴛ ᴡᴀsᴛᴇ ʏᴏᴜʀ ᴛɪᴍᴇ 😌 \n Powered BY @SflixBots ")
 NO_POSTER_FOUND_IMG = environ.get('NO_POSTER_FOUND_IMG', "https://envs.sh/EMw.jpg").split()
 SPELL_CHECK_IMAGE = environ.get('SPELL_CHECK_IMAGE', 'https://files.catbox.moe/hj7poq.jpg').split()
 JOIN_REQS_DB = environ.get("JOIN_REQS_DB", DATABASE_URI)
-CUSTOM_FILE_CAPTION = environ.get("CUSTOM_FILE_CAPTION", "{previouscaption}")
+#CUSTOM_FILE_CAPTION = environ.get("CUSTOM_FILE_CAPTION", "{previouscaption}")
+CUSTOM_FILE_CAPTION = environ.get("CUSTOM_FILE_CAPTION", (
+    '{file_caption}\n\n'
+    '╭─────── • ◆ • ───────╮\n'
+    ' »   Tᴠ - Wᴇʙ Sᴇʀɪᴇs - <a href="https://t.me/addlist/Pyo0OHcJbmM0MWI1">Jᴏɪɴ....</a>  «\n\n'
+    ' »         Mᴏᴠɪᴇs  - <a href="https://t.me/addlist/Pyo0OHcJbmM0MWI1">Jᴏɪɴ....</a>          «\n'
+    '╰─────── • ◆ • ───────╯\n'
+    '\n'
+    'Powered BY @SflixBots'
+))
 BATCH_FILE_CAPTION = environ.get("BATCH_FILE_CAPTION", (
     '{file_caption}\n\n'
     '╭─────── • ◆ • ───────╮\n'
     ' »   Tᴠ - Wᴇʙ Sᴇʀɪᴇs - <a href="https://t.me/addlist/Pyo0OHcJbmM0MWI1">Jᴏɪɴ....</a>  «\n\n'
     ' »         Mᴏᴠɪᴇs  - <a href="https://t.me/addlist/Pyo0OHcJbmM0MWI1">Jᴏɪɴ....</a>          «\n'
-    '╰─────── • ◆ • ───────╯'
+    '╰─────── • ◆ • ───────╯\n'
+    '\n'
+    'Powered BY @SflixBots'
 ))
 AUTO_DELETE_TIME = int(environ.get('AUTO_DELETE_TIME', 0)) #Set To 600 for 20mins Else Set 0
 AUTO_DELETE_MSG = environ.get('AUTO_DELETE_MSG', """<blockquote>⚠️ 𝙁𝙞𝙡𝙚 𝙒𝙞𝙡𝙡 𝘽𝙚 𝘿𝙚𝙡𝙚𝙩𝙚𝙙 𝙄𝙣 10 𝙈𝙞𝙣𝙪𝙩𝙚𝙨.</blockquote>""")
