@@ -66,7 +66,7 @@ SPELL_CHECK_IMAGE = environ.get('SPELL_CHECK_IMAGE', 'https://files.catbox.moe/h
 JOIN_REQS_DB = environ.get("JOIN_REQS_DB", DATABASE_URI)
 #CUSTOM_FILE_CAPTION = environ.get("CUSTOM_FILE_CAPTION", "{previouscaption}")
 CUSTOM_FILE_CAPTION = environ.get("CUSTOM_FILE_CAPTION", (
-    '{file_caption}\n\n'
+    '{previouscaption}\n\n'
     '╭─────── • ◆ • ───────╮\n'
     ' »   Tᴠ - Wᴇʙ Sᴇʀɪᴇs - <a href="https://t.me/addlist/Pyo0OHcJbmM0MWI1">Jᴏɪɴ....</a>  «\n\n'
     ' »         Mᴏᴠɪᴇs  - <a href="https://t.me/addlist/Pyo0OHcJbmM0MWI1">Jᴏɪɴ....</a>          «\n'
@@ -75,7 +75,7 @@ CUSTOM_FILE_CAPTION = environ.get("CUSTOM_FILE_CAPTION", (
     'Powered BY @SflixBots'
 ))
 BATCH_FILE_CAPTION = environ.get("BATCH_FILE_CAPTION", (
-    '{file_caption}\n\n'
+    '{previouscaption}\n\n'
     '╭─────── • ◆ • ───────╮\n'
     ' »   Tᴠ - Wᴇʙ Sᴇʀɪᴇs - <a href="https://t.me/addlist/Pyo0OHcJbmM0MWI1">Jᴏɪɴ....</a>  «\n\n'
     ' »         Mᴏᴠɪᴇs  - <a href="https://t.me/addlist/Pyo0OHcJbmM0MWI1">Jᴏɪɴ....</a>          «\n'
