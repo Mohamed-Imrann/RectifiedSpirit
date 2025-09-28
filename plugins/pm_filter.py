@@ -536,8 +536,7 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
         )
         
         language_names = [lang['name'] for lang in languages]
-        text = base_text + "
-Select the language you need...!"
+        text = base_text + "Select the language you need...!"
         
         layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
         
