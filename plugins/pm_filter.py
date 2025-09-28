@@ -166,7 +166,6 @@ async def get_main_poster(client: Client, series_key: str) -> str:
                 caption=f"Auto-fetched poster for {title}"
             )
             poster_file_id = uploaded.photo.file_id
-            await uploaded.delete()
         except Exception as e:
             logger.error(f"Failed to upload poster to Telegram: {e}")
             return NO_POSTER_FOUND_IMG[0]
@@ -352,7 +351,7 @@ async def series_filter(client: Client, message: Message):
                         "timestamp": time.time()
                     }
                     request_timestamps[f"{etho.chat.id}•{etho.id}"] = time.time()
-                    asyncio.create_task(DeleteMessage(etho))
+                    #asyncio.create_task(DeleteMessage(etho))
                     logger.info(f"Sent series selection message with {len(buttons)} options")
                     return
     
@@ -401,7 +400,7 @@ async def series_filter(client: Client, message: Message):
                 "timestamp": time.time()
             }
             request_timestamps[f"{etho.chat.id}•{etho.id}"] = time.time()
-            asyncio.create_task(DeleteMessage(etho))
+            #asyncio.create_task(DeleteMessage(etho))
             logger.info(f"Sent series filter response for {series['title']}")
         except Exception as e:
             logger.error(f"Error sending series filter message: {e}")
