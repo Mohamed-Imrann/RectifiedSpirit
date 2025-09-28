@@ -214,7 +214,7 @@ async def start_command(client, message):
                     )
                     asyncio.create_task(delete_file(track_msgs, client, delete_data))
                 else:
-                    #logger.info("No messages to track for deletion")
+                    logger.info("No messages to track for deletion")
                 return
 
             elif deep_link.startswith("e_"):
