@@ -470,3 +470,57 @@ async def get_fsub_chat(bot: Client, update: Message):
         await processing_msg.delete()
         logging.error(f"Error fetching fsub chats: {e}")
         await update.reply_text("An error occurred while fetching the fsub chats. Please check the logs for more details.", quote=True)
+
+@Client.on_message(filters.command("delchat1") & filters.user(ADMINS))
+async def delete_fsub_chat1(bot: Client, update: Message):
+    logger.info(f"Admin {update.from_user.id} requested to delete chat 1")
+    try:
+        chat_data = await db1().get_fsub_chat1()
+        if not chat_data:
+            await update.reply_text("Chat 1 is not set in the database.", quote=True)
+            return
+        
+        chat_id = chat_data['chat_id']
+        await db1().delete_fsub_chat1(chat_id)
+        
+        # Update dynamic.env file
+        with open("./dynamic.env", "wt+") as f:
+            f.write("REQ_CHANNEL_ONE=None")
+        
+        text = f"Removed chat <code>{chat_id}</code> from the database."
+        await update.reply_text(text=text, quote=True, parse_mode=enums.ParseMode.HTML)
+        
+        logger.info("Restarting to update REQ_CHANNEL_ONE from database...")
+        await update.reply_text("Restarting...", quote=True)
+        os.execl(sys.executable, sys.executable, "bot.py")
+        
+    except Exception as e:
+        logger.error(f"Error deleting chat 1: {e}")
+        await update.reply_text("An error occurred while deleting chat 1. Please check the logs.", quote=True)
+
+@Client.on_message(filters.command("delchat2") & filters.user(ADMINS))
+async def delete_fsub_chat2(bot: Client, update: Message):
+    logger.info(f"Admin {update.from_user.id} requested to delete chat 2")
+    try:
+        chat_data = await db1().get_fsub_chat2()
+        if not chat_data:
+            await update.reply_text("Chat 2 is not set in the database.", quote=True)
+            return
+        
+        chat_id = chat_data['chat_id']
+        await db1().delete_fsub_chat2(chat_id)
+        
+        # Update dynamic.env file
+        with open("./dynamic.env", "wt+") as f:
+            f.write("REQ_CHANNEL_TWO=None")
+        
+        text = f"Removed chat <code>{chat_id}</code> from the database."
+        await update.reply_text(text=text, quote=True, parse_mode=enums.ParseMode.HTML)
+        
+        logger.info("Restarting to update REQ_CHANNEL_TWO from database...")
+        await update.reply_text("Restarting...", quote=True)
+        os.execl(sys.executable, sys.executable, "bot.py")
+        
+    except Exception as e:
+        logger.error(f"Error deleting chat 2: {e}")
+        await update.reply_text("An error occurred while deleting chat 2. Please check the logs.", quote=True)
