@@ -13,7 +13,7 @@ from Script import script
 from pyrogram import Client, filters, enums
 from pyrogram.errors import ChatAdminRequired, FloodWait, BadRequest
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
-from database.ia_filterdb import Media, get_file_details, unpack_new_file_id
+#from database.ia_filterdb import Media, get_file_details, unpack_new_file_id
 from database.users_chats_db import db
 from database.request_forcesub_db import delete_all_one, delete_all_two
 from .request_forcesub import create_request_forcesub_buttons
