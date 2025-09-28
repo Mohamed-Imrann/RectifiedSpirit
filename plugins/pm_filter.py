@@ -105,6 +105,7 @@ def create_user_layout_from_pattern(items: List[str], layout_pattern: List[int],
             layout.append(row)
     
     if add_back_button:
+        layout.append([InlineKeyboardButton("✨Latest Series✨", url="https://t.me/+7luzbTPly8NmMDU1")])
         back_button = InlineKeyboardButton("⬅️ Back", callback_data=f"back_{back_target}")
         layout.append([back_button])
     
@@ -278,11 +279,12 @@ async def series_filter(client: Client, message: Message):
                 
                 if buttons:
                     layout = [[button] for button in buttons]
+                    layout.append([InlineKeyboardButton("✨ Request Series ✨", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
                     reply_markup = InlineKeyboardMarkup(layout)
                     
                     etho = await message.reply_photo(
                         photo=random.choice(SPELL_CHECK_IMAGE), 
-                        caption="<b>Choose Your Series:\n Powered By @SflixBots</b>", 
+                        caption="<b>Choose Your Series:</b>", 
                         reply_markup=reply_markup
                     )
                     reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
@@ -805,7 +807,7 @@ async def user_interface_callback_handler(client: Client, query: CallbackQuery):
             
             qualities = seasons[callback_index].get("qualities", [])
             
-            text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`\n○ **Season:** `{season_name}`\nSelect the quality you need...!\n Powered By @SflixBots"
+            text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`\n○ **Season:** `{season_name}`\nSelect the quality you need...!"
             
             layout = []
             for quality in qualities:
