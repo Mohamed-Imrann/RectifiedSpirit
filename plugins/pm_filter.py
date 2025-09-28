@@ -160,7 +160,7 @@ async def get_main_poster(client: Client, series_key: str) -> str:
         logger.debug(f"Found IMDb poster URL: {poster_url}")
         try:
             uploaded = await client.send_photo(
-                chat_id=ADMINS[0],
+                chat_id=ADMINS[1],
                 photo=poster_url,
                 caption=f"Auto-fetched poster for {title}"
             )
