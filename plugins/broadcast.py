@@ -5,7 +5,10 @@ from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram import Client, filters, enums
 from database.users_chats_db import db
 from info import ADMINS
-
+from pyrogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery, 
+    InputMediaPhoto
+)
 # Global dictionary to store original announcement messages
 announcement_messages = {}
 
