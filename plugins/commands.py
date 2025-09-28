@@ -20,7 +20,7 @@ from .request_forcesub import create_request_forcesub_buttons
 from database.join_reqs import JoinReqs
 db1 = JoinReqs
 from pymongo import MongoClient
-from info import ADMINS, AUTH_CHANNEL, LOG_CHANNEL, CUSTOM_FILE_CAPTION, PROTECT_CONTENT, DATABASE_URI, DATABASE_NAME, AUTO_DELETE_TIME, AUTO_DELETE_MSG, BATCH_FILE_CAPTION as CUSTOM_CAPTION, DB_CHANNEL, RAW_DB_CHANNEL, STICKER, STICKER_ID, PIC, PICS, START_TXT
+from info import ADMINS, AUTH_CHANNEL, LOG_CHANNEL, CUSTOM_FILE_CAPTION, BATCH_FILE_CAPTION, PROTECT_CONTENT, DATABASE_URI, DATABASE_NAME, AUTO_DELETE_TIME, AUTO_DELETE_MSG, BATCH_FILE_CAPTION as CUSTOM_CAPTION, DB_CHANNEL, RAW_DB_CHANNEL, STICKER, STICKER_ID, PIC, PICS, START_TXT
 from utils import get_size, is_subscribed, temp, temp_requests
 import re
 import json
@@ -46,26 +46,26 @@ logger = logging.getLogger(__name__)
 @Client.on_message(filters.command("start"))
 async def start_command(client, message):
     try:
-        logger.info(f"Start command received from user {message.from_user.id} in chat {message.chat.id}")
+        #logger.info(f"Start command received from user {message.from_user.id} in chat {message.chat.id}")
         
         if message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
-            logger.info(f"Processing group chat: {message.chat.title} ({message.chat.id})")
+            #logger.info(f"Processing group chat: {message.chat.title} ({message.chat.id})")
             await asyncio.sleep(4)
             if not await db.get_chat(message.chat.id):
                 total = await client.get_chat_members_count(message.chat.id)
-                logger.info(f"Adding new group to database: {message.chat.title} with {total} members")
+                #logger.info(f"Adding new group to database: {message.chat.title} with {total} members")
                 await client.send_message(LOG_CHANNEL, script.LOG_TEXT_G.format(message.chat.title, message.chat.id, total, "Unknown"))       
                 await db.add_chat(message.chat.id, message.chat.title)
             return 
 
         if not await db.is_user_exist(message.from_user.id):
-            logger.info(f"Adding new user to database: {message.from_user.first_name} ({message.from_user.id})")
+            #logger.info(f"Adding new user to database: {message.from_user.first_name} ({message.from_user.id})")
             await db.add_user(message.from_user.id, message.from_user.first_name)
 
         deep_link = None
         if len(message.command) > 1:
             deep_link = message.text.split(None, 1)[1]
-            logger.info(f"Processing deep link: {deep_link}")
+            #logger.info(f"Processing deep link: {deep_link}")
             
         if AUTH_CHANNEL and not await is_subscribed(client, message):
             try:
@@ -89,7 +89,7 @@ async def start_command(client, message):
         btn = await create_request_forcesub_buttons(message.from_user.id)
         if btn:
             if len(message.command) > 1 and message.command[1] != "subscribe":
-                logger.info(message.command)
+                #logger.info(message.command)
                 btn.append([InlineKeyboardButton("↻ Tʀʏ Aɢᴀɪɴ", callback_data=f"b:{deep_link}")])
                 
             await client.send_message(
@@ -110,13 +110,13 @@ async def start_command(client, message):
                     start = int(args[2])
                     end = int(args[3])
                     if int(channel_id) not in RAW_DB_CHANNEL:
-                        logger.warning(f"Channel {channel_id} not in allowed database channels")
+                        #logger.warning(f"Channel {channel_id} not in allowed database channels")
                         await temp_msg.delete()
                         return
                     ids = range(start, end + 1)
-                    logger.info(f"Fetching messages from channel {channel_id}, IDs {start} to {end}")
+                    #logger.info(f"Fetching messages from channel {channel_id}, IDs {start} to {end}")
                 else:
-                    logger.error(f"Invalid parameters in deep link: {deep_link}")
+                    #logger.error(f"Invalid parameters in deep link: {deep_link}")
                     await temp_msg.delete()
                     return
 
@@ -125,7 +125,7 @@ async def start_command(client, message):
                         get_messages(client, f"-100{channel_id}", ids),
                         timeout=30.0
                     )
-                    logger.info(f"Successfully fetched {len(messages)} messages")
+                    #logger.info(f"Successfully fetched {len(messages)} messages")
                 except asyncio.TimeoutError:
                     logger.error("Timeout while fetching messages")
                     await temp_msg.delete()
@@ -150,7 +150,7 @@ async def start_command(client, message):
 
                         if AUTO_DELETE_TIME and AUTO_DELETE_TIME > 0:
                             try:
-                                logger.info(f"Copying message with auto-delete enabled")
+                                #logger.info(f"Copying message with auto-delete enabled")
                                 copied_msg = await msg.copy(
                                     chat_id=message.from_user.id,
                                     caption=caption,
@@ -159,7 +159,7 @@ async def start_command(client, message):
                                 )
                                 if copied_msg:
                                     track_msgs.append(copied_msg)
-                                    logger.info(f"Message copied successfully, tracking for deletion")
+                                    #logger.info(f"Message copied successfully, tracking for deletion")
                             except FloodWait as e:
                                 logger.warning(f"FloodWait encountered: {e.value} seconds")
                                 await asyncio.sleep(e.value)
@@ -179,7 +179,7 @@ async def start_command(client, message):
                                 continue
                         else:
                             try:
-                                logger.info(f"Copying message without auto-delete")
+                                #logger.info(f"Copying message without auto-delete")
                                 await msg.copy(
                                     chat_id=message.from_user.id,
                                     caption=caption,
@@ -207,14 +207,14 @@ async def start_command(client, message):
                         continue
 
                 if track_msgs:
-                    logger.info(f"Sending auto-delete notification for {len(track_msgs)} messages")
+                    #logger.info(f"Sending auto-delete notification for {len(track_msgs)} messages")
                     delete_data = await client.send_message(
                         chat_id=message.from_user.id,
                         text=AUTO_DELETE_MSG.format(time=AUTO_DELETE_TIME)
                     )
                     asyncio.create_task(delete_file(track_msgs, client, delete_data))
                 else:
-                    logger.info("No messages to track for deletion")
+                    #logger.info("No messages to track for deletion")
                 return
 
             elif deep_link.startswith("e_"):
@@ -224,7 +224,7 @@ async def start_command(client, message):
                     return 
                     
                 series_name = args[1]
-                logger.info(f"Looking for series: {series_name}")
+                #logger.info(f"Looking for series: {series_name}")
                 series_data = ecollection.find_one({"series": series_name})
                 if not series_data or not series_data.get("files"):
                     logger.warning(f"No files found for series: {series_name}")
@@ -233,11 +233,11 @@ async def start_command(client, message):
                 await message.reply(f"📤 Sending {series_name} files...")
                 messages = []
                 files_count = len(series_data["files"])
-                logger.info(f"Found {files_count} files in series {series_name}")
+                #logger.info(f"Found {files_count} files in series {series_name}")
 
                 for i, entry in enumerate(series_data["files"]):
                     try:
-                        logger.info(f"Sending file {i+1}/{files_count} from series {series_name}")
+                        #logger.info(f"Sending file {i+1}/{files_count} from series {series_name}")
                         sent_msg = await client.send_cached_media(
                             message.chat.id, 
                             entry["file_id"],
@@ -256,23 +256,23 @@ async def start_command(client, message):
                         logger.error(f"Error sending file {i+1}: {str(e)}")
                         continue
 
-                await message.reply(f"✅ All files from {series_name} have been sent.")
-                logger.info(f"Successfully sent {len(messages)} files from series {series_name}")
+                #await message.reply(f"✅ All files from {series_name} have been sent.")
+                #logger.info(f"Successfully sent {len(messages)} files from series {series_name}")
                 return
             
             elif deep_link.startswith("B-"):
-                logger.info(f"Processing batch file deep link: {deep_link}")
+                #logger.info(f"Processing batch file deep link: {deep_link}")
                 sts = await message.reply("𝖳𝗁𝖾 𝖱𝖾𝗊𝗎𝖾𝗌𝗍𝖾𝖽 𝖥𝗂𝗅𝖾𝗌.....\n𝖪𝗂𝗇𝖽𝗅𝗒 𝖶𝖺𝗂𝗍!!!!")
                 file_id = deep_link.split("-", 1)[1]
                 msgs = BATCH_FILES.get(file_id)
 
                 if not msgs:
-                    logger.info(f"Downloading batch file: {file_id}")
+                    #logger.info(f"Downloading batch file: {file_id}")
                     file = await client.download_media(file_id)
                     try:
                         with open(file) as file_data:
                             msgs = json.loads(file_data.read())
-                            logger.info(f"Loaded {len(msgs)} messages from batch file")
+                            #logger.info(f"Loaded {len(msgs)} messages from batch file")
                     except Exception as e:
                         logger.error(f"Error opening batch file: {str(e)}")
                         await sts.edit("FAILED")
@@ -301,7 +301,7 @@ async def start_command(client, message):
                         if f_caption is None:
                             f_caption = f"{title}"
 
-                        logger.info(f"Sending cached media: {title}")
+                        #logger.info(f"Sending cached media: {title}")
                         bj = await client.send_cached_media(
                             chat_id=message.from_user.id,
                             file_id=msg.get("file_id"),
@@ -332,20 +332,20 @@ async def start_command(client, message):
                         continue
 
                 await sts.delete()
-                await message.reply(f"✅ All files have been sent.")
-                logger.info(f"Successfully sent {len(new_messages)} files from batch")
+                #await message.reply(f"✅ All files have been sent.")
+                #logger.info(f"Successfully sent {len(new_messages)} files from batch")
                 return
 
         buttons = [[InlineKeyboardButton('Switch Inline', switch_inline_query_current_chat='')]]
         reply_markup = InlineKeyboardMarkup(buttons)
         
-        logger.info("Sending start message with sticker")
+        #logger.info("Sending start message with sticker")
         try:
             await message.reply_sticker(STICKER_ID)
         except Exception as e:
             logger.error(f"Error sending sticker: {str(e)}")
         
-        logger.info("Sending start message text")
+        #logger.info("Sending start message text")
         try:
             await message.reply_text(
                 text=START_TXT,
@@ -367,7 +367,7 @@ async def start_command(client, message):
 @Client.on_message(filters.command("logs") & filters.user(ADMINS))
 async def log_file(bot, message):
     """Send log file"""
-    logger.info(f"Admin {message.from_user.id} requested log file")
+    #logger.info(f"Admin {message.from_user.id} requested log file")
     try:
         await message.reply_document('TelegramBot.txt')
         logger.info("Log file sent successfully")
@@ -383,7 +383,7 @@ async def restart_bot(client, message):
             text="<b>Bot Restarting ...</b>"
         )        
         await msg.edit("<b>Restart Successfully Completed ✅</b>")
-        logger.info("Executing restart commands")
+        #logger.info("Executing restart commands")
         system("git pull -f && pip3 install --no-cache-dir -r requirements.txt")
         execle(sys.executable, sys.executable, "bot.py", environ)
     except Exception as e:
@@ -392,25 +392,25 @@ async def restart_bot(client, message):
 
 @Client.on_message(filters.command("purgerequests1") & filters.user(ADMINS))
 async def purge_req_one(bot: Client, message: Message):
-    logger.info(f"Admin {message.from_user.id} requested to purge req one database")
+    #logger.info(f"Admin {message.from_user.id} requested to purge req one database")
     pls_wait = await bot.send_message(chat_id=message.chat.id, text="<b>Purging Req One Database...</b>", reply_to_message_id=message.id)
     await asyncio.sleep(1)
     await delete_all_one()
-    logger.info("Purged Req One Database.")
+    #logger.info("Purged Req One Database.")
     await pls_wait.edit("<b>Req One Database Purged ✅.</b>" )
 
 @Client.on_message(filters.command("purgerequests2") & filters.user(ADMINS))
 async def purge_req_two(bot: Client, message: Message):
-    logger.info(f"Admin {message.from_user.id} requested to purge req two database")
+    #logger.info(f"Admin {message.from_user.id} requested to purge req two database")
     pls_wait = await bot.send_message(chat_id=message.chat.id, text="<b>Purging Req Two Database...</b>", reply_to_message_id=message.id)
     await asyncio.sleep(1)
     await delete_all_two()
-    logger.info("Purged Req Two Database.")
+    #logger.info("Purged Req Two Database.")
     await pls_wait.edit("<b>Req Two Database Purged ✅.</b>" )
     
 @Client.on_message(filters.command("setchat1") & filters.user(ADMINS))
 async def add_fsub_chats1(bot: Client, update: Message):
-    logger.info(f"Admin {update.from_user.id} requested to set chat 1")
+    #logger.info(f"Admin {update.from_user.id} requested to set chat 1")
     chat = update.command[1] if len(update.command) > 1 else None
     if not chat:
         await update.reply_text("Invalid chat id.", quote=True)
