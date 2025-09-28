@@ -114,15 +114,6 @@ def find_close_matches(query, possibilities, n=3, cutoff=0.6):
     import difflib
     return difflib.get_close_matches(query, possibilities, n, cutoff)
 
-async def download_image_to_bytes(url: str) -> BytesIO:
-    """Download image from URL into BytesIO buffer."""
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                return BytesIO(await resp.read())
-            else:
-                raise Exception(f"Failed to download image: HTTP {resp.status}")
-
 async def get_main_poster(client: Client, series_key: str) -> str:
     """
     Get poster as Telegram file_id.
