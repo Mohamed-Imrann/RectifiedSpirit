@@ -339,12 +339,6 @@ async def start_command(client, message):
         buttons = [[InlineKeyboardButton('Switch Inline', switch_inline_query_current_chat='')]]
         reply_markup = InlineKeyboardMarkup(buttons)
         
-        #logger.info("Sending start message with sticker")
-        try:
-            await message.reply_sticker(STICKER_ID)
-        except Exception as e:
-            logger.error(f"Error sending sticker: {str(e)}")
-        
         #logger.info("Sending start message text")
         try:
             await message.reply_text(
