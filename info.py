@@ -29,7 +29,7 @@ CHANNELS = [int(ch) if id_pattern.search(ch) else ch for ch in environ.get('CHAN
 auth_channel = environ.get('AUTH_CHANNEL', '')
 AUTH_CHANNEL = int(auth_channel) if auth_channel and id_pattern.search(auth_channel) else None
 # Your request to join channel Ids
-REQ_CHANNEL_ONE =environ.get("REQ_CHANNEL_ONE", '-1002962062109')
+REQ_CHANNEL_ONE =environ.get("REQ_CHANNEL_ONE", None)
 REQ_CHANNEL_ONE = (int(REQ_CHANNEL_ONE) if REQ_CHANNEL_ONE and id_pattern.search(REQ_CHANNEL_ONE) else False) if REQ_CHANNEL_ONE is not None else None
 REQ_CHANNEL_TWO =environ.get("REQ_CHANNEL_TWO", None)
 REQ_CHANNEL_TWO = (int(REQ_CHANNEL_TWO) if REQ_CHANNEL_TWO and id_pattern.search(REQ_CHANNEL_TWO) else False) if REQ_CHANNEL_TWO is not None else None
