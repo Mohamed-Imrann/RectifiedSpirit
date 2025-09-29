@@ -61,7 +61,7 @@ def sync_env_vars():
     env_lines.append(f"RAW_DB_CHANNEL={raw_db_channels}")
     with open("./dynamic.env", "w", encoding="utf-8") as f:
         f.writelines(env_lines)
-    logger.info("dynamic.env updated with admin/channel info")
+    logging.info("dynamic.env updated with admin/channel info")
   
 name = "main"
 
