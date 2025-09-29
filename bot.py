@@ -78,6 +78,7 @@ class Bot(Client):
       )
 
   async def start(self, **kwargs):
+      sync_env_vars()
       await super().start()
       try:
           self.load_plugins()
