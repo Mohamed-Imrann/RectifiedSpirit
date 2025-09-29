@@ -27,43 +27,7 @@ from pyrogram import types
 from aiohttp import web
 from plugins import web_server
 from database.crazy_db import get_admin_assignments
-
-def sync_env_vars():
-
-    assigned_admins = get_admin_assignments()  # {user_id: channel_id}
-    assigned_admins_str = ",".join([f"{uid}:{cid}" for uid, cid in assigned_admins.items()])
-
-    db_channels = []
-    try:
-        db_channels = DB_CHANNEL if isinstance(DB_CHANNEL, list) else ast.literal_eval(DB_CHANNEL)
-        if not isinstance(db_channels, list):
-            db_channels = []
-    except Exception:
-        db_channels = []
-
-    for cid in assigned_admins.values():
-        if cid not in db_channels:
-            db_channels.append(cid)
-
-    db_channels = list(dict.fromkeys(db_channels))
-    raw_db_channels = [int(str(c)[4:]) for c in db_channels if str(c).startswith('-100')]
-    env_lines = []
-    if os.path.exists("./dynamic.env"):
-        with open("./dynamic.env", "r", encoding="utf-8") as f:
-            env_lines = f.readlines()
-    # Filter out old lines
-    env_lines = [line for line in env_lines if not line.startswith("ASSIGNED_ADMINS=")]
-    env_lines = [line for line in env_lines if not line.startswith("DB_CHANNEL=")]
-    env_lines = [line for line in env_lines if not line.startswith("RAW_DB_CHANNEL=")]
-    # Append new values
-    env_lines.append(f"ASSIGNED_ADMINS=[{assigned_admins_str}]\n")
-    env_lines.append(f"DB_CHANNEL=[{','.join(str(c) for c in db_channels)}]\n")
-    env_lines.append(f"RAW_DB_CHANNEL=[{','.join(str(c) for c in raw_db_channels)}]\n")
-
-    with open("./dynamic.env", "w", encoding="utf-8") as f:
-        f.writelines(env_lines)
-    logging.info("dynamic.env updated with admin/channel info")
-  
+ 
 name = "main"
 
 class Bot(Client):
@@ -146,7 +110,7 @@ class Bot(Client):
           try:
               await self.get_chat(id)
               test = await self.send_message(id, text="Bot Restarted")
-              logging.info("Channel Sending")
+              logging.info(f"Channel Sending - {id}")
               await test.delete()
           except Exception as e:
               logging.warning(f"Failed to send restart message to {id}: {e}")
