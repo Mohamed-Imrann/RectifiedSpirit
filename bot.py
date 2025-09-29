@@ -56,9 +56,10 @@ def sync_env_vars():
     env_lines = [line for line in env_lines if not line.startswith("DB_CHANNEL=")]
     env_lines = [line for line in env_lines if not line.startswith("RAW_DB_CHANNEL=")]
     # Append new values
-    env_lines.append(f"ASSIGNED_ADMINS={assigned_admins_str}")
-    env_lines.append(f"DB_CHANNEL={db_channels}")
-    env_lines.append(f"RAW_DB_CHANNEL={raw_db_channels}")
+    env_lines.append(f"ASSIGNED_ADMINS=[{assigned_admins_str}]\n")
+    env_lines.append(f"DB_CHANNEL=[{','.join(str(c) for c in db_channels)}]\n")
+    env_lines.append(f"RAW_DB_CHANNEL=[{','.join(str(c) for c in raw_db_channels)}]\n")
+
     with open("./dynamic.env", "w", encoding="utf-8") as f:
         f.writelines(env_lines)
     logging.info("dynamic.env updated with admin/channel info")
