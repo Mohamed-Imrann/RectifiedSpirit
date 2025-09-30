@@ -17,6 +17,7 @@ from pyrogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery, 
     InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 )
+from pyrogram.errors import FloodWait, BadRequest, MessageIdInvalid, UserNotParticipant, ChatAdminRequired
 from imdb import Cinemagoer
 from info import ADMINS, TMP_DOWNLOAD_DIRECTORY, TMDB_API_KEY, LOG_CHANNEL, DB_CHANNEL, RAW_DB_CHANNEL, NO_POSTER_FOUND_IMG
 from database.crazy_db import (
@@ -1033,47 +1034,202 @@ async def process_last_file_input(client: Client, message: Message):
         return
 
     # Forward the range of messages to the assigned channel without forward tag
-    await message.reply("Forwarding files to assigned channel. Please wait...")
-    new_message_ids = await forward_messages_without_tag(
-        client, source_channel_id, assigned_channel_id, source_first_msg_id, msg_id
-    )
+    progress_msg = await message.reply("⏳ Forwarding files to assigned channel. Please wait...")
+    
+    try:
+        new_message_ids = await forward_messages_without_tag_with_retry(
+            client, source_channel_id, assigned_channel_id, source_first_msg_id, msg_id, progress_msg
+        )
 
-    if not new_message_ids:
-        await message.reply("Failed to forward files. Please try again.")
-        return
+        if not new_message_ids:
+            await progress_msg.edit_text("❌ Failed to forward files. Please try again.")
+            return
 
-    # The new first and last message IDs in the assigned channel
-    new_first_msg_id = new_message_ids[0]
-    new_last_msg_id = new_message_ids[-1]
+        # The new first and last message IDs in the assigned channel
+        new_first_msg_id = new_message_ids[0]
+        new_last_msg_id = new_message_ids[-1]
 
-    # Form the link_key string
-    channel_id_str = str(assigned_channel_id)
-    if channel_id_str.startswith("-100"):
-        clean_channel_id = channel_id_str[4:]  # Remove -100 prefix
-    else:
-        clean_channel_id = channel_id_str[4:]
+        # Form the link_key string
+        channel_id_str = str(assigned_channel_id)
+        if channel_id_str.startswith("-100"):
+            clean_channel_id = channel_id_str[4:]  # Remove -100 prefix
+        else:
+            clean_channel_id = channel_id_str
 
-    # Form the link_key string without -100 prefix
-    link_key = f"get_{clean_channel_id}_{new_first_msg_id}_{new_last_msg_id}"
+        # Form the link_key string without -100 prefix
+        link_key = f"get_{clean_channel_id}_{new_first_msg_id}_{new_last_msg_id}"
 
-    # Update the quality with the new link_key
-    series_key = temp_admin_data[user_id].get("current_series_key")
-    language_name = temp_admin_data[user_id].get("current_language")
-    season_name = temp_admin_data[user_id].get("current_season")
-    quality_name = temp_admin_data[user_id].get("current_quality")
+        # Update the quality with the new link_key
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        language_name = temp_admin_data[user_id].get("current_language")
+        season_name = temp_admin_data[user_id].get("current_season")
+        quality_name = temp_admin_data[user_id].get("current_quality")
 
-    if not all([series_key, language_name, season_name, quality_name]):
-        await message.reply("Session expired. Please start over.")
-        return
+        if not all([series_key, language_name, season_name, quality_name]):
+            await progress_msg.edit_text("❌ Session expired. Please start over.")
+            return
 
-    # Update the quality
-    if add_or_update_quality(series_key, language_name, season_name, quality_name, link_key):
-        await message.reply(f"Quality '{quality_name}' updated successfully.")
-        # Go back to the quality management screen
-        main_message_id = temp_admin_data[user_id].get("main_message_id")
-        await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
-    else:
-        await message.reply("Failed to update quality. Please try again.")
+        # Update the quality with retry logic
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                if add_or_update_quality(series_key, language_name, season_name, quality_name, link_key):
+                    await progress_msg.edit_text(f"✅ Quality '{quality_name}' updated successfully with {len(new_message_ids)} files.")
+                    # Go back to the quality management screen
+                    main_message_id = temp_admin_data[user_id].get("main_message_id")
+                    await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+                    break
+                else:
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2)
+                        continue
+                    else:
+                        await progress_msg.edit_text("❌ Failed to update quality after multiple attempts. Please try again.")
+            except Exception as e:
+                logger.error(f"Error updating quality (attempt {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2)
+                    continue
+                else:
+                    await progress_msg.edit_text(f"❌ Error updating quality: {str(e)}")
+                    
+    except FloodWait as e:
+        logger.warning(f"FloodWait encountered in process_last_file_input: {e.value} seconds")
+        await progress_msg.edit_text(f"⏳ Telegram rate limit hit. Waiting {e.value} seconds...")
+        await asyncio.sleep(e.value)
+        await progress_msg.edit_text("🔄 Retrying operation...")
+        # Retry the operation
+        await process_last_file_input(client, message)
+    except Exception as e:
+        logger.error(f"Unexpected error in process_last_file_input: {e}")
+        await progress_msg.edit_text(f"❌ An unexpected error occurred: {str(e)}")
+
+
+async def forward_messages_without_tag_with_retry(
+    client: Client, 
+    source_channel_id: int, 
+    target_channel_id: int, 
+    first_msg_id: int, 
+    last_msg_id: int,
+    progress_msg: Message = None
+):
+    """
+    Forward messages without forward tag with comprehensive error handling
+    """
+    new_message_ids = []
+    total_messages = last_msg_id - first_msg_id + 1
+    processed = 0
+    failed = 0
+    
+    logger.info(f"Forwarding {total_messages} messages from {source_channel_id} to {target_channel_id}")
+    
+    for msg_id in range(first_msg_id, last_msg_id + 1):
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                # Get the message from source
+                try:
+                    msg = await client.get_messages(source_channel_id, msg_id)
+                except MessageIdInvalid:
+                    logger.warning(f"Message {msg_id} is invalid, skipping")
+                    failed += 1
+                    break
+                except Exception as e:
+                    logger.error(f"Error getting message {msg_id}: {e}")
+                    if retry_count < max_retries - 1:
+                        retry_count += 1
+                        await asyncio.sleep(2)
+                        continue
+                    else:
+                        failed += 1
+                        break
+                
+                if not msg or msg.empty:
+                    logger.warning(f"Message {msg_id} is empty, skipping")
+                    failed += 1
+                    break
+                
+                # Copy the message to target channel
+                try:
+                    copied_msg = await msg.copy(
+                        chat_id=target_channel_id,
+                        caption=msg.caption if msg.caption else None,
+                        parse_mode=enums.ParseMode.HTML if msg.caption else None
+                    )
+                    new_message_ids.append(copied_msg.id)
+                    processed += 1
+                    
+                    # Update progress every 5 messages
+                    if progress_msg and processed % 5 == 0:
+                        try:
+                            await progress_msg.edit_text(
+                                f"⏳ Forwarding files..."
+                                f"Progress: {processed}/{total_messages} ({failed} failed)"
+                            )
+                        except Exception:
+                            pass
+                    
+                    # Small delay to avoid rate limits
+                    await asyncio.sleep(0.5)
+                    break
+                    
+                except FloodWait as e:
+                    logger.warning(f"FloodWait encountered: {e.value} seconds")
+                    if progress_msg:
+                        try:
+                            await progress_msg.edit_text(
+                                f"⏳ Rate limit hit. Waiting {e.value} seconds..."
+                                f"Progress: {processed}/{total_messages}"
+                            )
+                        except Exception:
+                            pass
+                    await asyncio.sleep(e.value)
+                    retry_count += 1
+                    
+                except BadRequest as e:
+                    logger.error(f"BadRequest copying message {msg_id}: {str(e)}")
+                    if retry_count < max_retries - 1:
+                        retry_count += 1
+                        await asyncio.sleep(2)
+                        continue
+                    else:
+                        failed += 1
+                        break
+                        
+                except Exception as e:
+                    logger.error(f"Error copying message {msg_id}: {str(e)}")
+                    if retry_count < max_retries - 1:
+                        retry_count += 1
+                        await asyncio.sleep(2)
+                        continue
+                    else:
+                        failed += 1
+                        break
+                        
+            except Exception as e:
+                logger.error(f"Unexpected error processing message {msg_id}: {str(e)}")
+                if retry_count < max_retries - 1:
+                    retry_count += 1
+                    await asyncio.sleep(2)
+                    continue
+                else:
+                    failed += 1
+                    break
+    
+    if progress_msg:
+        try:
+            await progress_msg.edit_text(
+                f"✅ Forwarding complete!"
+                f"Successfully forwarded: {processed}/{total_messages}"
+                f"Failed: {failed}"
+            )
+        except Exception:
+            pass
+    
+    logger.info(f"Forwarding complete: {processed} successful, {failed} failed")
+    return new_message_ids if new_message_ids else None
 
 async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
@@ -1629,3 +1785,949 @@ async def newui_callback_handler(client: Client, callback_query: CallbackQuery):
         # Go back to the quality management screen
         main_message_id = temp_admin_data[user_id].get("main_message_id")
         await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
+
+
+from pyrogram import Client, filters, enums
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
+import os
+from datetime import datetime
+from database.crazy_db import series_collection, admin_assignments_collection
+from database.users_chats_db import db
+import html
+import json
+from info import ADMINS, TMP_DOWNLOAD_DIRECTORY
+from utils import get_poster
+from database.temp_db import temp_db
+
+# Add to your existing imports
+import asyncio
+import math
+from typing import List, Dict, Any
+
+# ==================== STATS COMMAND WITH REFRESH ====================
+
+@Client.on_message(filters.command('stats') & filters.user(ADMINS))
+async def get_stats(bot: Client, message: Message):
+    try:
+        stats_msg = await message.reply("📊 Gathering statistics...")
+        stats_data = await collect_stats_data()
+        html_content = generate_html_report(stats_data)
+        
+        filename = f"stats_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+        filepath = os.path.join(TMP_DOWNLOAD_DIRECTORY, filename)
+        
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        
+        await stats_msg.delete()
+        
+        msg = await message.reply_document(
+            document=filepath,
+            caption="📊 <b>Comprehensive System Statistics Report</b>",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Refresh", callback_data="refresh_stats")]
+            ])
+        )
+        
+        # Store message ID for refresh functionality
+        temp_db.set("stats_message", {
+            "message_id": msg.id,
+            "chat_id": msg.chat.id,
+            "filepath": filepath
+        })
+        
+    except Exception as e:
+        await message.reply(f"Error generating stats: {str(e)}")
+
+async def collect_stats_data():
+    """Collect all statistics data"""
+    stats_data = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "series": {},
+        "users": {},
+        "groups": {},
+        "admin_assignments": {},
+        "file_database": {}
+    }
+
+    # Get series statistics
+    stats_data["series"]["total"] = await series_collection.count_documents({})
+    stats_data["series"]["published"] = await series_collection.count_documents({"published": True})
+    stats_data["series"]["unpublished"] = await series_collection.count_documents({"published": False})
+
+    # Get unpublished series details
+    unpublished = []
+    async for series in series_collection.find({"published": False}):
+        unpublished.append({
+            "key": series["_id"],
+            "title": series.get("title", "N/A"),
+            "languages": len(series.get("languages", [])),
+            "created_by": series.get("created_by", "Unknown"),
+            "created_at": series.get("created_at", "Unknown")
+        })
+    stats_data["series"]["unpublished_details"] = unpublished
+
+    # Get users statistics
+    stats_data["users"]["total"] = await db.total_users_count()
+    stats_data["users"]["banned"] = len(await db.get_banned()[0])
+    
+    # Get groups statistics
+    stats_data["groups"]["total"] = await db.total_chat_count()
+    stats_data["groups"]["disabled"] = len(await db.get_banned()[1])
+    
+    # Get admin assignments
+    assignments = {}
+    async for doc in admin_assignments_collection.find({}):
+        assignments[str(doc["user_id"])] = doc["channel_id"]
+    stats_data["admin_assignments"] = assignments
+
+    return stats_data
+
+@Client.on_callback_query(filters.regex(r'^refresh_stats$') & filters.user(ADMINS))
+async def refresh_stats(bot: Client, callback_query: CallbackQuery):
+    try:
+        await callback_query.answer("Refreshing statistics...")
+        stats_data = await collect_stats_data()
+        html_content = generate_html_report(stats_data)
+        
+        stats_msg = temp_db.get("stats_message")
+        if not stats_msg:
+            await callback_query.message.reply("Stats message not found in cache.")
+            return
+            
+        filepath = stats_msg["filepath"]
+        
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        
+        # Delete old message
+        try:
+            await bot.delete_messages(
+                chat_id=stats_msg["chat_id"],
+                message_ids=stats_msg["message_id"]
+            )
+        except:
+            pass
+            
+        # Send updated stats
+        msg = await bot.send_document(
+            chat_id=stats_msg["chat_id"],
+            document=filepath,
+            caption=f"📊 <b>Updated Statistics Report</b>
+Last refreshed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Refresh", callback_data="refresh_stats")]
+            ])
+        )
+        
+        # Update stored message info
+        temp_db.set("stats_message", {
+            "message_id": msg.id,
+            "chat_id": msg.chat.id,
+            "filepath": filepath
+        })
+        
+    except Exception as e:
+        await callback_query.message.reply(f"Error refreshing stats: {str(e)}")
+
+
+def generate_html_report(data):
+    """Generate a complete HTML report with CSS and JavaScript"""
+    return f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Statistics Report</title>
+    <style>
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }}
+        h1, h2, h3 {{
+            color: #2c3e50;
+        }}
+        .report-header {{
+            background-color: #3498db;
+            color: white;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            text-align: center;
+        }}
+        .section {{
+            background-color: white;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }}
+        .card {{
+            background-color: #f8f9fa;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 3px;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }}
+        th, td {{
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }}
+        th {{
+            background-color: #3498db;
+            color: white;
+        }}
+        tr:nth-child(even) {{
+            background-color: #f2f2f2;
+        }}
+        .badge {{
+            display: inline-block;
+            padding: 3px 7px;
+            font-size: 12px;
+            font-weight: bold;
+            line-height: 1;
+            color: white;
+            text-align: center;
+            white-space: nowrap;
+            vertical-align: middle;
+            border-radius: 10px;
+        }}
+        .badge-primary {{
+            background-color: #3498db;
+        }}
+        .badge-success {{
+            background-color: #2ecc71;
+        }}
+        .badge-danger {{
+            background-color: #e74c3c;
+        }}
+        .badge-warning {{
+            background-color: #f39c12;
+        }}
+        .json-viewer {{
+            background-color: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: monospace;
+            max-height: 300px;
+            overflow-y: auto;
+        }}
+        .toggle-btn {{
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            margin-bottom: 10px;
+        }}
+        .hidden {{
+            display: none;
+        }}
+    </style>
+</head>
+<body>
+    <div class="report-header">
+        <h1>System Statistics Report</h1>
+        <p>Generated on {data['timestamp']}</p>
+    </div>
+
+    <div class="section">
+        <h2>📺 Series Statistics</h2>
+        <div class="card">
+            <div>Total Series: <span class="badge badge-primary">{data['series']['total']}</span></div>
+            <div>Published Series: <span class="badge badge-success">{data['series']['published']}</span></div>
+            <div>Unpublished Series: <span class="badge badge-warning">{data['series']['unpublished']}</span></div>
+        </div>
+
+        <h3>Unpublished Series Details</h3>
+        {generate_unpublished_series_table(data['series']['unpublished_details'])}
+    </div>
+
+    <div class="section">
+        <h2>👥 User Statistics</h2>
+        <div class="card">
+            <div>Total Users: <span class="badge badge-primary">{data['users']['total']}</span></div>
+            <div>Banned Users: <span class="badge badge-danger">{data['users']['banned']}</span></div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>👥 Group Statistics</h2>
+        <div class="card">
+            <div>Total Groups: <span class="badge badge-primary">{data['groups']['total']}</span></div>
+            <div>Disabled Groups: <span class="badge badge-danger">{data['groups']['disabled']}</span></div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>👑 Admin Assignments</h2>
+        <div class="card">
+            <div>Total Assignments: <span class="badge badge-primary">{len(data['admin_assignments'])}</span></div>
+        </div>
+        
+        <button class="toggle-btn" onclick="toggleJsonViewer('adminAssignmentsJson')">Toggle JSON View</button>
+        <div id="adminAssignmentsJson" class="json-viewer hidden">
+            <pre>{json.dumps(data['admin_assignments'], indent=4)}</pre>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>📊 Full Data</h2>
+        <button class="toggle-btn" onclick="toggleJsonViewer('fullDataJson')">Toggle Full JSON View</button>
+        <div id="fullDataJson" class="json-viewer hidden">
+            <pre>{json.dumps(data, indent=4)}</pre>
+        </div>
+    </div>
+
+    <script>
+        function toggleJsonViewer(id) {{
+            const element = document.getElementById(id);
+            element.classList.toggle('hidden');
+        }}
+    </script>
+</body>
+</html>
+"""
+
+def generate_unpublished_series_table(series_list):
+    if not series_list:
+        return "<p>No unpublished series found.</p>"
+    
+    rows = ""
+    for series in series_list:
+        rows += f"""
+        <tr>
+            <td>{html.escape(series['key'])}</td>
+            <td>{html.escape(series['title'])}</td>
+            <td>{series['languages']}</td>
+            <td>{html.escape(str(series['created_by']))}</td>
+            <td>{html.escape(str(series['created_at']))}</td>
+        </tr>
+        """
+    
+    return f"""
+    <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Title</th>
+                <th>Languages</th>
+                <th>Created By</th>
+                <th>Created At</th>
+            </tr>
+        </thead>
+        <tbody>
+            {rows}
+        </tbody>
+    </table>
+    """
+
+# ==================== EDIT SERIES COMMAND ====================
+
+# Add to your existing imports
+import math
+from typing import Optional, Dict, Any
+from info import NO_POSTER_FOUND_IMG
+from pyrogram.types import InputMediaPhoto
+
+# ==================== EDIT SERIES CORE FUNCTIONALITY ====================
+
+@Client.on_message(filters.command('editseries') & filters.user(ADMINS))
+async def edit_series_command(client: Client, message: Message):
+    """Handle /editseries command - show paginated list of series for editing"""
+    user_id = message.from_user.id
+    logger.info(f"Admin {user_id} initiated series edit")
+
+    all_series = []
+    async for series in series_collection.find({}):
+        all_series.append({
+            "key": series["_id"],
+            "title": series.get("title", "N/A"),
+            "published": series.get("published", False),
+            "poster_file_id": series.get("poster_file_id")
+        })
+
+    if not all_series:
+        await message.reply("No series found in database.")
+        return
+
+    temp_admin_data[user_id] = {
+        "state": "EDIT_SERIES_LIST",
+        "all_series": all_series,
+        "page": 1,
+        "total_pages": math.ceil(len(all_series) / 6),
+        "main_message_id": None
+    }
+
+    await send_series_list_page(client, user_id, message.chat.id, 1)
+
+async def send_series_list_page(client: Client, user_id: int, chat_id: int, page: int):
+    """Send a paginated list of series for editing"""
+    user_data = temp_admin_data.get(user_id, {})
+    if not user_data or user_data.get("state") != "EDIT_SERIES_LIST":
+        await client.send_message(chat_id, "Session expired. Please use /editseries again.")
+        return
+
+    all_series = user_data.get("all_series", [])
+    total_pages = user_data.get("total_pages", 1)
+    page = max(1, min(page, total_pages))
+
+    start_idx = (page - 1) * 6
+    page_series = all_series[start_idx : start_idx + 6]
+
+    buttons = []
+    for i in range(0, len(page_series), 2):
+        row = []
+        if i < len(page_series):
+            series = page_series[i]
+            btn_text = f"{series['title'][:15]}...{'✅' if series['published'] else '❌'}"
+            row.append(InlineKeyboardButton(btn_text, callback_data=f"edit_select_{series['key']}"))
+        if i + 1 < len(page_series):
+            series = page_series[i + 1]
+            btn_text = f"{series['title'][:15]}...{'✅' if series['published'] else '❌'}"
+            row.append(InlineKeyboardButton(btn_text, callback_data=f"edit_select_{series['key']}"))
+        if row:
+            buttons.append(row)
+
+    # Pagination controls
+    pagination = []
+    if page > 1:
+        pagination.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"edit_page_{page-1}"))
+    pagination.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
+    if page < total_pages:
+        pagination.append(InlineKeyboardButton("Next ➡️", callback_data=f"edit_page_{page+1}"))
+    
+    if pagination:
+        buttons.append(pagination)
+
+    text = "📝 <b>Select Series to Edit</b>
+✅ - Published
+❌ - Unpublished"
+    poster = NO_POSTER_FOUND_IMG[0]
+
+    try:
+        if user_data.get("main_message_id"):
+            await client.edit_message_media(
+                chat_id=chat_id,
+                message_id=user_data["main_message_id"],
+                media=InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.HTML),
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+        else:
+            msg = await client.send_photo(
+                chat_id=chat_id,
+                photo=poster,
+                caption=text,
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+            temp_admin_data[user_id]["main_message_id"] = msg.id
+    except Exception as e:
+        logger.error(f"Error sending series list: {e}")
+        await client.send_message(chat_id, "Error displaying series list. Please try again.")
+
+# In your existing code, modify the show_series_edit_ui function:
+async def show_series_edit_ui(client: Client, user_id: int, chat_id: int):
+    """Show the edit UI with publish toggle"""
+    user_data = temp_admin_data.get(user_id, {})
+    if not user_data or user_data.get("state") != "EDIT_SERIES":
+        await client.send_message(chat_id, "Session expired. Please start over.")
+        return
+
+    series_data = user_data["working_series"]
+    is_published = series_data.get("published", False)
+    poster_file_id = series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG[0]
+
+    text = (
+        f"○ <b>Editing:</b> <code>{series_data.get('title', 'N/A')}</code>"
+        f"○ <b>Status:</b> {'<b style=\"color:green\">PUBLISHED</b>' if is_published else '<b style=\"color:red\">UNPUBLISHED</b>'}"
+        f"○ <b>Released On:</b> <code>{series_data.get('released_on', 'N/A')}</code>"
+        f"○ <b>Genre:</b> <code>{series_data.get('genre', 'N/A')}</code>"
+        f"○ <b>Rating:</b> <code>{series_data.get('rating', 'N/A')}</code>"
+        f"○ <b>Media Type:</b> <code>{series_data.get('media_type', 'N/A').upper()}</code>"
+    )
+
+    buttons = [
+        [InlineKeyboardButton("🌐 Languages", callback_data="manage_languages")],
+        [InlineKeyboardButton("🖼️ Change Poster", callback_data="change_poster")],
+        [InlineKeyboardButton(
+            "✅ Publish" if not is_published else "❌ Unpublish", 
+            callback_data="toggle_publish"
+        )],
+        [InlineKeyboardButton("💾 Save Changes", callback_data="save_series_changes"),
+         InlineKeyboardButton("❌ Discard", callback_data="discard_series_changes")],
+        [InlineKeyboardButton("⬅️ Back to List", callback_data="back_to_series_list")]
+    ]
+
+    try:
+        await client.edit_message_media(
+            chat_id=chat_id,
+            message_id=user_data["main_message_id"],
+            media=InputMediaPhoto(media=poster_file_id, caption=text, parse_mode=enums.ParseMode.HTML),
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+    except Exception as e:
+        logger.error(f"Error showing edit UI: {e}")
+        await client.send_message(chat_id, "Error loading edit interface. Please try again.")
+
+# Add this new handler for publish toggle
+@Client.on_callback_query(filters.regex(r'^toggle_publish$') & filters.user(ADMINS))
+async def toggle_publish_status(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    user_data = temp_admin_data.get(user_id, {})
+    if not user_data or user_data.get("state") != "EDIT_SERIES":
+        await callback_query.answer("Session expired.", show_alert=True)
+        return
+
+    # Toggle the published status in working copy
+    current_status = user_data["working_series"].get("published", False)
+    user_data["working_series"]["published"] = not current_status
+    
+    # Show confirmation and refresh UI
+    await callback_query.answer(f"Status changed to {'PUBLISHED' if not current_status else 'UNPUBLISHED'}!", show_alert=True)
+    await show_series_edit_ui(client, user_id, callback_query.message.chat.id)
+
+# Modify the save handler to handle publish status changes
+@Client.on_callback_query(filters.regex(r'^save_series_changes$') & filters.user(ADMINS))
+async def save_series_changes(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    user_data = temp_admin_data.get(user_id, {})
+    if not user_data or user_data.get("state") != "EDIT_SERIES":
+        await callback_query.answer("Session expired.", show_alert=True)
+        return
+
+    series_key = user_data.get("series_key")
+    working_series = user_data.get("working_series")
+    original_series = user_data.get("original_series")
+    
+    try:
+        # Handle publish/unpublish consequences
+        if working_series.get("published") and not original_series.get("published"):
+            # Newly published - validate all required fields
+            if not validate_series_for_publishing(working_series):
+                await callback_query.answer("Cannot publish - missing required fields!", show_alert=True)
+                return
+        
+        result = await series_collection.replace_one(
+            {"_id": series_key},
+            working_series
+        )
+        
+        if result.modified_count > 0:
+            await callback_query.answer("✅ Changes saved successfully!", show_alert=True)
+            # Update original data
+            updated_series = await series_collection.find_one({"_id": series_key})
+            temp_admin_data[user_id]["original_series"] = updated_series
+            temp_admin_data[user_id]["working_series"] = updated_series.copy()
+            
+            await show_series_edit_ui(client, user_id, callback_query.message.chat.id)
+        else:
+            await callback_query.answer("No changes were made.", show_alert=True)
+            
+    except Exception as e:
+        logger.error(f"Error saving series changes: {e}")
+        await callback_query.answer("❌ Failed to save changes!", show_alert=True)
+
+def validate_series_for_publishing(series_data: dict) -> bool:
+    """Validate that a series has all required fields for publishing"""
+    required = [
+        'title',
+        'poster_file_id',
+        'languages'
+    ]
+    
+    for field in required:
+        if not series_data.get(field):
+            return False
+            
+    # Check at least one language has seasons with qualities
+    for lang in series_data.get("languages", []):
+        for season in lang.get("seasons", []):
+            if any(q.get("link_key") for q in season.get("qualities", [])):
+                return True
+    return False
+# ==================== CALLBACK HANDLERS ====================
+
+@Client.on_callback_query(filters.regex(r'^edit_page_(\d+)$') & filters.user(ADMINS))
+async def edit_series_page_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    page = int(callback_query.data.split("_")[-1])
+    await callback_query.answer()
+    await send_series_list_page(client, user_id, callback_query.message.chat.id, page)
+
+@Client.on_callback_query(filters.regex(r'^edit_select_') & filters.user(ADMINS))
+async def edit_select_series(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    series_key = callback_query.data.split("_")[-1]
+    await callback_query.answer("Loading series...")
+
+    series_data = await series_collection.find_one({"_id": series_key})
+    if not series_data:
+        await callback_query.message.reply("Series not found!")
+        return
+
+    temp_admin_data[user_id] = {
+        "state": "EDIT_SERIES",
+        "original_series": series_data,
+        "working_series": series_data.copy(),
+        "main_message_id": callback_query.message.id,
+        "series_key": series_key
+    }
+
+    await show_series_edit_ui(client, user_id, callback_query.message.chat.id)
+
+@Client.on_callback_query(filters.regex(r'^save_series_changes$') & filters.user(ADMINS))
+async def save_series_changes(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    user_data = temp_admin_data.get(user_id, {})
+    if not user_data or user_data.get("state") != "EDIT_SERIES":
+        await callback_query.answer("Session expired.", show_alert=True)
+        return
+
+    series_key = user_data.get("series_key")
+    working_series = user_data.get("working_series")
+    
+    try:
+        result = await series_collection.replace_one({"_id": series_key}, working_series)
+        
+        if result.modified_count > 0:
+            await callback_query.answer("✅ Changes saved successfully!", show_alert=True)
+            
+            # Update the working copy with the saved data
+            updated_series = await series_collection.find_one({"_id": series_key})
+            temp_admin_data[user_id]["original_series"] = updated_series
+            temp_admin_data[user_id]["working_series"] = updated_series.copy()
+            
+            await show_series_edit_ui(client, user_id, callback_query.message.chat.id)
+        else:
+            await callback_query.answer("No changes were made.", show_alert=True)
+            
+    except Exception as e:
+        logger.error(f"Error saving series changes: {e}")
+        await callback_query.answer("❌ Failed to save changes!", show_alert=True)
+
+@Client.on_callback_query(filters.regex(r'^discard_series_changes$') & filters.user(ADMINS))
+async def discard_series_changes(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    user_data = temp_admin_data.get(user_id, {})
+    if not user_data or user_data.get("state") != "EDIT_SERIES":
+        await callback_query.answer("Session expired.", show_alert=True)
+        return
+
+    original_series = user_data.get("original_series")
+    temp_admin_data[user_id]["working_series"] = original_series.copy()
+    await callback_query.answer("Changes discarded.", show_alert=True)
+    await show_series_edit_ui(client, user_id, callback_query.message.chat.id)
+
+@Client.on_callback_query(filters.regex(r'^back_to_series_list$') & filters.user(ADMINS))
+async def back_to_series_list(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    user_data = temp_admin_data.get(user_id, {})
+    if user_data and user_data.get("state") == "EDIT_SERIES":
+        # Switch back to list view
+        temp_admin_data[user_id] = {
+            "state": "EDIT_SERIES_LIST",
+            "all_series": temp_admin_data[user_id].get("all_series", []),
+            "page": temp_admin_data[user_id].get("page", 1),
+            "total_pages": temp_admin_data[user_id].get("total_pages", 1),
+            "main_message_id": callback_query.message.id
+        }
+        await callback_query.answer()
+        await send_series_list_page(client, user_id, callback_query.message.chat.id, 
+                                  temp_admin_data[user_id]["page"])
+    else:
+        await callback_query.answer("Invalid state.", show_alert=True)
+
+# ==================== MODIFIED EXISTING HANDLERS ====================
+
+async def send_language_management_message(client: Client, user_id: int, series_key: str, message_id: int):
+    """Modified to work with both editing and creation modes"""
+    user_data = temp_admin_data.get(user_id, {})
+    
+    # Determine source of series data
+    if user_data.get("state") == "EDIT_SERIES":
+        series_data = user_data["working_series"]
+    else:
+        series_data = await series_collection.find_one({"_id": series_key})
+    
+    if not series_data:
+        await client.send_message(user_id, "Series not found.")
+        return
+
+    languages = series_data.get("languages", [])
+    language_layout = series_data.get("language_layout", [])
+    
+    text = f"<b>Series:</b> <code>{series_data.get('title', 'N/A')}</code>"
+    text += "Select any Language group to add new Season/Part group inside them. Or click '+' button to add new Language group."
+
+    language_names = [lang['name'] for lang in languages]
+    
+    # Determine correct back button based on mode
+    back_callback = "back_to_series_edit" if user_data.get("state") == "EDIT_SERIES" else "back_to_series"
+    add_buttons = [("⬅️ Back", back_callback)]
+    
+    layout = create_dynamic_layout_from_pattern(language_names, language_layout, add_buttons)
+    reply_markup = InlineKeyboardMarkup(layout)
+    
+    poster_to_use = series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG[0]
+
+    try:
+        await client.edit_message_media(
+            chat_id=user_id,
+            message_id=message_id,
+            media=InputMediaPhoto(media=poster_to_use, caption=text, parse_mode=enums.ParseMode.HTML),
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logger.error(f"Error in language management UI: {e}")
+        raise
+
+# ==================== SEASON MANAGEMENT HANDLERS ====================
+
+async def send_season_management_message(client: Client, user_id: int, series_key: str, language_name: str, message_id: int):
+    """Show season management UI - works for both edit and create modes"""
+    user_data = temp_admin_data.get(user_id, {})
+    
+    # Get series data from appropriate source
+    if user_data.get("state") == "EDIT_SERIES":
+        series_data = user_data["working_series"]
+    else:
+        series_data = await series_collection.find_one({"_id": series_key})
+    
+    if not series_data:
+        await client.send_message(user_id, "Series not found.")
+        return
+
+    # Find the specific language
+    current_lang = next((lang for lang in series_data.get("languages", []) 
+                        if lang["name"].lower() == language_name.lower()), None)
+    if not current_lang:
+        await client.send_message(user_id, "Language not found.")
+        return
+
+    seasons = current_lang.get("seasons", [])
+    season_layout = current_lang.get("season_layout", [])
+    
+    text = (
+        f"<b>Series:</b> <code>{series_data.get('title', 'N/A')}</code>"
+        f"<b>Language:</b> <code>{language_name}</code>"
+        "Select any Season group to add new Quality group inside them. "
+        "Or click '+' button to add new Season group."
+    )
+
+    season_names = [season['name'] for season in seasons]
+    
+    # Determine correct back button based on mode
+    back_callback = "back_to_languages_edit" if user_data.get("state") == "EDIT_SERIES" else "back_to_languages"
+    
+    add_buttons = [
+        ("🖼️ Change Poster", f"change_lang_poster_{language_name}"),
+        ("⬅️ Back", back_callback)
+    ]
+    
+    layout = create_dynamic_layout_from_pattern(season_names, season_layout, add_buttons)
+    reply_markup = InlineKeyboardMarkup(layout)
+    
+    # Use language-specific poster if available, else series poster
+    poster_to_use = current_lang.get("poster_file_id") or series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG[0]
+
+    try:
+        await client.edit_message_media(
+            chat_id=user_id,
+            message_id=message_id,
+            media=InputMediaPhoto(media=poster_to_use, caption=text, parse_mode=enums.ParseMode.HTML),
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logger.error(f"Error in season management UI: {e}")
+        await client.send_message(user_id, "Error loading season management. Please try again.")
+
+@Client.on_callback_query(filters.regex(r'^back_to_languages_edit$') & filters.user(ADMINS))
+async def back_to_languages_from_seasons_edit(client: Client, callback_query: CallbackQuery):
+    """Handle back navigation from seasons to languages in edit mode"""
+    user_id = callback_query.from_user.id
+    user_data = temp_admin_data.get(user_id, {})
+    
+    if user_data.get("state") == "EDIT_SERIES":
+        # Return to series edit UI which will show languages
+        await show_series_edit_ui(client, user_id, callback_query.message.chat.id)
+    else:
+        await callback_query.answer("Invalid state", show_alert=True)
+
+# ==================== QUALITY MANAGEMENT HANDLERS ====================
+
+async def send_quality_management_message(
+    client: Client, 
+    user_id: int, 
+    series_key: str, 
+    language_name: str, 
+    season_name: str, 
+    message_id: int
+):
+    """Show quality management UI - works for both edit and create modes"""
+    user_data = temp_admin_data.get(user_id, {})
+    
+    # Get series data from appropriate source
+    if user_data.get("state") == "EDIT_SERIES":
+        series_data = user_data["working_series"]
+    else:
+        series_data = await series_collection.find_one({"_id": series_key})
+    
+    if not series_data:
+        await client.send_message(user_id, "Series not found.")
+        return
+
+    # Find the specific language and season
+    current_lang = next((lang for lang in series_data.get("languages", []) 
+                        if lang["name"].lower() == language_name.lower()), None)
+    if not current_lang:
+        await client.send_message(user_id, "Language not found.")
+        return
+
+    current_season = next((s for s in current_lang.get("seasons", []) 
+                          if s["name"].lower() == season_name.lower()), None)
+    if not current_season:
+        await client.send_message(user_id, "Season not found.")
+        return
+
+    qualities = current_season.get("qualities", [])
+    quality_layout = current_season.get("quality_layout", [])
+    
+    text = (
+        f"<b>Series:</b> <code>{series_data.get('title', 'N/A')}</code>"
+        f"<b>Language:</b> <code>{language_name}</code>"
+        f"<b>Season:</b> <code>{season_name}</code>"
+        "Select any Quality group to manage files. "
+        "Or click '+' button to add new Quality group."
+    )
+
+    quality_names = [quality['name'] for quality in qualities]
+    
+    # Determine correct back button based on mode
+    back_callback = "back_to_seasons_edit" if user_data.get("state") == "EDIT_SERIES" else "back_to_seasons"
+    
+    add_buttons = [
+        ("🖼️ Change Poster", f"change_season_poster_{language_name}_{season_name}"),
+        ("⬅️ Back", back_callback)
+    ]
+    
+    layout = create_dynamic_layout_from_pattern(quality_names, quality_layout, add_buttons)
+    reply_markup = InlineKeyboardMarkup(layout)
+    
+    # Use season-specific poster if available, then language, then series
+    poster_to_use = (
+        current_season.get("poster_file_id") or 
+        current_lang.get("poster_file_id") or 
+        series_data.get("poster_file_id") or 
+        NO_POSTER_FOUND_IMG[0]
+    )
+
+    try:
+        await client.edit_message_media(
+            chat_id=user_id,
+            message_id=message_id,
+            media=InputMediaPhoto(media=poster_to_use, caption=text, parse_mode=enums.ParseMode.HTML),
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logger.error(f"Error in quality management UI: {e}")
+        await client.send_message(user_id, "Error loading quality management. Please try again.")
+
+@Client.on_callback_query(filters.regex(r'^back_to_seasons_edit$') & filters.user(ADMINS))
+async def back_to_seasons_from_quality_edit(client: Client, callback_query: CallbackQuery):
+    """Handle back navigation from qualities to seasons in edit mode"""
+    user_id = callback_query.from_user.id
+    user_data = temp_admin_data.get(user_id, {})
+    
+    if user_data.get("state") == "EDIT_SERIES":
+        # Need to get language name from callback or temp data
+        # This would depend on how you store the context
+        language_name = user_data.get("current_language")
+        if language_name:
+            await send_season_management_message(
+                client,
+                user_id,
+                user_data["series_key"],
+                language_name,
+                callback_query.message.id
+            )
+        else:
+            await callback_query.answer("Language context missing", show_alert=True)
+    else:
+        await callback_query.answer("Invalid state", show_alert=True)
+
+# ==================== INTEGRATED CALLBACK DISPATCHER ====================
+
+@Client.on_callback_query(filters.user(ADMINS))
+async def integrated_callback_handler(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    data = callback_query.data
+    
+    try:
+        await callback_query.answer()
+        
+        # Edit series specific handlers
+        if data.startswith("edit_"):
+            if data.startswith("edit_page_"):
+                await edit_series_page_callback(client, callback_query)
+            elif data.startswith("edit_select_"):
+                await edit_select_series(client, callback_query)
+                
+        # Season management handlers
+        elif data.startswith("season_"):
+            season_name = data.split("_")[1]
+            user_data = temp_admin_data.get(user_id, {})
+            await send_quality_management_message(
+                client,
+                user_id,
+                user_data["series_key"],
+                user_data["current_language"],
+                season_name,
+                callback_query.message.id
+            )
+                
+        # Quality management handlers
+        elif data.startswith("quality_"):
+            quality_name = data.split("_")[1]
+            user_data = temp_admin_data.get(user_id, {})
+            # Handle quality selection - would show files interface
+            await handle_quality_selection(client, callback_query, quality_name)
+                
+        # Navigation handlers
+        elif data == "back_to_series_list":
+            await back_to_series_list(client, callback_query)
+        elif data == "back_to_series_edit":
+            await show_series_edit_ui(client, user_id, callback_query.message.chat.id)
+        elif data == "back_to_languages_edit":
+            await back_to_languages_from_seasons_edit(client, callback_query)
+        elif data == "back_to_seasons_edit":
+            await back_to_seasons_from_quality_edit(client, callback_query)
+                
+        # Action handlers
+        elif data == "save_series_changes":
+            await save_series_changes(client, callback_query)
+        elif data == "discard_series_changes":
+            await discard_series_changes(client, callback_query)
+        elif data == "toggle_publish":
+            await toggle_publish_status(client, callback_query)
+            
+        else:
+            # Pass through to original handler
+            await admin_ui_callback_handler(client, callback_query)
+            
+    except Exception as e:
+        logger.error(f"Error in integrated callback handler: {e}")
+        await callback_query.message.reply("An error occurred. Please try again.")
