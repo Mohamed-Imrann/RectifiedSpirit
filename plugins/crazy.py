@@ -2174,6 +2174,8 @@ async def edit_series_command(client: Client, message: Message):
 
     await send_series_list_page(client, user_id, message.chat.id, 1)
 
+# ==================== EDIT SERIES LIST ====================
+
 async def send_series_list_page(client: Client, user_id: int, chat_id: int, page: int):
     """Send a paginated list of series for editing"""
     user_data = temp_admin_data.get(user_id, {})
@@ -2213,7 +2215,7 @@ async def send_series_list_page(client: Client, user_id: int, chat_id: int, page
     if pagination:
         buttons.append(pagination)
 
-    text = "📝 <b>Select Series to Edit</b>\n✅ - Published\n❌ - Unpublished"
+    text = "📝 *Select Series to Edit*\n`✅ - Published`\n`❌ - Unpublished`"
     poster = NO_POSTER_FOUND_IMG[0]
 
     try:
@@ -2221,7 +2223,7 @@ async def send_series_list_page(client: Client, user_id: int, chat_id: int, page
             await client.edit_message_media(
                 chat_id=chat_id,
                 message_id=user_data["main_message_id"],
-                media=InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.HTML),
+                media=InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
                 reply_markup=InlineKeyboardMarkup(buttons)
             )
         else:
@@ -2229,14 +2231,16 @@ async def send_series_list_page(client: Client, user_id: int, chat_id: int, page
                 chat_id=chat_id,
                 photo=poster,
                 caption=text,
-                reply_markup=InlineKeyboardMarkup(buttons)
+                reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode=enums.ParseMode.MARKDOWN
             )
             temp_admin_data[user_id]["main_message_id"] = msg.id
     except Exception as e:
         logger.error(f"Error sending series list: {e}")
         await client.send_message(chat_id, "Error displaying series list. Please try again.")
 
-# In your existing code, modify the show_series_edit_ui function:
+# ==================== SERIES EDIT UI ====================
+
 async def show_series_edit_ui(client: Client, user_id: int, chat_id: int):
     """Show the edit UI with publish toggle"""
     user_data = temp_admin_data.get(user_id, {})
@@ -2249,12 +2253,20 @@ async def show_series_edit_ui(client: Client, user_id: int, chat_id: int):
     poster_file_id = series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG[0]
 
     text = (
-        f"○ <b>Editing:</b> <code>{series_data.get('title', 'N/A')}</code>"
-        f"○ <b>Status:</b> {'<b style=\"color:green\">PUBLISHED</b>' if is_published else '<b style=\"color:red\">UNPUBLISHED</b>'}"
-        f"○ <b>Released On:</b> <code>{series_data.get('released_on', 'N/A')}</code>"
-        f"○ <b>Genre:</b> <code>{series_data.get('genre', 'N/A')}</code>"
-        f"○ <b>Rating:</b> <code>{series_data.get('rating', 'N/A')}</code>"
-        f"○ <b>Media Type:</b> <code>{series_data.get('media_type', 'N/A').upper()}</code>"
+        "`○ Editing:` `{title}`"
+        "`○ Status:` {status}"
+        "`○ Released On:` `{released_on}`"
+        "`○ Genre:` `{genre}`"
+        "`○ Rating:` `{rating}`"
+        "`○ Media Type:` `{media_type}`"
+        "`Note: Changes won't affect live data until saved`"
+    ).format(
+        title=series_data.get('title', 'N/A'),
+        status="`🟢 PUBLISHED`" if is_published else "`🔴 UNPUBLISHED`",
+        released_on=series_data.get('released_on', 'N/A'),
+        genre=series_data.get('genre', 'N/A'),
+        rating=series_data.get('rating', 'N/A'),
+        media_type=series_data.get('media_type', 'N/A').upper()
     )
 
     buttons = [
@@ -2264,8 +2276,10 @@ async def show_series_edit_ui(client: Client, user_id: int, chat_id: int):
             "✅ Publish" if not is_published else "❌ Unpublish", 
             callback_data="toggle_publish"
         )],
-        [InlineKeyboardButton("💾 Save Changes", callback_data="save_series_changes"),
-         InlineKeyboardButton("❌ Discard", callback_data="discard_series_changes")],
+        [
+            InlineKeyboardButton("💾 Save", callback_data="save_series_changes"),
+            InlineKeyboardButton("❌ Discard", callback_data="discard_series_changes")
+        ],
         [InlineKeyboardButton("⬅️ Back to List", callback_data="back_to_series_list")]
     ]
 
@@ -2273,13 +2287,196 @@ async def show_series_edit_ui(client: Client, user_id: int, chat_id: int):
         await client.edit_message_media(
             chat_id=chat_id,
             message_id=user_data["main_message_id"],
-            media=InputMediaPhoto(media=poster_file_id, caption=text, parse_mode=enums.ParseMode.HTML),
+            media=InputMediaPhoto(media=poster_file_id, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
             reply_markup=InlineKeyboardMarkup(buttons)
         )
     except Exception as e:
         logger.error(f"Error showing edit UI: {e}")
         await client.send_message(chat_id, "Error loading edit interface. Please try again.")
 
+# ==================== LANGUAGE MANAGEMENT ====================
+
+async def send_language_management_message(client: Client, user_id: int, series_key: str, message_id: int):
+    """Modified to work with both editing and creation modes"""
+    user_data = temp_admin_data.get(user_id, {})
+    
+    # Determine source of series data
+    if user_data.get("state") == "EDIT_SERIES":
+        series_data = user_data["working_series"]
+    else:
+        series_data = await series_collection.find_one({"_id": series_key})
+    
+    if not series_data:
+        await client.send_message(user_id, "Series not found.")
+        return
+
+    languages = series_data.get("languages", [])
+    language_layout = series_data.get("language_layout", [])
+    
+    text = (
+        "`Series:` `{title}`"
+        "Select any Language group to add new Season/Part group inside them."
+        "Or click '+' button to add new Language group."
+    ).format(title=series_data.get('title', 'N/A'))
+
+    language_names = [lang['name'] for lang in languages]
+    
+    # Determine correct back button based on mode
+    back_callback = "back_to_series_edit" if user_data.get("state") == "EDIT_SERIES" else "back_to_series"
+    add_buttons = [("⬅️ Back", back_callback)]
+    
+    layout = create_dynamic_layout_from_pattern(language_names, language_layout, add_buttons)
+    reply_markup = InlineKeyboardMarkup(layout)
+    
+    poster_to_use = series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG[0]
+
+    try:
+        await client.edit_message_media(
+            chat_id=user_id,
+            message_id=message_id,
+            media=InputMediaPhoto(media=poster_to_use, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logger.error(f"Error in language management UI: {e}")
+        await client.send_message(user_id, "Error loading language management. Please try again.")
+
+# ==================== SEASON MANAGEMENT ====================
+
+async def send_season_management_message(client: Client, user_id: int, series_key: str, language_name: str, message_id: int):
+    """Show season management UI"""
+    user_data = temp_admin_data.get(user_id, {})
+    
+    if user_data.get("state") == "EDIT_SERIES":
+        series_data = user_data["working_series"]
+    else:
+        series_data = await series_collection.find_one({"_id": series_key})
+    
+    if not series_data:
+        await client.send_message(user_id, "Series not found.")
+        return
+
+    current_lang = next((lang for lang in series_data.get("languages", []) 
+                        if lang["name"].lower() == language_name.lower()), None)
+    if not current_lang:
+        await client.send_message(user_id, "Language not found.")
+        return
+
+    seasons = current_lang.get("seasons", [])
+    season_layout = current_lang.get("season_layout", [])
+    
+    text = (
+        "`Series:` `{title}`"
+        "`Language:` `{language}`"
+        "Select any Season group to add new Quality group inside them."
+        "Or click '+' button to add new Season group."
+    ).format(
+        title=series_data.get('title', 'N/A'),
+        language=language_name
+    )
+
+    season_names = [season['name'] for season in seasons]
+    
+    back_callback = "back_to_languages_edit" if user_data.get("state") == "EDIT_SERIES" else "back_to_languages"
+    add_buttons = [
+        ("🖼️ Change Poster", f"change_lang_poster_{language_name}"),
+        ("⬅️ Back", back_callback)
+    ]
+    
+    layout = create_dynamic_layout_from_pattern(season_names, season_layout, add_buttons)
+    reply_markup = InlineKeyboardMarkup(layout)
+    
+    poster_to_use = current_lang.get("poster_file_id") or series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG[0]
+
+    try:
+        await client.edit_message_media(
+            chat_id=user_id,
+            message_id=message_id,
+            media=InputMediaPhoto(media=poster_to_use, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logger.error(f"Error in season management UI: {e}")
+        await client.send_message(user_id, "Error loading season management. Please try again.")
+
+# ==================== QUALITY MANAGEMENT ====================
+
+async def send_quality_management_message(
+    client: Client, 
+    user_id: int, 
+    series_key: str, 
+    language_name: str, 
+    season_name: str, 
+    message_id: int
+):
+    """Show quality management UI"""
+    user_data = temp_admin_data.get(user_id, {})
+    
+    if user_data.get("state") == "EDIT_SERIES":
+        series_data = user_data["working_series"]
+    else:
+        series_data = await series_collection.find_one({"_id": series_key})
+    
+    if not series_data:
+        await client.send_message(user_id, "Series not found.")
+        return
+
+    current_lang = next((lang for lang in series_data.get("languages", []) 
+                        if lang["name"].lower() == language_name.lower()), None)
+    if not current_lang:
+        await client.send_message(user_id, "Language not found.")
+        return
+
+    current_season = next((s for s in current_lang.get("seasons", []) 
+                          if s["name"].lower() == season_name.lower()), None)
+    if not current_season:
+        await client.send_message(user_id, "Season not found.")
+        return
+
+    qualities = current_season.get("qualities", [])
+    quality_layout = current_season.get("quality_layout", [])
+    
+    text = (
+        "`Series:` `{title}`"
+        "`Language:` `{language}`"
+        "`Season:` `{season}`"
+        "Select any Quality group to manage files."
+        "Or click '+' button to add new Quality group."
+    ).format(
+        title=series_data.get('title', 'N/A'),
+        language=language_name,
+        season=season_name
+    )
+
+    quality_names = [quality['name'] for quality in qualities]
+    
+    back_callback = "back_to_seasons_edit" if user_data.get("state") == "EDIT_SERIES" else "back_to_seasons"
+    add_buttons = [
+        ("🖼️ Change Poster", f"change_season_poster_{language_name}_{season_name}"),
+        ("⬅️ Back", back_callback)
+    ]
+    
+    layout = create_dynamic_layout_from_pattern(quality_names, quality_layout, add_buttons)
+    reply_markup = InlineKeyboardMarkup(layout)
+    
+    poster_to_use = (
+        current_season.get("poster_file_id") or 
+        current_lang.get("poster_file_id") or 
+        series_data.get("poster_file_id") or 
+        NO_POSTER_FOUND_IMG[0]
+    )
+
+    try:
+        await client.edit_message_media(
+            chat_id=user_id,
+            message_id=message_id,
+            media=InputMediaPhoto(media=poster_to_use, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logger.error(f"Error in quality management UI: {e}")
+        await client.send_message(user_id, "Error loading quality management. Please try again.")
+        
 @Client.on_callback_query(filters.regex(r'^toggle_publish$') & filters.user(ADMINS))
 async def toggle_publish_status(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
@@ -2447,109 +2644,8 @@ async def back_to_series_list(client: Client, callback_query: CallbackQuery):
     else:
         await callback_query.answer("Invalid state.", show_alert=True)
 
-# ==================== MODIFIED EXISTING HANDLERS ====================
+# ==================== MODIFIED EXISTING HANDLERS ===================
 
-async def send_language_management_message(client: Client, user_id: int, series_key: str, message_id: int):
-    """Modified to work with both editing and creation modes"""
-    user_data = temp_admin_data.get(user_id, {})
-    
-    # Determine source of series data
-    if user_data.get("state") == "EDIT_SERIES":
-        series_data = user_data["working_series"]
-    else:
-        series_data = await series_collection.find_one({"_id": series_key})
-    
-    if not series_data:
-        await client.send_message(user_id, "Series not found.")
-        return
-
-    languages = series_data.get("languages", [])
-    language_layout = series_data.get("language_layout", [])
-    
-    text = f"<b>Series:</b> <code>{series_data.get('title', 'N/A')}</code>"
-    text += "Select any Language group to add new Season/Part group inside them. Or click '+' button to add new Language group."
-
-    language_names = [lang['name'] for lang in languages]
-    
-    # Determine correct back button based on mode
-    back_callback = "back_to_series_edit" if user_data.get("state") == "EDIT_SERIES" else "back_to_series"
-    add_buttons = [("⬅️ Back", back_callback)]
-    
-    layout = create_dynamic_layout_from_pattern(language_names, language_layout, add_buttons)
-    reply_markup = InlineKeyboardMarkup(layout)
-    
-    poster_to_use = series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG[0]
-
-    try:
-        await client.edit_message_media(
-            chat_id=user_id,
-            message_id=message_id,
-            media=InputMediaPhoto(media=poster_to_use, caption=text, parse_mode=enums.ParseMode.HTML),
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        logger.error(f"Error in language management UI: {e}")
-        raise
-
-# ==================== SEASON MANAGEMENT HANDLERS ====================
-
-async def send_season_management_message(client: Client, user_id: int, series_key: str, language_name: str, message_id: int):
-    """Show season management UI - works for both edit and create modes"""
-    user_data = temp_admin_data.get(user_id, {})
-    
-    # Get series data from appropriate source
-    if user_data.get("state") == "EDIT_SERIES":
-        series_data = user_data["working_series"]
-    else:
-        series_data = await series_collection.find_one({"_id": series_key})
-    
-    if not series_data:
-        await client.send_message(user_id, "Series not found.")
-        return
-
-    # Find the specific language
-    current_lang = next((lang for lang in series_data.get("languages", []) 
-                        if lang["name"].lower() == language_name.lower()), None)
-    if not current_lang:
-        await client.send_message(user_id, "Language not found.")
-        return
-
-    seasons = current_lang.get("seasons", [])
-    season_layout = current_lang.get("season_layout", [])
-    
-    text = (
-        f"<b>Series:</b> <code>{series_data.get('title', 'N/A')}</code>"
-        f"<b>Language:</b> <code>{language_name}</code>"
-        "Select any Season group to add new Quality group inside them. "
-        "Or click '+' button to add new Season group."
-    )
-
-    season_names = [season['name'] for season in seasons]
-    
-    # Determine correct back button based on mode
-    back_callback = "back_to_languages_edit" if user_data.get("state") == "EDIT_SERIES" else "back_to_languages"
-    
-    add_buttons = [
-        ("🖼️ Change Poster", f"change_lang_poster_{language_name}"),
-        ("⬅️ Back", back_callback)
-    ]
-    
-    layout = create_dynamic_layout_from_pattern(season_names, season_layout, add_buttons)
-    reply_markup = InlineKeyboardMarkup(layout)
-    
-    # Use language-specific poster if available, else series poster
-    poster_to_use = current_lang.get("poster_file_id") or series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG[0]
-
-    try:
-        await client.edit_message_media(
-            chat_id=user_id,
-            message_id=message_id,
-            media=InputMediaPhoto(media=poster_to_use, caption=text, parse_mode=enums.ParseMode.HTML),
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        logger.error(f"Error in season management UI: {e}")
-        await client.send_message(user_id, "Error loading season management. Please try again.")
 
 @Client.on_callback_query(filters.regex(r'^back_to_languages_edit$') & filters.user(ADMINS))
 async def back_to_languages_from_seasons_edit(client: Client, callback_query: CallbackQuery):
@@ -2564,83 +2660,6 @@ async def back_to_languages_from_seasons_edit(client: Client, callback_query: Ca
         await callback_query.answer("Invalid state", show_alert=True)
 
 # ==================== QUALITY MANAGEMENT HANDLERS ====================
-
-async def send_quality_management_message(
-    client: Client, 
-    user_id: int, 
-    series_key: str, 
-    language_name: str, 
-    season_name: str, 
-    message_id: int
-):
-    """Show quality management UI - works for both edit and create modes"""
-    user_data = temp_admin_data.get(user_id, {})
-    
-    # Get series data from appropriate source
-    if user_data.get("state") == "EDIT_SERIES":
-        series_data = user_data["working_series"]
-    else:
-        series_data = await series_collection.find_one({"_id": series_key})
-    
-    if not series_data:
-        await client.send_message(user_id, "Series not found.")
-        return
-
-    # Find the specific language and season
-    current_lang = next((lang for lang in series_data.get("languages", []) 
-                        if lang["name"].lower() == language_name.lower()), None)
-    if not current_lang:
-        await client.send_message(user_id, "Language not found.")
-        return
-
-    current_season = next((s for s in current_lang.get("seasons", []) 
-                          if s["name"].lower() == season_name.lower()), None)
-    if not current_season:
-        await client.send_message(user_id, "Season not found.")
-        return
-
-    qualities = current_season.get("qualities", [])
-    quality_layout = current_season.get("quality_layout", [])
-    
-    text = (
-        f"<b>Series:</b> <code>{series_data.get('title', 'N/A')}</code>"
-        f"<b>Language:</b> <code>{language_name}</code>"
-        f"<b>Season:</b> <code>{season_name}</code>"
-        "Select any Quality group to manage files. "
-        "Or click '+' button to add new Quality group."
-    )
-
-    quality_names = [quality['name'] for quality in qualities]
-    
-    # Determine correct back button based on mode
-    back_callback = "back_to_seasons_edit" if user_data.get("state") == "EDIT_SERIES" else "back_to_seasons"
-    
-    add_buttons = [
-        ("🖼️ Change Poster", f"change_season_poster_{language_name}_{season_name}"),
-        ("⬅️ Back", back_callback)
-    ]
-    
-    layout = create_dynamic_layout_from_pattern(quality_names, quality_layout, add_buttons)
-    reply_markup = InlineKeyboardMarkup(layout)
-    
-    # Use season-specific poster if available, then language, then series
-    poster_to_use = (
-        current_season.get("poster_file_id") or 
-        current_lang.get("poster_file_id") or 
-        series_data.get("poster_file_id") or 
-        NO_POSTER_FOUND_IMG[0]
-    )
-
-    try:
-        await client.edit_message_media(
-            chat_id=user_id,
-            message_id=message_id,
-            media=InputMediaPhoto(media=poster_to_use, caption=text, parse_mode=enums.ParseMode.HTML),
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        logger.error(f"Error in quality management UI: {e}")
-        await client.send_message(user_id, "Error loading quality management. Please try again.")
 
 @Client.on_callback_query(filters.regex(r'^back_to_seasons_edit$') & filters.user(ADMINS))
 async def back_to_seasons_from_quality_edit(client: Client, callback_query: CallbackQuery):
