@@ -2249,18 +2249,12 @@ async def show_series_edit_ui(client: Client, user_id: int, chat_id: int):
     poster_file_id = series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG[0]
 
     text = (
-        f"○ <b>Editing:</b> <code>{series_data.get('title', 'N/A')}</code>
-"
-        f"○ <b>Status:</b> {'<b style=\"color:green\">PUBLISHED</b>' if is_published else '<b style=\"color:red\">UNPUBLISHED</b>'}
-"
-        f"○ <b>Released On:</b> <code>{series_data.get('released_on', 'N/A')}</code>
-"
-        f"○ <b>Genre:</b> <code>{series_data.get('genre', 'N/A')}</code>
-"
-        f"○ <b>Rating:</b> <code>{series_data.get('rating', 'N/A')}</code>
-"
-        f"○ <b>Media Type:</b> <code>{series_data.get('media_type', 'N/A').upper()}</code>
-"
+        f"○ <b>Editing:</b> <code>{series_data.get('title', 'N/A')}</code>"
+        f"○ <b>Status:</b> {'<b style=\"color:green\">PUBLISHED</b>' if is_published else '<b style=\"color:red\">UNPUBLISHED</b>'}"
+        f"○ <b>Released On:</b> <code>{series_data.get('released_on', 'N/A')}</code>"
+        f"○ <b>Genre:</b> <code>{series_data.get('genre', 'N/A')}</code>"
+        f"○ <b>Rating:</b> <code>{series_data.get('rating', 'N/A')}</code>"
+        f"○ <b>Media Type:</b> <code>{series_data.get('media_type', 'N/A').upper()}</code>"
     )
 
     buttons = [
