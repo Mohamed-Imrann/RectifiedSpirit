@@ -1806,7 +1806,7 @@ from typing import List, Dict, Any
 
 # ==================== STATS COMMAND WITH REFRESH ====================
 
-@Client.on_message(filters.command('stats') & filters.user(ADMINS))
+@Client.on_message(filters.command('stats'))
 async def get_stats(bot: Client, message: Message):
     try:
         stats_msg = await message.reply("📊 Gathering statistics...")
