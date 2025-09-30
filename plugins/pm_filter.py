@@ -115,6 +115,9 @@ def find_close_matches(query, possibilities, n=3, cutoff=0.6):
     import difflib
     return difflib.get_close_matches(query, possibilities, n, cutoff)
 
+from pyrogram.errors import FloodWait, BadRequest
+import asyncio
+
 async def get_main_poster(client: Client, series_key: str) -> str:
     """
     Get poster as Telegram file_id.
@@ -150,15 +153,31 @@ async def get_main_poster(client: Client, series_key: str) -> str:
             return NO_POSTER_FOUND_IMG[0]
 
         logger.debug(f"Found IMDb poster URL: {poster_url}")
+
         try:
-            uploaded = await client.send_photo(
-                chat_id=ADMINS[1],
-                photo=poster_url,
-                caption=f"Auto-fetched poster for {title}"
-            )
+            uploaded = None
+            while True:
+                try:
+                    uploaded = await client.send_photo(
+                        chat_id=ADMINS[1],
+                        photo=poster_url,
+                        caption=f"Auto-fetched poster for {title}"
+                    )
+                    break
+                except FloodWait as e:
+                    logger.warning(f"FloodWait encountered: sleeping for {e.value} seconds")
+                    await asyncio.sleep(e.value)
+                except BadRequest as e:
+                    logger.error(f"BadRequest uploading poster: {str(e)}")
+                    return NO_POSTER_FOUND_IMG[0]
+                except Exception as e:
+                    logger.error(f"Error uploading poster to Telegram: {e}")
+                    return NO_POSTER_FOUND_IMG[0]
+
             poster_file_id = uploaded.photo.file_id
+
         except Exception as e:
-            logger.error(f"Failed to upload poster to Telegram: {e}")
+            logger.error(f"Unexpected error in send_photo block: {e}")
             return NO_POSTER_FOUND_IMG[0]
 
         try:
@@ -173,6 +192,7 @@ async def get_main_poster(client: Client, series_key: str) -> str:
     except Exception as e:
         logger.exception(f"Error in get_main_poster for '{title}': {e}")
         return NO_POSTER_FOUND_IMG[0]
+
 
 def find_most_similar_title(query: str, search_results: list) -> dict:
     titles = [movie.get('title', '').lower() for movie in search_results]
@@ -351,17 +371,13 @@ async def series_filter(client: Client, message: Message):
 async def handle_message(client: Client, message: Message):
     if message.from_user is None:
         if message.chat.type == enums.ChatType.PRIVATE:
-            user_id = message.chat.id
-            logger.debug(f"Using chat.id as user_id for private message {message.id}")
+            logger.debug(f"Using chat.id as user_id for private message")
         else:
-            logger.warning(f"Message {message.id} in group {message.chat.id} has no from_user; skipping")
+            logger.warning(f"Message in group has no from_user; skipping")
             return
     else:
         user_id = message.from_user.id
 
-    chat_id = message.chat.id
-    logger.info(f"Received text message {message.id} from user {user_id} in chat {chat_id}")
-    
     if message.chat.type != enums.ChatType.PRIVATE:
         logger.info(f"Message is in group {chat_id}, applying filters")
         glob = await global_filters(client, message)
@@ -370,7 +386,6 @@ async def handle_message(client: Client, message: Message):
         return
     
     if user_id not in CHANNELS:
-        logger.info(f"Applying filters for user {user_id}")
         glob = await global_filters(client, message)
         if glob == False:
             await series_filter(client, message)
