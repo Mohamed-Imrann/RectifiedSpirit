@@ -1913,8 +1913,7 @@ async def refresh_stats(bot: Client, callback_query: CallbackQuery):
         msg = await bot.send_document(
             chat_id=stats_msg["chat_id"],
             document=filepath,
-            caption=f"📊 <b>Updated Statistics Report</b>
-Last refreshed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            caption=f"📊 <b>Updated Statistics Report</b>\nLast refreshed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 Refresh", callback_data="refresh_stats")]
             ])
@@ -2214,9 +2213,7 @@ async def send_series_list_page(client: Client, user_id: int, chat_id: int, page
     if pagination:
         buttons.append(pagination)
 
-    text = "📝 <b>Select Series to Edit</b>
-✅ - Published
-❌ - Unpublished"
+    text = "📝 <b>Select Series to Edit</b>\n✅ - Published\n❌ - Unpublished"
     poster = NO_POSTER_FOUND_IMG[0]
 
     try:
@@ -2252,11 +2249,11 @@ async def show_series_edit_ui(client: Client, user_id: int, chat_id: int):
     poster_file_id = series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG[0]
 
     text = (
-        f"○ <b>Editing:</b> <code>{series_data.get('title', 'N/A')}</code>"
-        f"○ <b>Status:</b> {'<b style=\"color:green\">PUBLISHED</b>' if is_published else '<b style=\"color:red\">UNPUBLISHED</b>'}"
-        f"○ <b>Released On:</b> <code>{series_data.get('released_on', 'N/A')}</code>"
-        f"○ <b>Genre:</b> <code>{series_data.get('genre', 'N/A')}</code>"
-        f"○ <b>Rating:</b> <code>{series_data.get('rating', 'N/A')}</code>"
+        f"○ <b>Editing:</b> <code>{series_data.get('title', 'N/A')}</code>\n"
+        f"○ <b>Status:</b> {'<b style=\"color:green\">PUBLISHED</b>' if is_published else '<b style=\"color:red\">UNPUBLISHED</b>'}\n"
+        f"○ <b>Released On:</b> <code>{series_data.get('released_on', 'N/A')}</code>\n"
+        f"○ <b>Genre:</b> <code>{series_data.get('genre', 'N/A')}</code>\n"
+        f"○ <b>Rating:</b> <code>{series_data.get('rating', 'N/A')}</code>\n"
         f"○ <b>Media Type:</b> <code>{series_data.get('media_type', 'N/A').upper()}</code>"
     )
 
@@ -2470,7 +2467,7 @@ async def send_language_management_message(client: Client, user_id: int, series_
     languages = series_data.get("languages", [])
     language_layout = series_data.get("language_layout", [])
     
-    text = f"<b>Series:</b> <code>{series_data.get('title', 'N/A')}</code>"
+    text = f"<b>Series:</b> <code>{series_data.get('title', 'N/A')}</code>\n"
     text += "Select any Language group to add new Season/Part group inside them. Or click '+' button to add new Language group."
 
     language_names = [lang['name'] for lang in languages]
@@ -2522,8 +2519,8 @@ async def send_season_management_message(client: Client, user_id: int, series_ke
     season_layout = current_lang.get("season_layout", [])
     
     text = (
-        f"<b>Series:</b> <code>{series_data.get('title', 'N/A')}</code>"
-        f"<b>Language:</b> <code>{language_name}</code>"
+        f"<b>Series:</b> <code>{series_data.get('title', 'N/A')}</code>\n"
+        f"<b>Language:</b> <code>{language_name}</code>\n"
         "Select any Season group to add new Quality group inside them. "
         "Or click '+' button to add new Season group."
     )
@@ -2607,9 +2604,9 @@ async def send_quality_management_message(
     quality_layout = current_season.get("quality_layout", [])
     
     text = (
-        f"<b>Series:</b> <code>{series_data.get('title', 'N/A')}</code>"
-        f"<b>Language:</b> <code>{language_name}</code>"
-        f"<b>Season:</b> <code>{season_name}</code>"
+        f"<b>Series:</b> <code>{series_data.get('title', 'N/A')}</code>\n"
+        f"<b>Language:</b> <code>{language_name}</code>\n"
+        f"<b>Season:</b> <code>{season_name}</code>\n"
         "Select any Quality group to manage files. "
         "Or click '+' button to add new Quality group."
     )
