@@ -2249,13 +2249,20 @@ async def show_series_edit_ui(client: Client, user_id: int, chat_id: int):
     poster_file_id = series_data.get("poster_file_id") or NO_POSTER_FOUND_IMG[0]
 
     text = (
-        f"○ <b>Editing:</b> <code>{series_data.get('title', 'N/A')}</code>"
-        f"○ <b>Status:</b> {'<b style=\"color:green\">PUBLISHED</b>' if is_published else '<b style=\"color:red\">UNPUBLISHED</b>'}"
-        f"○ <b>Released On:</b> <code>{series_data.get('released_on', 'N/A')}</code>"
-        f"○ <b>Genre:</b> <code>{series_data.get('genre', 'N/A')}</code>"
-        f"○ <b>Rating:</b> <code>{series_data.get('rating', 'N/A')}</code>"
-        f"○ <b>Media Type:</b> <code>{series_data.get('media_type', 'N/A').upper()}</code>"
+        f"○ <b>Editing:</b> <code>{series_data.get('title', 'N/A')}</code>
+"
+        f"○ <b>Status:</b> {'<b style=\"color:green\">PUBLISHED</b>' if is_published else '<b style=\"color:red\">UNPUBLISHED</b>'}
+"
+        f"○ <b>Released On:</b> <code>{series_data.get('released_on', 'N/A')}</code>
+"
+        f"○ <b>Genre:</b> <code>{series_data.get('genre', 'N/A')}</code>
+"
+        f"○ <b>Rating:</b> <code>{series_data.get('rating', 'N/A')}</code>
+"
+        f"○ <b>Media Type:</b> <code>{series_data.get('media_type', 'N/A').upper()}</code>
+"
     )
+
     buttons = [
         [InlineKeyboardButton("🌐 Languages", callback_data="manage_languages")],
         [InlineKeyboardButton("🖼️ Change Poster", callback_data="change_poster")],
@@ -2279,7 +2286,6 @@ async def show_series_edit_ui(client: Client, user_id: int, chat_id: int):
         logger.error(f"Error showing edit UI: {e}")
         await client.send_message(chat_id, "Error loading edit interface. Please try again.")
 
-# Add this new handler for publish toggle
 @Client.on_callback_query(filters.regex(r'^toggle_publish$') & filters.user(ADMINS))
 async def toggle_publish_status(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
