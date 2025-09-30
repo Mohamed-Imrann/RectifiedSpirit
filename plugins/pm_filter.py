@@ -379,7 +379,6 @@ async def handle_message(client: Client, message: Message):
         user_id = message.from_user.id
 
     if message.chat.type != enums.ChatType.PRIVATE:
-        logger.info(f"Message is in group {chat_id}, applying filters")
         glob = await global_filters(client, message)
         if glob == False:
             await series_filter(client, message)
