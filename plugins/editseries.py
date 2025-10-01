@@ -151,18 +151,12 @@ async def send_series_details_message(client: Client, user_id: int, series_data:
     poster_file_id = get_poster_file_id(series_key) or NO_POSTER_FOUND_IMG[0]
 
     text = (
-        f"○ **Title:** `{series_data.get('title', 'N/A')}`
-"
-        f"○ **Released On:** `{series_data.get('released_on', 'N/A')}`
-"
-        f"○ **Genre:** `{series_data.get('genre', 'N/A')}`
-"
-        f"○ **Rating:** `{series_data.get('rating', 'N/A')}`
-"
-        f"○ **Media Type:** `{series_data.get('media_type', 'N/A').upper()}`
-"
-        f"○ **Published:** `{'✅' if series_data.get('published', False) else '❌'}`
-"
+        f"○ **Title:** `{series_data.get('title', 'N/A')}`"
+        f"○ **Released On:** `{series_data.get('released_on', 'N/A')}`"
+        f"○ **Genre:** `{series_data.get('genre', 'N/A')}`"
+        f"○ **Rating:** `{series_data.get('rating', 'N/A')}`"
+        f"○ **Media Type:** `{series_data.get('media_type', 'N/A').upper()}`"
+        f"○ **Published:** `{'✅' if series_data.get('published', False) else '❌'}`"
     )
 
     buttons = [
