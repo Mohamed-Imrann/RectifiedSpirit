@@ -1,5 +1,6 @@
+from bot import Bot as Client
 import io
-from pyrogram import filters, Client, enums
+from pyrogram import filters, enums
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from database.gfilters_mdb import(
    add_gfilter,
