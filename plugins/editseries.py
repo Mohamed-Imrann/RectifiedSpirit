@@ -915,7 +915,7 @@ async def edit_series_callback_handler(client: Client, callback_query: CallbackQ
         else:
             await client.send_message(user_id, "Failed to remove quality files. Please try again.")
         
-        elif data == "edit_cancel_quality":
+    elif data == "edit_cancel_quality":
         # Cancel and go back to quality management
         series_key = temp_admin_data[user_id].get("current_series_key")
         language_name = temp_admin_data[user_id].get("current_language")
