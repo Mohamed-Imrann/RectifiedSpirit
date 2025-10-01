@@ -91,7 +91,7 @@ def create_dynamic_layout_from_pattern(items: List[str], layout_pattern: List[in
     
     return layout
 
-async def download_and_upload_poster(client: Client, poster_url: str = None, message: Message = None, send_to_log_channel: bool = True):
+async def download_and_upload_poster(client, poster_url: str = None, message: Message = None, send_to_log_channel: bool = True):
     logger.info("Downloading and uploading poster")
     temp_dir = os.path.join(TMP_DOWNLOAD_DIRECTORY, str(uuid.uuid4()))
     os.makedirs(temp_dir, exist_ok=True)
@@ -145,7 +145,7 @@ async def download_and_upload_poster(client: Client, poster_url: str = None, mes
             logger.debug(f"Cleaned up temporary directory: {temp_dir}")
     return file_id
 
-async def send_series_details_message(client: Client, user_id: int, series_data: dict, message_id: int = None):
+async def send_series_details_message(client, user_id: int, series_data: dict, message_id: int = None):
     logger.info(f"Sending series details message to user {user_id}")
     series_key = series_data['_id']
     poster_file_id = get_poster_file_id(series_key) or NO_POSTER_FOUND_IMG[0]
@@ -192,7 +192,7 @@ async def send_series_details_message(client: Client, user_id: int, series_data:
     except Exception as e:
         logger.error(f"Error sending series details message: {e}")
 
-async def send_language_management_message(client: Client, user_id: int, series_key: str, message_id: int):
+async def send_language_management_message(client, user_id: int, series_key: str, message_id: int):
     logger.info(f"Sending language management message to user {user_id}")
     series_data = get_series_by_key(series_key)
     if not series_data:
@@ -241,7 +241,7 @@ async def send_language_management_message(client: Client, user_id: int, series_
         logger.error(f"Error editing language management message: {e}")
         return None
 
-async def send_season_management_message(client: Client, user_id: int, series_key: str, language_name: str, message_id: int):
+async def send_season_management_message(client, user_id: int, series_key: str, language_name: str, message_id: int):
     logger.info(f"Sending season management message to user {user_id}")
     series_data = get_series_by_key(series_key)
     if not series_data:
@@ -300,7 +300,7 @@ async def send_season_management_message(client: Client, user_id: int, series_ke
         logger.error(f"Error editing season management message: {e}")
         return None
 
-async def send_quality_management_message(client: Client, user_id: int, series_key: str, language_name: str, season_name: str, message_id: int):
+async def send_quality_management_message(client, user_id: int, series_key: str, language_name: str, season_name: str, message_id: int):
     logger.info(f"Sending quality management message to user {user_id}")
     series_data = get_series_by_key(series_key)
     if not series_data:
@@ -362,7 +362,7 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
         return None
 
 async def forward_messages_without_tag_with_retry(
-    client: Client, 
+    client, 
     source_channel_id: int, 
     target_channel_id: int, 
     first_msg_id: int, 
@@ -487,7 +487,7 @@ async def forward_messages_without_tag_with_retry(
     logger.info(f"Forwarding complete: {processed} successful, {failed} failed")
     return new_message_ids if new_message_ids else None
 
-async def edit_series_callback_handler(client: Client, callback_query: CallbackQuery):
+async def edit_series_callback_handler(client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     data = callback_query.data
     logger.info(f"Processing edit series callback: {data}")
@@ -1013,7 +1013,7 @@ async def edit_series_callback_handler(client: Client, callback_query: CallbackQ
         await send_series_selection_message(client, user_id, query, get_series(), main_message_id)
 
 @Client.on_message(filters.text & filters.private & filters.user(ADMINS))
-async def handle_edit_text_message(client: Client, message: Message):
+async def handle_edit_text_message(client, message: Message):
     user_id = message.from_user.id
     logger.info(f"Received admin text message {message.id} from user {user_id}")
     
@@ -1030,7 +1030,7 @@ async def handle_edit_text_message(client: Client, message: Message):
             await process_codec_input(client, message, message.text.strip())
 
 @Client.on_message((filters.photo | filters.video | filters.document) & filters.private & filters.user(ADMINS))
-async def handle_edit_media_message(client: Client, message: Message):
+async def handle_edit_media_message(client, message: Message):
     user_id = message.from_user.id
     logger.info(f"Received admin media message {message.id} from user {user_id}")
     
@@ -1048,7 +1048,7 @@ async def handle_edit_media_message(client: Client, message: Message):
         elif current_state == "EDIT_AWAITING_LAST_FILE":
             await process_last_file_input(client, message)
 
-async def process_language_input(client: Client, message: Message, language_name: str):
+async def process_language_input(client, message: Message, language_name: str):
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
     target_row = temp_admin_data[user_id].get("target_row")
@@ -1104,7 +1104,7 @@ async def process_language_input(client: Client, message: Message, language_name
         logger.error(f"Error adding language: {e}")
         await message.reply(f"Error adding language: {e}")
 
-async def process_season_input(client: Client, message: Message, season_name: str):
+async def process_season_input(client, message: Message, season_name: str):
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
     language_name = temp_admin_data[user_id].get("current_language")
@@ -1167,7 +1167,7 @@ async def process_season_input(client: Client, message: Message, season_name: st
         logger.error(f"Error adding season: {e}")
         await message.reply(f"Error adding season: {e}")
 
-async def process_quality_input(client: Client, message: Message, quality_name: str):
+async def process_quality_input(client, message: Message, quality_name: str):
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
     language_name = temp_admin_data[user_id].get("current_language")
@@ -1237,7 +1237,7 @@ async def process_quality_input(client: Client, message: Message, quality_name: 
         logger.error(f"Error adding quality: {e}")
         await message.reply(f"Error adding quality: {e}")
 
-async def process_codec_input(client: Client, message: Message, codec_name: str):
+async def process_codec_input(client, message: Message, codec_name: str):
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
     language_name = temp_admin_data[user_id].get("current_language")
@@ -1302,7 +1302,7 @@ async def process_codec_input(client: Client, message: Message, codec_name: str)
         logger.error(f"Error adding codec: {e}")
         await message.reply(f"Error adding codec: {e}")
 
-async def process_poster_input(client: Client, message: Message, poster_type: str):
+async def process_poster_input(client, message: Message, poster_type: str):
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
     language_name = temp_admin_data[user_id].get("current_language")
@@ -1341,7 +1341,7 @@ async def process_poster_input(client: Client, message: Message, poster_type: st
     elif poster_type == "season":
         await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id)
 
-async def process_first_file_input(client: Client, message: Message):
+async def process_first_file_input(client, message: Message):
     user_id = message.from_user.id
     # Get the channel_id and message_id from the forwarded message
     channel_id, msg_id = await get_message_id(client, message)
@@ -1368,7 +1368,7 @@ async def process_first_file_input(client: Client, message: Message):
     temp_admin_data[user_id]["state"] = "EDIT_AWAITING_LAST_FILE"
     temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
 
-async def process_last_file_input(client: Client, message: Message):
+async def process_last_file_input(client, message: Message):
     user_id = message.from_user.id
     # Get the channel_id and message_id from the forwarded message
     channel_id, msg_id = await get_message_id(client, message)
@@ -1467,7 +1467,7 @@ async def process_last_file_input(client: Client, message: Message):
         await progress_msg.edit_text(f"❌ An unexpected error occurred: {str(e)}")
 
 @Client.on_callback_query(filters.user(ADMINS))
-async def callback_handler(client: Client, callback_query: CallbackQuery):
+async def callback_handler(client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     data = callback_query.data
     
@@ -1475,7 +1475,7 @@ async def callback_handler(client: Client, callback_query: CallbackQuery):
         await edit_series_callback_handler(client, callback_query)
 
 @Client.on_message(filters.command('editseries') & filters.user(ADMINS))
-async def edit_series_command(client: Client, message: Message):
+async def edit_series_command(client, message):
     user_id = message.from_user.id
     logger.info(f"Admin {user_id} started edit series UI")
     
