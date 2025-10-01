@@ -151,18 +151,30 @@ async def send_series_details_message(client: Client, user_id: int, series_data:
     poster_file_id = get_poster_file_id(series_key) or NO_POSTER_FOUND_IMG[0]
 
     text = (
-        f"○ **Title:** `{series_data.get('title', 'N/A')}`"
-        f"○ **Released On:** `{series_data.get('released_on', 'N/A')}`"
-        f"○ **Genre:** `{series_data.get('genre', 'N/A')}`"
-        f"○ **Rating:** `{series_data.get('rating', 'N/A')}`"
-        f"○ **Media Type:** `{series_data.get('media_type', 'N/A').upper()}`"
+        f"○ **Title:** `{series_data.get('title', 'N/A')}`
+"
+        f"○ **Released On:** `{series_data.get('released_on', 'N/A')}`
+"
+        f"○ **Genre:** `{series_data.get('genre', 'N/A')}`
+"
+        f"○ **Rating:** `{series_data.get('rating', 'N/A')}`
+"
+        f"○ **Media Type:** `{series_data.get('media_type', 'N/A').upper()}`
+"
+        f"○ **Published:** `{'✅' if series_data.get('published', False) else '❌'}`
+"
     )
 
     buttons = [
         InlineKeyboardButton("🌐 Languages", callback_data="edit_manage_languages"),
         InlineKeyboardButton("🖼️ Poster", callback_data="edit_change_poster"),
-        InlineKeyboardButton("📤 Update", callback_data="edit_publish_series")
     ]
+    
+    # Add toggle publish button only if series is unpublished
+    if not series_data.get('published', False):
+        buttons.append(InlineKeyboardButton("📤 Publish", callback_data="edit_publish_series"))
+    else:
+        buttons.append(InlineKeyboardButton("📝 Update", callback_data="edit_update_series"))
     
     layout = [[buttons[0]], [buttons[1], buttons[2]]]
     reply_markup = InlineKeyboardMarkup(layout)
@@ -175,21 +187,16 @@ async def send_series_details_message(client: Client, user_id: int, series_data:
                 media=InputMediaPhoto(media=poster_file_id, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
                 reply_markup=reply_markup
             )
-            logger.debug(f"Edited series details message {message_id}")
-            return message_id
         else:
-            msg = await client.send_photo(
+            await client.send_photo(
                 chat_id=user_id,
                 photo=poster_file_id,
                 caption=text,
                 reply_markup=reply_markup,
                 parse_mode=enums.ParseMode.MARKDOWN
             )
-            logger.debug(f"Sent new series details message {msg.id}")
-            return msg.id
     except Exception as e:
         logger.error(f"Error sending series details message: {e}")
-        return None
 
 async def send_language_management_message(client: Client, user_id: int, series_key: str, message_id: int):
     logger.info(f"Sending language management message to user {user_id}")
@@ -798,18 +805,48 @@ async def edit_series_callback_handler(client: Client, callback_query: CallbackQ
     elif data == "edit_publish_series":
         series_key = temp_admin_data[user_id].get("current_series_key")
         try:
-            await callback_query.answer("Updating series...")
+            await callback_query.answer("Publishing...")
         except:
             pass
         
         text = (
-            "Do you want to update this series?"
-            "NOTE: This will remove all empty groups."
+            "Do you want to publish this series?"
+            "NOTE: Once published, it will be visible to users."
         )
         
         buttons = [
-            [InlineKeyboardButton("✅ Yes", callback_data="edit_confirm_publish")],
-            [InlineKeyboardButton("❌ No", callback_data="edit_cancel_publish")]
+            [InlineKeyboardButton("✅ Yes, Publish", callback_data="edit_confirm_publish")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="edit_cancel_publish")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(buttons)
+        
+        try:
+            await client.edit_message_caption(
+                chat_id=user_id,
+                message_id=main_message_id,
+                caption=text,
+                reply_markup=reply_markup
+            )
+        except Exception as e:
+            logger.error(f"Error showing publish confirmation: {e}")
+    
+    elif data == "edit_update_series":
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        try:
+            await callback_query.answer("Updating metadata...")
+        except:
+            pass
+        
+        text = (
+            "Do you want to update this series' metadata?"
+            "NOTE: This will only update the metadata (title, poster, etc.) "
+            "without affecting the published status or file links."
+        )
+        
+        buttons = [
+            [InlineKeyboardButton("✅ Yes, Update", callback_data="edit_confirm_update")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="edit_cancel_update")]
         ]
         
         reply_markup = InlineKeyboardMarkup(buttons)
@@ -823,39 +860,73 @@ async def edit_series_callback_handler(client: Client, callback_query: CallbackQ
             )
         except Exception as e:
             logger.error(f"Error showing update confirmation: {e}")
-            await client.send_message(user_id, "Error showing update confirmation. Please try again.")
     
     elif data == "edit_confirm_publish":
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        try:
+            await callback_query.answer("Publishing...")
+        except:
+            pass
+        
+        # Clean up empty groups but keep all file links
+        series = series_collection.find_one({"_id": series_key})
+        if not series:
+            await callback_query.message.edit_caption("❌ Series not found.")
+            return
+
+        cleaned_languages = []
+        for lang in series.get("languages", []):
+            cleaned_seasons = []
+            for season in lang.get("seasons", []):
+                cleaned_qualities = []
+                for quality in season.get("qualities", []):
+                    if quality.get("link_key"):
+                        cleaned_qualities.append(quality)
+                if cleaned_qualities:
+                    season["qualities"] = cleaned_qualities
+                    cleaned_seasons.append(season)
+            if cleaned_seasons:
+                lang["seasons"] = cleaned_seasons
+                cleaned_languages.append(lang)
+        
+        try:
+            result = series_collection.update_one(
+                {"_id": series_key},
+                {"$set": {
+                    "languages": cleaned_languages,
+                    "published": True
+                }}
+            )
+            if result.modified_count > 0:
+                await callback_query.message.edit_caption("✅ Published Successfully")
+                # Refresh the view
+                series_data = get_series_by_key(series_key)
+                await send_series_details_message(client, user_id, series_data, main_message_id)
+            else:
+                await callback_query.message.edit_caption("❌ Failed to publish series. Please try again.")
+        except Exception as e:
+            logger.error(f"Error publishing series: {e}")
+            await callback_query.message.edit_caption(f"❌ Error: {str(e)}")
+    
+    elif data == "edit_confirm_update":
         series_key = temp_admin_data[user_id].get("current_series_key")
         try:
             await callback_query.answer("Updating...")
         except:
             pass
         
-        if publish_series(series_key):
-            try:
-                await client.edit_message_caption(
-                    chat_id=user_id,
-                    message_id=main_message_id,
-                    caption="✅ Updated Successfully"
-                )
-            except Exception as e:
-                logger.error(f"Failed to edit message: {e}")
-            temp_admin_data[user_id]["state"] = "EDIT_PUBLISHED"
+        # Just refresh the series data without changing published status
+        series_data = get_series_by_key(series_key)
+        if series_data:
+            await callback_query.message.edit_caption("✅ Metadata Updated Successfully")
+            await send_series_details_message(client, user_id, series_data, main_message_id)
         else:
-            try:
-                await client.edit_message_caption(
-                    chat_id=user_id,
-                    message_id=main_message_id,
-                    caption="❌ Failed to update series. Please try again."
-                )
-            except Exception as e:
-                logger.error(f"Failed to edit message: {e}")
-    
-    elif data == "edit_cancel_publish":
+            await callback_query.message.edit_caption("❌ Series not found.")
+
+    elif data in ["edit_cancel_publish", "edit_cancel_update"]:
         series_key = temp_admin_data[user_id].get("current_series_key")
         try:
-            await callback_query.answer("Cancelling update...")
+            await callback_query.answer("Cancelled")
         except:
             pass
         
@@ -863,7 +934,7 @@ async def edit_series_callback_handler(client: Client, callback_query: CallbackQ
         if series_data:
             await send_series_details_message(client, user_id, series_data, main_message_id)
         else:
-            await client.send_message(user_id, "Series not found.")
+            await callback_query.message.edit_caption("❌ Series not found.")
     
     # Quality options handlers
     elif data == "edit_readd_quality":
