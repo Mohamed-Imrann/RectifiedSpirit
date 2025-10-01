@@ -27,7 +27,11 @@ from pyrogram import types
 from aiohttp import web
 from plugins import web_server
 from database.crazy_db import get_admin_assignments
- 
+from pyrogram import utils as pyroutils
+
+pyroutils.MIN_CHAT_ID = -999999999999
+pyroutils.MIN_CHANNEL_ID = -100999999999999
+
 name = "main"
 
 class Bot(Client):
