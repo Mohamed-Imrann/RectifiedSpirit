@@ -1,4 +1,4 @@
-git+github.com/KurimuzonAkuma/pyrogram.git@dev
+git+https://github.com/KurimuzonAkuma/pyrogram@dev
 aiofiles
 aiohttp
 bs4==0.0.1
