@@ -43,13 +43,6 @@ class Bot(Client):
       )
 
   async def start(self, **kwargs):
-      try:
-          self.load_plugins()
-          logging.info("Plugins loaded successfully!")
-      except Exception as e:
-          logging.error(f"Error loading plugins: {e}")
-          sys.exit(1)
-      
       if REQ_CHANNEL_ONE is None or REQ_CHANNEL_TWO is None:
           with open("./dynamic.env", "wt+", encoding="utf-8") as f:
               if REQ_CHANNEL_ONE is None:
