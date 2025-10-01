@@ -1,4 +1,5 @@
-from pyrogram import Client, filters
+from bot import Bot as Client
+from pyrogram import filters
 from pyrogram.errors import MessageTooLong
 import sys, os
 import re
@@ -49,4 +50,5 @@ async def aexec(code, client, message):
         "async def __aexec(client, message): "
         + "".join(f"\n {a}" for a in code.split("\n"))
     )
+
     return await locals()["__aexec"](client, message)
