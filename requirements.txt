@@ -10,7 +10,7 @@ motor
 marshmallow
 umongo
 psutil==6.0.0
-pyrofork==2.3.45
+pyrotgfork
 python-dotenv
 pytz
 pyspellchecker
