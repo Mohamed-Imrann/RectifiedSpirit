@@ -1,4 +1,5 @@
-from pyrogram import Client, filters, enums
+from bot import Bot as Client
+from pyrogram import filters, enums
 import os, pytz, re, datetime, logging, asyncio, math, time, sys, psutil, shutil
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.errors.exceptions.bad_request_400 import MessageTooLong, PeerIdInvalid
