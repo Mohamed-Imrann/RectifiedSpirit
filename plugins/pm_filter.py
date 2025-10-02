@@ -118,7 +118,7 @@ def find_close_matches(query, possibilities, n=3, cutoff=0.6):
 from pyrogram.errors import FloodWait, BadRequest
 import asyncio
 
-async def get_main_poster(client: Client, series_key: str) -> str:
+async def get_main_poster(client: Bot, series_key: str) -> str:
     """
     Get poster as Telegram file_id.
     1. Check DB (poster_file_id)
@@ -205,7 +205,7 @@ def find_most_similar_title(query: str, search_results: list) -> dict:
     return None
 
 # Global filter function
-async def global_filters(client: Client, message: Message, text=False) -> bool:
+async def global_filters(client: Bot, message: Message, text=False) -> bool:
     logger.info(f"Applying global filters to message {message.id} from user {message.from_user.id}")
     group_id = message.chat.id
     name = text or message.text 
@@ -261,7 +261,7 @@ async def global_filters(client: Client, message: Message, text=False) -> bool:
     return False
 
 # Series filter function
-async def series_filter(client: Client, message: Message):
+async def series_filter(client: Bot, message: Message):
     logger.info(f"Applying series filter to message {message.id} from user {message.from_user.id}")
     text = message.text.strip()
     series_infos = get_series()
@@ -367,8 +367,8 @@ async def series_filter(client: Client, message: Message):
             logger.error(f"Error sending series filter message: {e}")
 
 # Message handlers
-@Client.on_message(filters.text & (filters.private | filters.group))
-async def handle_message(client: Client, message: Message):
+@Bot.on_message(filters.text & (filters.private | filters.group))
+async def handle_message(client: Bot, message: Message):
     if message.from_user is None:
         if message.chat.type == enums.ChatType.PRIVATE:
             logger.debug(f"Using chat.id as user_id for private message")
@@ -394,8 +394,8 @@ async def start_scheduler():
     asyncio.create_task(clean_expired_requests())
 
 # Callback handlers
-@Client.on_callback_query()
-async def callback_handler(client: Client, callback_query: CallbackQuery):
+@Bot.on_callback_query()
+async def callback_handler(client: Bot, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     data = callback_query.data
     logger.info(f"Received callback query from user {user_id}: {data}")
@@ -423,7 +423,7 @@ async def callback_handler(client: Client, callback_query: CallbackQuery):
 
     logger.warning(f"Unknown callback type from user {user_id}: {data}")
 
-async def user_series_callback_handler(client: Client, query: CallbackQuery):
+async def user_series_callback_handler(client: Bot, query: CallbackQuery):
     data = query.data
     parts = data.split(">")
     clicked_user = query.from_user.id
@@ -528,7 +528,7 @@ async def user_series_callback_handler(client: Client, query: CallbackQuery):
             except:
                 pass
 
-async def user_interface_callback_handler(client: Client, query: CallbackQuery):
+async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
     user_id = query.from_user.id
     chat_id = query.message.chat.id
     message_id = query.message.id
