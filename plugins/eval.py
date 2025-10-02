@@ -1,4 +1,4 @@
-from bot import Bot as Client
+from pyrogram import Client, filters, enums
 from pyrogram import filters
 from pyrogram.errors import MessageTooLong
 import sys, os
@@ -52,3 +52,4 @@ async def aexec(code, client, message):
     )
 
     return await locals()["__aexec"](client, message)
+
