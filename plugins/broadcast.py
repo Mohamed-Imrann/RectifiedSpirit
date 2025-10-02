@@ -1,3 +1,4 @@
+from bot import Bot
 from pyrogram import Client, filters, enums
 import datetime, time, os, asyncio, logging 
 from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid
@@ -14,7 +15,7 @@ from pyrogram.types import (
 announcement_messages = {}
 
 # Infrastructure Update Message Function
-async def send_infrastructure_update_message(client: Client, user_id: int, username: str):
+async def send_infrastructure_update_message(client: Bot, user_id: int, username: str):
     """Send infrastructure update message to a user"""
     message_text = f"""
 🌟 **EXCITING BOT UPGRADE!** 🌟
@@ -78,8 +79,8 @@ Thank you for being part of our journey. We're excited for you to experience the
         return False
 
 # Callback Handler for Infrastructure Update Buttons
-@Client.on_callback_query(filters.regex("view_features|claim_discount|back_to_announcement"))
-async def handle_infrastructure_callbacks(client: Client, callback_query: CallbackQuery):
+@Bot.on_callback_query(filters.regex("view_features|claim_discount|back_to_announcement"))
+async def handle_infrastructure_callbacks(client: Bot, callback_query: CallbackQuery):
     """Handle callbacks from the infrastructure update message"""
     data = callback_query.data
     message_id = callback_query.message.id
@@ -184,7 +185,7 @@ Thank you for being a valued user! 🙏
                 pass
 
 # New Command: Infrastructure Update Broadcast
-@Client.on_message(filters.command(["infra_update", "iu"]) & filters.user(ADMINS))
+@Bot.on_message(filters.command(["infra_update", "iu"]) & filters.user(ADMINS))
 async def infra_update_broadcast(bot, message):
     """Send infrastructure update message to all users"""
     if len(message.command) < 2:
@@ -263,7 +264,7 @@ async def infra_update_broadcast(bot, message):
     )
 
 # Existing Broadcast Commands
-@Client.on_message(filters.command(["bb", "broadcast"]) & filters.user(ADMINS) & filters.reply)
+@Bot.on_message(filters.command(["bb", "broadcast"]) & filters.user(ADMINS) & filters.reply)
 async def speed_verupikkals(bot, message):
     if len(message.command) == 1:
         matrix = 0  # No matrix value provided, skip no users
@@ -313,7 +314,7 @@ async def speed_verupikkals(bot, message):
     time_taken = datetime.timedelta(seconds=int(time.time()-start_time))
     await sts.edit(f"𝖯𝗋𝗈𝗀𝗋𝖾𝗌𝗌 𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽:\n𝖳𝗈𝗍𝖺𝗅: {total_users}\n𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽: {success}\n𝖲𝗄𝗂𝗉𝗉𝖾𝖽: {skipped_count}\n𝖣𝖾𝗅𝖾𝗍𝖾𝖽: {failed}\n𝖤𝗅𝖺𝗉𝗌𝖾𝖽 𝖳𝗂𝗆𝖾: {time_taken}")
 
-@Client.on_message(filters.command(["cb", "clean_broadcast"]) & filters.user(ADMINS))
+@Bot.on_message(filters.command(["cb", "clean_broadcast"]) & filters.user(ADMINS))
 async def remove_junkuser__db(bot, message):
     users = await db.get_all_users()
     b_msg = message 
@@ -340,7 +341,7 @@ async def remove_junkuser__db(bot, message):
     await sts.delete()
     await bot.send_message(message.chat.id, f"𝖯𝗋𝗈𝗀𝗋𝖾𝗌𝗌 𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽.\n𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽 𝖨𝗇: {time_taken} 𝖲𝖾𝖼𝗈𝗇𝖽𝗌.\n𝖳𝗈𝗍𝖺𝗅 𝖴𝗌𝖾𝗋𝗌 {total_users}\n𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽: {done} / {total_users}\n𝖡𝗅𝗈𝖼𝗄𝖾𝖽: {blocked}\n𝖣𝖾𝗅𝖾𝗍𝖾𝖽: {deleted}")
 
-@Client.on_message(filters.command(["gg", "group_broadcast"]) & filters.user(ADMINS) & filters.reply)
+@Bot.on_message(filters.command(["gg", "group_broadcast"]) & filters.user(ADMINS) & filters.reply)
 async def broadcast_group(bot, message):
     groups = await db.get_all_chats()
     b_msg = message.reply_to_message
@@ -377,7 +378,7 @@ async def broadcast_group(bot, message):
         await message.reply_document('reason.txt', caption=f"𝖯𝗋𝗈𝗀𝗋𝖾𝗌𝗌 𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽.\n𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽 𝖨𝗇: {time_taken} 𝖲𝖾𝖼𝗈𝗇𝖽𝗌.\n𝖳𝗈𝗍𝖺𝗅 𝖦𝗋𝗈𝗎𝗉𝗌: {total_groups}\n𝖢𝗈𝗆𝗉𝗅𝖾𝗍𝖾𝖽: {done} / {total_groups}\n𝖲𝗎𝖼𝖼𝖾𝗌𝗌: {success}\n𝖣𝖾𝗅𝖾𝗍𝖾𝖽: {deleted}")
         os.remove("reason.txt")
     
-@Client.on_message(filters.command(["cg", "clean_gbroadcast"]) & filters.user(ADMINS))
+@Bot.on_message(filters.command(["cg", "clean_gbroadcast"]) & filters.user(ADMINS))
 async def junk_clear_group(bot, message):
     groups = await db.get_all_chats()
     b_msg = message
