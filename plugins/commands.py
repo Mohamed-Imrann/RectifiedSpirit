@@ -379,7 +379,7 @@ async def restart_bot(client, message):
         await msg.edit("<b>Restart Successfully Completed ✅</b>")
         #logger.info("Executing restart commands")
         system("git pull -f && pip3 install --no-cache-dir -r requirements.txt")
-        execle(sys.executable, sys.executable, "bot.py", environ)
+        execle(sys.executable, sys.executable, "main.py", environ)
     except Exception as e:
         logger.error(f"Error during restart: {str(e)}")
         await message.reply_text(f"Restart failed: {str(e)}")
@@ -436,7 +436,7 @@ async def add_fsub_chats2(bot: Bot, update: Message):
         f.write(f"REQ_CHANNEL_TWO={chat}\n")
     logger.info("Restarting to update REQ_CHANNEL_TWO from database...")
     await update.reply_text("Restarting...", quote=True)
-    os.execl(sys.executable, sys.executable, "bot.py")
+    os.execl(sys.executable, sys.executable, "main.py")
 
 @Bot.on_message(filters.command("viewchat") & filters.user(ADMINS))
 async def get_fsub_chat(bot: Bot, update: Message):
@@ -486,7 +486,7 @@ async def delete_fsub_chat1(bot: Bot, update: Message):
         
         logger.info("Restarting to update REQ_CHANNEL_ONE from database...")
         await update.reply_text("Restarting...", quote=True)
-        os.execl(sys.executable, sys.executable, "bot.py")
+        os.execl(sys.executable, sys.executable, "main.py")
         
     except Exception as e:
         logger.error(f"Error deleting chat 1: {e}")
@@ -513,7 +513,7 @@ async def delete_fsub_chat2(bot: Bot, update: Message):
         
         logger.info("Restarting to update REQ_CHANNEL_TWO from database...")
         await update.reply_text("Restarting...", quote=True)
-        os.execl(sys.executable, sys.executable, "bot.py")
+        os.execl(sys.executable, sys.executable, "main.py")
         
     except Exception as e:
         logger.error(f"Error deleting chat 2: {e}")
