@@ -1,4 +1,4 @@
-from bot import Bot as Client
+from pyrogram import Client, filters, enums
 import io
 from pyrogram import filters, enums
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
