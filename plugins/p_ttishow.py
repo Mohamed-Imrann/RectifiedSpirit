@@ -1,3 +1,4 @@
+from bot import Bot
 from pyrogram import Client, filters, enums
 import os, pytz, re, datetime, logging, asyncio, math, time, sys, psutil, shutil
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -10,7 +11,7 @@ from pyrogram.errors import ChatAdminRequired
 from utils import humanbytes
 
 
-@Client.on_message(filters.command('leave') & filters.user(ADMINS))
+@Bot.on_message(filters.command('leave') & filters.user(ADMINS))
 async def leave_a_chat(bot, message):
     if len(message.command) == 1:
         return await message.reply('Give me a chat id')
@@ -33,7 +34,7 @@ async def leave_a_chat(bot, message):
     except Exception as e:
         await message.reply(f'Error - {e}')
 
-@Client.on_message(filters.command('disable') & filters.user(ADMINS))
+@Bot.on_message(filters.command('disable') & filters.user(ADMINS))
 async def disable_chat(bot, message):
     if len(message.command) == 1:
         return await message.reply('Give me a chat id')
@@ -69,7 +70,7 @@ async def disable_chat(bot, message):
     except Exception as e:
         await message.reply(f"Error - {e}")
 
-@Client.on_message(filters.command('enable') & filters.user(ADMINS))
+@Bot.on_message(filters.command('enable') & filters.user(ADMINS))
 async def re_enable_chat(bot, message):
     if len(message.command) == 1:
         return await message.reply('Give me a chat id')
@@ -87,7 +88,7 @@ async def re_enable_chat(bot, message):
     temp.BANNED_CHATS.remove(int(chat_))
     await message.reply("Chat Successfully re-enabled")
 
-@Client.on_message(filters.command('invite') & filters.user(ADMINS))
+@Bot.on_message(filters.command('invite') & filters.user(ADMINS))
 async def gen_invite(bot, message):
     if len(message.command) == 1:
         return await message.reply('Give me a chat id')
@@ -104,7 +105,7 @@ async def gen_invite(bot, message):
         return await message.reply(f'Error {e}')
     await message.reply(f'Here is your Invite Link {link.invite_link}')
 
-@Client.on_message(filters.command('ban') & filters.user(ADMINS))
+@Bot.on_message(filters.command('ban') & filters.user(ADMINS))
 async def ban_a_user(bot, message):
     if len(message.command) == 1:
         return await message.reply('Give me a user id / username')
@@ -135,7 +136,7 @@ async def ban_a_user(bot, message):
         temp.BANNED_USERS.append(k.id)
         await message.reply(f"Successfully banned {k.mention}")
     
-@Client.on_message(filters.command('unban') & filters.user(ADMINS))
+@Bot.on_message(filters.command('unban') & filters.user(ADMINS))
 async def unban_a_user(bot, message):
     if len(message.command) == 1:
         return await message.reply('Give me a user id / username')
@@ -166,7 +167,7 @@ async def unban_a_user(bot, message):
         temp.BANNED_USERS.remove(k.id)
         await message.reply(f"Successfully unbanned {k.mention}")
     
-@Client.on_message(filters.command('users') & filters.user(ADMINS))
+@Bot.on_message(filters.command('users') & filters.user(ADMINS))
 async def list_users(bot, message):
     raju = await message.reply('Getting List Of Users')
     users = await db.get_all_users()
@@ -183,7 +184,7 @@ async def list_users(bot, message):
             outfile.write(out)
         await message.reply_document('users.txt', caption="List Of Users")
 
-@Client.on_message(filters.command('chats') & filters.user(ADMINS))
+@Bot.on_message(filters.command('chats') & filters.user(ADMINS))
 async def list_chats(bot, message):
     raju = await message.reply('Getting List Of chats')
     chats = await db.get_all_chats()
