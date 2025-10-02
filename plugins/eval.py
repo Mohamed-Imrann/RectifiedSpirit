@@ -12,8 +12,7 @@ async def aexec(code, client, message):
     exec(
         "async def __aexec(client, message): "
         + "".join(f"
- {l}" for l in code.split("
-"))
+ {l}" for l in code.split(""))
     )
     return await locals()["__aexec"](client, message)
 
@@ -52,8 +51,7 @@ async def run_eval_logic(client, message):
     sys.stderr = old_stderr
 
     evaluation = exc or stderr or stdout or "Success!"
-    final_output = f"**Output:**
-{evaluation}"
+    final_output = f"**Output:**{evaluation}"
 
     try:
         await message.reply(final_output)
@@ -62,3 +60,4 @@ async def run_eval_logic(client, message):
             outfile.write(final_output)
         await message.reply_document('eval.txt')
         os.remove('eval.txt')
+
