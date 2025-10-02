@@ -1,3 +1,4 @@
+from bot import Bot
 from pyrogram import Client, filters, enums
 from pyrogram import filters
 from pyrogram.errors import MessageTooLong
@@ -7,7 +8,7 @@ import traceback
 from io import StringIO
 from info import ADMINS
 
-@Client.on_message(filters.command('eval') & filters.incoming)
+@Bot.on_message(filters.command('eval') & filters.incoming)
 async def executor(client, message):
     try:
         code = message.text.split(" ", 1)[1]
@@ -52,4 +53,5 @@ async def aexec(code, client, message):
     )
 
     return await locals()["__aexec"](client, message)
+
 
