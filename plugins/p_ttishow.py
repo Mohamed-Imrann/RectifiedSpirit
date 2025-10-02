@@ -1,4 +1,4 @@
-from bot import Bot as Client
+from bot import Client
 from pyrogram import filters, enums
 import os, pytz, re, datetime, logging, asyncio, math, time, sys, psutil, shutil
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
