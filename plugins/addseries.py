@@ -1501,7 +1501,7 @@ async def unified_callback_handler(client: Bot, callback_query: CallbackQuery):
 
 # Command handlers
 @Bot.on_message(filters.command('newseriesui') & filters.user(ADMINS))
-async def new_series_ui_command(client: Bot, message: Message):
+async def new_series_ui_command(client: Client, message: Message):
     """Handle new series UI command"""
     user_id = message.from_user.id
     logger.info(f"Admin {user_id} started new series UI")
@@ -1554,7 +1554,7 @@ async def new_series_ui_command(client: Bot, message: Message):
     await send_series_selection_message(client, user_id, query, all_results, temp_msg.id, "new")
 
 @Bot.on_message(filters.command('editseries') & filters.user(ADMINS))
-async def edit_series_command(client: Bot, message: Message):
+async def edit_series_command(client: Client, message: Message):
     """Handle edit series command"""
     user_id = message.from_user.id
     logger.info(f"Admin {user_id} started edit series UI")
@@ -1609,7 +1609,7 @@ async def edit_series_command(client: Bot, message: Message):
         await message.reply("Failed to show series selection. Please try again.")
 
 @Bot.on_message(filters.command('assign') & filters.user(ADMINS))
-async def assign_command(client: Bot, message: Message):
+async def assign_command(client: Client, message: Message):
     """Handle admin channel assignment"""
     if len(message.command) != 3:
         await message.reply("Usage: `/assign userid channel_id`")
@@ -1628,7 +1628,7 @@ async def assign_command(client: Bot, message: Message):
         await message.reply("Failed to assign channel. Please try again.")
 
 @Bot.on_message(filters.command('unassign') & filters.user(ADMINS))
-async def unassign_command(client: Bot, message: Message):
+async def unassign_command(client: Client, message: Message):
     """Handle admin channel unassignment"""
     if len(message.command) != 2:
         await message.reply("Usage: `/unassign userid`")
@@ -1646,7 +1646,7 @@ async def unassign_command(client: Bot, message: Message):
         await message.reply("Failed to remove assignment. Please try again.")
 
 @Bot.on_message(filters.command('listadmins') & filters.user(ADMINS))
-async def listadmins_command(client: Bot, message: Message):
+async def listadmins_command(client: Client, message: Message):
     """List all admin assignments"""
     assignments = get_admin_assignments()
     
