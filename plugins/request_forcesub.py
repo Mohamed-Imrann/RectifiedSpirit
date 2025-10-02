@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # 8:43PM 2024-05-29
 # ebiza.t.me
+from bot import Bot
 from pyrogram import Client, filters, enums
 from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, ChatJoinRequest
 from info import ADMINS, REQ_CHANNEL_ONE, REQ_CHANNEL_TWO
@@ -31,8 +32,8 @@ async def create_request_forcesub_buttons(user_id:int):
         #logger.info("No forcesub buttons needed")
         return None
 
-@Client.on_chat_join_request(filters.chat(REQ_CHANNEL_ONE) | filters.chat(REQ_CHANNEL_TWO))
-async def handle_join_request(bot: Client, join_req: ChatJoinRequest):
+@Bot.on_chat_join_request(filters.chat(REQ_CHANNEL_ONE) | filters.chat(REQ_CHANNEL_TWO))
+async def handle_join_request(bot: Bot, join_req: ChatJoinRequest):
     #logger.info(f"Handling join request for user {join_req.from_user.id} in chat {join_req.chat.id}")
     if join_req.chat.id == REQ_CHANNEL_ONE:
         try:
