@@ -11,8 +11,7 @@ from bot import Bot  # Import the Bot class from bot.py
 async def aexec(code, client, message):
     exec(
         "async def __aexec(client, message): "
-        + "".join(f"
- {l}" for l in code.split(""))
+        + "".join(f" {l}" for l in code.split(""))
     )
     return await locals()["__aexec"](client, message)
 
@@ -60,4 +59,5 @@ async def run_eval_logic(client, message):
             outfile.write(final_output)
         await message.reply_document('eval.txt')
         os.remove('eval.txt')
+
 
