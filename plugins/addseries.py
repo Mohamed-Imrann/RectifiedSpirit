@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from bot import Bot
 from pyrogram import Client, filters, enums
 import asyncio
 import re
@@ -208,7 +209,7 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
         logger.error(f"An unexpected error occurred with TMDB: {e}")
         return None
 
-async def download_and_upload_poster(client: Client, poster_url: str = None, message: Message = None, send_to_log_channel: bool = True):
+async def download_and_upload_poster(client: Bot, poster_url: str = None, message: Message = None, send_to_log_channel: bool = True):
     """Download and upload poster to log channel"""
     logger.info("Downloading and uploading poster")
     temp_dir = os.path.join(TMP_DOWNLOAD_DIRECTORY, str(uuid.uuid4()))
@@ -253,7 +254,7 @@ async def download_and_upload_poster(client: Client, poster_url: str = None, mes
             logger.debug(f"Cleaned up temporary directory: {temp_dir}")
     return file_id
 
-async def send_series_selection_message(client: Client, user_id: int, query: str, results: list, message_id: int = None, mode: str = "new"):
+async def send_series_selection_message(client: Bot, user_id: int, query: str, results: list, message_id: int = None, mode: str = "new"):
     """Send series selection message"""
     logger.info(f"Sending series selection message to user {user_id} (mode: {mode})")
     prefix = "edit_" if mode == "edit" else ""
@@ -305,7 +306,7 @@ async def send_series_selection_message(client: Client, user_id: int, query: str
         logger.error(f"Error sending series selection message: {e}")
         return None
 
-async def send_series_details_message(client: Client, user_id: int, series_data: dict, message_id: int = None, mode: str = "new"):
+async def send_series_details_message(client: Bot, user_id: int, series_data: dict, message_id: int = None, mode: str = "new"):
     """Send series details message"""
     logger.info(f"Sending series details message to user {user_id} (mode: {mode})")
     prefix = "edit_" if mode == "edit" else ""
@@ -363,7 +364,7 @@ async def send_series_details_message(client: Client, user_id: int, series_data:
         logger.error(f"Error sending series details message: {e}")
         return None
 
-async def send_language_management_message(client: Client, user_id: int, series_key: str, message_id: int, mode: str = "new"):
+async def send_language_management_message(client: Bot, user_id: int, series_key: str, message_id: int, mode: str = "new"):
     """Send language management message"""
     logger.info(f"Sending language management message to user {user_id} (mode: {mode})")
     prefix = "edit_" if mode == "edit" else ""
@@ -412,7 +413,7 @@ async def send_language_management_message(client: Client, user_id: int, series_
         logger.error(f"Error sending language management message: {e}")
         return None
 
-async def send_season_management_message(client: Client, user_id: int, series_key: str, language_name: str, message_id: int, mode: str = "new"):
+async def send_season_management_message(client: Bot, user_id: int, series_key: str, language_name: str, message_id: int, mode: str = "new"):
     """Send season management message"""
     logger.info(f"Sending season management message to user {user_id} (mode: {mode})")
     prefix = "edit_" if mode == "edit" else ""
@@ -470,7 +471,7 @@ async def send_season_management_message(client: Client, user_id: int, series_ke
         logger.error(f"Error sending season management message: {e}")
         return None
 
-async def send_quality_management_message(client: Client, user_id: int, series_key: str, language_name: str, season_name: str, message_id: int, mode: str = "new"):
+async def send_quality_management_message(client: Bot, user_id: int, series_key: str, language_name: str, season_name: str, message_id: int, mode: str = "new"):
     """Send quality management message"""
     logger.info(f"Sending quality management message to user {user_id} (mode: {mode})")
     prefix = "edit_" if mode == "edit" else ""
@@ -532,7 +533,7 @@ async def send_quality_management_message(client: Client, user_id: int, series_k
         return None
 
 async def forward_messages_without_tag_with_retry(
-    client: Client, 
+    client: Bot, 
     source_channel_id: int, 
     target_channel_id: int, 
     first_msg_id: int, 
@@ -699,7 +700,7 @@ async def process_language_input(client: Client, message: Message, language_name
         logger.error(f"Error adding language: {e}")
         await message.reply(f"Error adding language: {e}")
 
-async def process_season_input(client: Client, message: Message, season_name: str, mode: str = "new"):
+async def process_season_input(client: Bot, message: Message, season_name: str, mode: str = "new"):
     """Process season input"""
     user_id = message.from_user.id
     prefix = "EDIT_" if mode == "edit" else ""
@@ -758,7 +759,7 @@ async def process_season_input(client: Client, message: Message, season_name: st
         logger.error(f"Error adding season: {e}")
         await message.reply(f"Error adding season: {e}")
 
-async def process_quality_input(client: Client, message: Message, quality_name: str, mode: str = "new"):
+async def process_quality_input(client: Bot, message: Message, quality_name: str, mode: str = "new"):
     """Process quality input"""
     user_id = message.from_user.id
     prefix = "EDIT_" if mode == "edit" else ""
@@ -824,7 +825,7 @@ async def process_quality_input(client: Client, message: Message, quality_name: 
         logger.error(f"Error adding quality: {e}")
         await message.reply(f"Error adding quality: {e}")
 
-async def process_poster_input(client: Client, message: Message, poster_type: str, mode: str = "new"):
+async def process_poster_input(client: Bot, message: Message, poster_type: str, mode: str = "new"):
     """Process poster input"""
     user_id = message.from_user.id
     series_key = temp_admin_data[user_id].get("current_series_key")
@@ -861,7 +862,7 @@ async def process_poster_input(client: Client, message: Message, poster_type: st
     elif poster_type == "season":
         await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id, mode)
 
-async def process_first_file_input(client: Client, message: Message, mode: str = "new"):
+async def process_first_file_input(client: Bot, message: Message, mode: str = "new"):
     """Process first file input"""
     user_id = message.from_user.id
     channel_id, msg_id = await get_message_id(client, message)
@@ -886,7 +887,7 @@ async def process_first_file_input(client: Client, message: Message, mode: str =
     temp_admin_data[user_id]["state"] = f"{state_prefix}AWAITING_LAST_FILE"
     temp_admin_data[user_id]["ask_message_id"] = ask_msg.id
 
-async def process_last_file_input(client: Client, message: Message, mode: str = "new"):
+async def process_last_file_input(client: Bot, message: Message, mode: str = "new"):
     """Process last file input"""
     user_id = message.from_user.id
     channel_id, msg_id = await get_message_id(client, message)
@@ -969,7 +970,7 @@ async def process_last_file_input(client: Client, message: Message, mode: str = 
         logger.error(f"Unexpected error in process_last_file_input: {e}")
         await progress_msg.edit_text(f"❌ An unexpected error occurred: {str(e)}")
 
-async def unified_callback_handler(client: Client, callback_query: CallbackQuery):
+async def unified_callback_handler(client: Bot, callback_query: CallbackQuery):
     """Unified callback handler for both new and edit modes"""
     user_id = callback_query.from_user.id
     data = callback_query.data
@@ -1499,8 +1500,8 @@ async def unified_callback_handler(client: Client, callback_query: CallbackQuery
         await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id, mode)
 
 # Command handlers
-@Client.on_message(filters.command('newseriesui') & filters.user(ADMINS))
-async def new_series_ui_command(client: Client, message: Message):
+@Bot.on_message(filters.command('newseriesui') & filters.user(ADMINS))
+async def new_series_ui_command(client: Bot, message: Message):
     """Handle new series UI command"""
     user_id = message.from_user.id
     logger.info(f"Admin {user_id} started new series UI")
@@ -1552,8 +1553,8 @@ async def new_series_ui_command(client: Client, message: Message):
 
     await send_series_selection_message(client, user_id, query, all_results, temp_msg.id, "new")
 
-@Client.on_message(filters.command('editseries') & filters.user(ADMINS))
-async def edit_series_command(client: Client, message: Message):
+@Bot.on_message(filters.command('editseries') & filters.user(ADMINS))
+async def edit_series_command(client: Bot, message: Message):
     """Handle edit series command"""
     user_id = message.from_user.id
     logger.info(f"Admin {user_id} started edit series UI")
@@ -1607,8 +1608,8 @@ async def edit_series_command(client: Client, message: Message):
         logger.error(f"Error sending series selection message: {e}")
         await message.reply("Failed to show series selection. Please try again.")
 
-@Client.on_message(filters.command('assign') & filters.user(ADMINS))
-async def assign_command(client: Client, message: Message):
+@Bot.on_message(filters.command('assign') & filters.user(ADMINS))
+async def assign_command(client: Bot, message: Message):
     """Handle admin channel assignment"""
     if len(message.command) != 3:
         await message.reply("Usage: `/assign userid channel_id`")
@@ -1626,8 +1627,8 @@ async def assign_command(client: Client, message: Message):
     else:
         await message.reply("Failed to assign channel. Please try again.")
 
-@Client.on_message(filters.command('unassign') & filters.user(ADMINS))
-async def unassign_command(client: Client, message: Message):
+@Bot.on_message(filters.command('unassign') & filters.user(ADMINS))
+async def unassign_command(client: Bot, message: Message):
     """Handle admin channel unassignment"""
     if len(message.command) != 2:
         await message.reply("Usage: `/unassign userid`")
@@ -1644,8 +1645,8 @@ async def unassign_command(client: Client, message: Message):
     else:
         await message.reply("Failed to remove assignment. Please try again.")
 
-@Client.on_message(filters.command('listadmins') & filters.user(ADMINS))
-async def listadmins_command(client: Client, message: Message):
+@Bot.on_message(filters.command('listadmins') & filters.user(ADMINS))
+async def listadmins_command(client: Bot, message: Message):
     """List all admin assignments"""
     assignments = get_admin_assignments()
     
@@ -1660,8 +1661,8 @@ async def listadmins_command(client: Client, message: Message):
     await message.reply(text)
 
 # Message handlers
-@Client.on_message(filters.text & filters.private & filters.user(ADMINS))
-async def handle_admin_text_message(client: Client, message: Message):
+@Bot.on_message(filters.text & filters.private & filters.user(ADMINS))
+async def handle_admin_text_message(client: Bot, message: Message):
     """Handle admin text messages"""
     user_id = message.from_user.id
     logger.info(f"Received admin text message {message.id} from user {user_id}")
@@ -1680,8 +1681,8 @@ async def handle_admin_text_message(client: Client, message: Message):
             # Handle codec input if needed
             pass
 
-@Client.on_message((filters.photo | filters.video | filters.document) & filters.private & filters.user(ADMINS))
-async def handle_admin_media_message(client: Client, message: Message):
+@Bot.on_message((filters.photo | filters.video | filters.document) & filters.private & filters.user(ADMINS))
+async def handle_admin_media_message(client: Bot, message: Message):
     """Handle admin media messages"""
     user_id = message.from_user.id
     logger.info(f"Received admin media message {message.id} from user {user_id}")
@@ -1702,7 +1703,7 @@ async def handle_admin_media_message(client: Client, message: Message):
             await process_last_file_input(client, message, mode)
 
 # Callback handler
-@Client.on_callback_query(filters.user(ADMINS))
-async def callback_handler(client: Client, callback_query: CallbackQuery):
+@Bot.on_callback_query(filters.user(ADMINS))
+async def callback_handler(client: Bot, callback_query: CallbackQuery):
     """Main callback handler"""
     await unified_callback_handler(client, callback_query)
