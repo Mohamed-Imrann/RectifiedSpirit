@@ -64,7 +64,7 @@ class Bot(Client):
                   f.write(f"REQ_CHANNEL_TWO={REQ_CHANNEL_TWO}\n")
                   
           logging.info("Loading REQ_CHANNEL_ONE and REQ_CHANNEL_TWO from database if needed...")
-          os.execl(sys.executable, sys.executable, "bot.py")
+          os.execl(sys.executable, sys.executable, "main.py")
           return
 
       await super().start()
