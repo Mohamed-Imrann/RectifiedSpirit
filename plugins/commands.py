@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
+from bot import Bot
 import sys
 import asyncio
 import datetime, pytz, time
@@ -43,7 +43,7 @@ edb = mongo_client["file_database"]
 ecollection = edb["episodes"]
 logger = logging.getLogger(__name__)
 
-@Client.on_message(filters.command("start"))
+@Bot.on_message(filters.command("start"))
 async def start_command(client, message):
     try:
         #logger.info(f"Start command received from user {message.from_user.id} in chat {message.chat.id}")
@@ -358,7 +358,7 @@ async def start_command(client, message):
         except:
             pass
 
-@Client.on_message(filters.command("logs") & filters.user(ADMINS))
+@Bot.on_message(filters.command("logs") & filters.user(ADMINS))
 async def log_file(bot, message):
     """Send log file"""
     #logger.info(f"Admin {message.from_user.id} requested log file")
@@ -369,7 +369,7 @@ async def log_file(bot, message):
         logger.error(f"Error sending log file: {str(e)}")
         await message.reply(str(e)) 
     
-@Client.on_message(filters.command('restart') & filters.user(ADMINS))
+@Bot.on_message(filters.command('restart') & filters.user(ADMINS))
 async def restart_bot(client, message):
     logger.info(f"Admin {message.from_user.id} requested bot restart")
     try:
@@ -384,8 +384,8 @@ async def restart_bot(client, message):
         logger.error(f"Error during restart: {str(e)}")
         await message.reply_text(f"Restart failed: {str(e)}")
 
-@Client.on_message(filters.command("purgerequests1") & filters.user(ADMINS))
-async def purge_req_one(bot: Client, message: Message):
+@Bot.on_message(filters.command("purgerequests1") & filters.user(ADMINS))
+async def purge_req_one(bot: Bot, message: Message):
     #logger.info(f"Admin {message.from_user.id} requested to purge req one database")
     pls_wait = await bot.send_message(chat_id=message.chat.id, text="<b>Purging Req One Database...</b>", reply_to_message_id=message.id)
     await asyncio.sleep(1)
@@ -393,8 +393,8 @@ async def purge_req_one(bot: Client, message: Message):
     #logger.info("Purged Req One Database.")
     await pls_wait.edit("<b>Req One Database Purged ✅.</b>" )
 
-@Client.on_message(filters.command("purgerequests2") & filters.user(ADMINS))
-async def purge_req_two(bot: Client, message: Message):
+@Bot.on_message(filters.command("purgerequests2") & filters.user(ADMINS))
+async def purge_req_two(bot: Bot, message: Message):
     #logger.info(f"Admin {message.from_user.id} requested to purge req two database")
     pls_wait = await bot.send_message(chat_id=message.chat.id, text="<b>Purging Req Two Database...</b>", reply_to_message_id=message.id)
     await asyncio.sleep(1)
@@ -402,8 +402,8 @@ async def purge_req_two(bot: Client, message: Message):
     #logger.info("Purged Req Two Database.")
     await pls_wait.edit("<b>Req Two Database Purged ✅.</b>" )
     
-@Client.on_message(filters.command("setchat1") & filters.user(ADMINS))
-async def add_fsub_chats1(bot: Client, update: Message):
+@Bot.on_message(filters.command("setchat1") & filters.user(ADMINS))
+async def add_fsub_chats1(bot: Bot, update: Message):
     #logger.info(f"Admin {update.from_user.id} requested to set chat 1")
     chat = update.command[1] if len(update.command) > 1 else None
     if not chat:
@@ -420,8 +420,8 @@ async def add_fsub_chats1(bot: Client, update: Message):
     await update.reply_text("Restarting...", quote=True)
     os.execl(sys.executable, sys.executable, "bot.py")
 
-@Client.on_message(filters.command("setchat2") & filters.user(ADMINS))
-async def add_fsub_chats2(bot: Client, update: Message):
+@Bot.on_message(filters.command("setchat2") & filters.user(ADMINS))
+async def add_fsub_chats2(bot: Bot, update: Message):
     logger.info(f"Admin {update.from_user.id} requested to set chat 2")
     chat = update.command[1] if len(update.command) > 1 else None
     if not chat:
@@ -438,8 +438,8 @@ async def add_fsub_chats2(bot: Client, update: Message):
     await update.reply_text("Restarting...", quote=True)
     os.execl(sys.executable, sys.executable, "bot.py")
 
-@Client.on_message(filters.command("viewchat") & filters.user(ADMINS))
-async def get_fsub_chat(bot: Client, update: Message):
+@Bot.on_message(filters.command("viewchat") & filters.user(ADMINS))
+async def get_fsub_chat(bot: Bot, update: Message):
     try:
         logger.info(f"Admin {update.from_user.id} requested to view fsub chats")
         processing_msg = await update.reply_text("Processing...", quote=True)
@@ -465,8 +465,8 @@ async def get_fsub_chat(bot: Client, update: Message):
         logging.error(f"Error fetching fsub chats: {e}")
         await update.reply_text("An error occurred while fetching the fsub chats. Please check the logs for more details.", quote=True)
 
-@Client.on_message(filters.command("delchat1") & filters.user(ADMINS))
-async def delete_fsub_chat1(bot: Client, update: Message):
+@Bot.on_message(filters.command("delchat1") & filters.user(ADMINS))
+async def delete_fsub_chat1(bot: Bot, update: Message):
     logger.info(f"Admin {update.from_user.id} requested to delete chat 1")
     try:
         chat_data = await db1().get_fsub_chat1()
@@ -492,8 +492,8 @@ async def delete_fsub_chat1(bot: Client, update: Message):
         logger.error(f"Error deleting chat 1: {e}")
         await update.reply_text("An error occurred while deleting chat 1. Please check the logs.", quote=True)
 
-@Client.on_message(filters.command("delchat2") & filters.user(ADMINS))
-async def delete_fsub_chat2(bot: Client, update: Message):
+@Bot.on_message(filters.command("delchat2") & filters.user(ADMINS))
+async def delete_fsub_chat2(bot: Bot, update: Message):
     logger.info(f"Admin {update.from_user.id} requested to delete chat 2")
     try:
         chat_data = await db1().get_fsub_chat2()
