@@ -1,3 +1,4 @@
+from bot import Bot
 import time
 from pyrogram import Client, filters
 import psutil
@@ -16,7 +17,7 @@ async def get_bot_uptime():
     uptime_string = f"{uptime_days % 7}Days:{uptime_hours % 24}Hours:{uptime_minutes % 60}Minutes:{uptime_seconds % 60}Seconds"
     return uptime_string
 
-@Client.on_message(filters.command("ping")) 
+@Bot.on_message(filters.command("ping")) 
 async def ping(_, message):
     start_t = time.time()
     rm = await message.reply_text("👀")
@@ -27,6 +28,7 @@ async def ping(_, message):
     ram_usage = psutil.virtual_memory().percent
     await rm.edit(f"🏓 𝖯𝗂𝗇𝗀: <code>{time_taken_s:.3f} ms</code>\n\n⏰ 𝖴𝗉𝗍𝗂𝗆𝖾: <code>{uptime}</code>\n🤖 𝖢𝖯𝖴 𝖴𝗌𝖺𝗀𝖾: <code>{cpu_usage} %</code>\n📥 𝖱𝖺𝗆 𝖴𝗌𝖺𝗀𝖾: <code>{ram_usage} %</code>")
 
-@Client.on_message(filters.command("alive"))
+@Bot.on_message(filters.command("alive"))
 async def check_alive(_, message):
+
     await message.reply_text("𝖡𝗎𝖽𝖽𝗒 𝖨𝖺𝗆 𝖠𝗅𝗂𝗏𝖾 :) 𝖧𝗂𝗍 /start", quote=True)
