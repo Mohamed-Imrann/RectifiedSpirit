@@ -1,4 +1,4 @@
-from bot import Bot as Client
+from pyrogram import Client, filters, enums
 import datetime, time, os, asyncio, logging 
 from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid
 from pyrogram.errors.exceptions.bad_request_400 import MessageTooLong, PeerIdInvalid
