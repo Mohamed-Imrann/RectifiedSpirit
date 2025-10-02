@@ -9,7 +9,7 @@ from io import StringIO
 from info import ADMINS
 
 @Bot.on_message(filters.command('eval') & filters.incoming)
-async def executor(client, message):
+async def executor(client: Client, message):
     try:
         code = message.text.split(" ", 1)[1]
     except:
@@ -53,5 +53,6 @@ async def aexec(code, client, message):
     )
 
     return await locals()["__aexec"](client, message)
+
 
 
