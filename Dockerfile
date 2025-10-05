@@ -1,12 +1,18 @@
-FROM python:3.10
+FROM python:3.12-slim-bullseye
+WORKDIR /wbb
+RUN chmod 777 /wbb
 
-WORKDIR /app
-RUN apt update && apt upgrade -y
-RUN apt install git -y
-COPY requirements.txt .
-RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apt-get -qq update && apt-get -qq -y upgrade
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y git gcc build-essential
+ENV PYTHONUNBUFFERED=1
 
+# Copying All Source
 COPY . .
+RUN pip3 install -U pip setuptools wheel && pip3 install --no-cache-dir -U -r requirements.txt
 
-CMD ["python3", "bot.py"]
+# If u want to use /update feature, uncomment the following and edit
+#RUN git config --global user.email "your_email"
+#RUN git config --global user.name "git_username"
+
+# Starting Bot
+ENTRYPOINT ["python3", "-m", "wbb"]
