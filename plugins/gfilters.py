@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 from bot import Bot
 from pyrogram import Client, filters, enums
 import io
