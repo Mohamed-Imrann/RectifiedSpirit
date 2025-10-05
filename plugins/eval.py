@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import sys
 import os
 import traceback
@@ -59,5 +62,6 @@ async def run_eval_logic(client, message):
             outfile.write(final_output)
         await message.reply_document('eval.txt')
         os.remove('eval.txt')
+
 
 
