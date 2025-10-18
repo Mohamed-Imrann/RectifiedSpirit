@@ -177,14 +177,10 @@ async def _send_language_menu(client: Bot, msg: Message, series_key: str):
         return
     languages = series.get("languages", [])
     pattern = series.get("language_layout", [1] * len(languages))
-    text = (f"○ **Title:** `{series['title']}`
-"
-            f"○ **Released On:** `{series['released_on']}`
-"
-            f"○ **Genre:** `{series['genre']}`
-"
-            f"○ **Rating:** `{series['rating']}`
-Select the language you need...!")
+    text = (f"○ **Title:** `{series['title']}`"
+            f"○ **Released On:** `{series['released_on']}`"
+            f"○ **Genre:** `{series['genre']}`"
+            f"○ **Rating:** `{series['rating']}` Select the language you need...!")
     layout = create_layout([lang["name"] for lang in languages], pattern, "lang")
     if not layout:
         return await msg.reply("No languages available.")
@@ -237,14 +233,10 @@ async def _handle_user_series(client: Bot, q: CallbackQuery):
         return await q.message.edit_text("Series not found.")
     languages = series.get("languages", [])
     pattern = series.get("language_layout", [1] * len(languages))
-    text = (f"○ **Title:** `{series['title']}`
-"
-            f"○ **Released On:** `{series['released_on']}`
-"
-            f"○ **Genre:** `{series['genre']}`
-"
-            f"○ **Rating:** `{series['rating']}`
-Select the language you need...!")
+    text = (f"○ **Title:** `{series['title']}`"
+            f"○ **Released On:** `{series['released_on']}`"
+            f"○ **Genre:** `{series['genre']}`"
+            f"○ **Rating:** `{series['rating']}` Select the language you need...!")
     layout = create_layout([lang["name"] for lang in languages], pattern, "lang")
     if not layout:
         return await q.message.edit_text("No languages available.")
@@ -273,14 +265,10 @@ async def _handle_ui(client: Bot, q: CallbackQuery):
     if not series:
         return await q.answer("Series not found.", show_alert=True)
 
-    base = (f"○ **Title:** `{series['title']}`
-"
-            f"○ **Released On:** `{series['released_on']}`
-"
-            f"○ **Genre:** `{series['genre']}`
-"
-            f"○ **Rating:** `{series['rating']}`
-")
+    base = (f"○ **Title:** `{series['title']}`"
+            f"○ **Released On:** `{series['released_on']}`"
+            f"○ **Genre:** `{series['genre']}`"
+            f"○ **Rating:** `{series['rating']}`")
 
     # back handler
     if data.startswith("back_"):
@@ -325,9 +313,7 @@ async def _handle_ui(client: Bot, q: CallbackQuery):
             if qual.get("link_key"):
                 layout.append([InlineKeyboardButton(qual["name"], callback_data=f'b:{qual["link_key"]}')])
         layout.append([InlineKeyboardButton("⬅️ Back", callback_data="back_season")])
-        text = base + f"○ **Language:** `{entry['language_name']}`
-○ **Season:** `{season_name}`
-Select the quality you need...!"
+        text = base + f"○ **Language:** `{entry['language_name']}`○ **Season:** `{season_name}`Select the quality you need...!"
         try:
             await q.message.edit_caption(caption=text, parse_mode=enums.ParseMode.MARKDOWN,
                                          reply_markup=InlineKeyboardMarkup(layout))
@@ -376,8 +362,7 @@ async def _replace_with_season(client: Bot, q: CallbackQuery, series, base_text:
     layout = create_layout([s["name"] for s in seasons], pattern, "season", add_back=True, back_target="language")
     if not layout:
         return await q.answer("No seasons.", show_alert=True)
-    text = base_text + f"○ **Language:** `{lang_name}`
-Select the season you need...!"
+    text = base_text + f"○ **Language:** `{lang_name}` Select the season you need...!"
     try:
         await q.message.edit_caption(caption=text, parse_mode=enums.ParseMode.MARKDOWN,
                                      reply_markup=InlineKeyboardMarkup(layout))
