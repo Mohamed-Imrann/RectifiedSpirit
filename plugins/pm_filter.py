@@ -395,14 +395,10 @@ async def series_filter(client: Bot, message: Message):
         language_layout = series.get("language_layout", [1] * len(languages))
         
         reply_text = (
-            f"○ **Title:** `{series['title']}`
-"
-            f"○ **Released On:** `{series['released_on']}`
-"
-            f"○ **Genre:** `{series['genre']}`
-"
-            f"○ **Rating:** `{series['rating']}`
-"
+            f"○ **Title:** `{series['title']}`"
+            f"○ **Released On:** `{series['released_on']}`"
+            f"○ **Genre:** `{series['genre']}`"
+            f"○ **Rating:** `{series['rating']}`"
             "Select the language you need...!"
         )
         poster_url = await get_main_poster(client, series_key)
@@ -552,14 +548,10 @@ async def user_series_callback_handler(client: Bot, query: CallbackQuery):
         language_layout = series.get("language_layout", [1] * len(languages))
         
         base_text = (
-            f"○ **Title:** `{series['title']}`
-"
-            f"○ **Released On:** `{series['released_on']}`
-"
-            f"○ **Genre:** `{series['genre']}`
-"
-            f"○ **Rating:** `{series['rating']}`
-"
+            f"○ **Title:** `{series['title']}`"
+            f"○ **Released On:** `{series['released_on']}`"
+            f"○ **Genre:** `{series['genre']}`"
+            f"○ **Rating:** `{series['rating']}`"
         )
         
         language_names = [lang['name'] for lang in languages]
@@ -644,14 +636,10 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
         return
     
     base_text = (
-        f"○ **Title:** `{series['title']}`
-"
-        f"○ **Released On:** `{series['released_on']}`
-"
-        f"○ **Genre:** `{series['genre']}`
-"
-        f"○ **Rating:** `{series['rating']}`
-"
+        f"○ **Title:** `{series['title']}`"
+        f"○ **Released On:** `{series['released_on']}`"
+        f"○ **Genre:** `{series['genre']}`"
+        f"○ **Rating:** `{series['rating']}`"
     )
     
     if data.startswith("back_"):
@@ -734,8 +722,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
             season_layout = languages[language_index].get("season_layout", [1] * len(seasons))
             season_names = [season['name'] for season in seasons]
             
-            text = base_text + f"○ **Language:** `{language_name}`
-Select the season you need...!"
+            text = base_text + f"○ **Language:** `{language_name}` Select the season you need...!"
             
             layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
             
@@ -901,9 +888,7 @@ Select the season you need...!"
             
             qualities = seasons[callback_index].get("qualities", [])
             
-            text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`
-○ **Season:** `{season_name}`
-Select the quality you need...!"
+            text = base_text + f"○ **Language:** `{stored_data.get('language_name')}` ○ **Season:** `{season_name}` Select the quality you need...!"
             
             layout = []
             for quality in qualities:
