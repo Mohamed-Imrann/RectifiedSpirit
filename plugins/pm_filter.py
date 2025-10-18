@@ -262,7 +262,6 @@ async def global_filters(client: Bot, message: Message, text=False) -> bool:
 
 # Series filter function
 async def series_filter(client: Bot, message: Message):
-    logger.info(f"Applying series filter to message {message.id} from user {message.from_user.id}")
     text = message.text.strip()
     series_infos = get_series()
     
@@ -275,12 +274,10 @@ async def series_filter(client: Bot, message: Message):
     
     if text.lower().replace(" ", "").replace("-", "") in series_keys:
         series_key = text.lower().replace(" ", "").replace("-", "")
-        logger.info(f"Found exact key match: {series_key}")
     else:
         for s_info in published_series:
             if s_info['title'].lower() == text.lower():
                 series_key = s_info['_id']
-                logger.info(f"Found exact title match: {series_key}")
                 break
         
         if not series_key:
@@ -362,7 +359,6 @@ async def series_filter(client: Bot, message: Message):
             }
             request_timestamps[f"{etho.chat.id}•{etho.id}"] = time.time()
             #asyncio.create_task(DeleteMessage(etho))
-            logger.info(f"Sent series filter response for {series['title']}")
         except Exception as e:
             logger.error(f"Error sending series filter message: {e}")
 
@@ -371,9 +367,8 @@ async def series_filter(client: Bot, message: Message):
 async def handle_message(client: Bot, message: Message):
     if message.from_user is None:
         if message.chat.type == enums.ChatType.PRIVATE:
-            logger.debug(f"Using chat.id as user_id for private message")
+            hehe = 1
         else:
-            logger.warning(f"Message in group has no from_user; skipping")
             return
     else:
         user_id = message.from_user.id
@@ -398,7 +393,7 @@ async def start_scheduler():
 async def callback_handler(client: Bot, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     data = callback_query.data
-    logger.info(f"Received callback query from user {user_id}: {data}")
+    #logger.info(f"Received callback query from user {user_id}: {data}")
 
     if data.startswith("b:"):
         start_parameter = data.split(":", 1)[1]
@@ -407,17 +402,17 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
             print(test_string)
             await callback_query.answer(url=f"https://t.me/{temp.U_NAME}?start={start_parameter}")
         except Exception as e:
-            logger.error(f"Error in b: callback: {e}")
+            logger.error(f"{test_string} - {e}")
             await callback_query.answer("Invalid URL provided.", show_alert=True)
         return
 
     if data.startswith("user_series>"):
-        logger.info(f"User series callback from user {user_id}")
+        #logger.info(f"User series callback from user {user_id}")
         await user_series_callback_handler(client, callback_query)
         return
 
     elif data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_"):
-        logger.info(f"User interface callback from user {user_id}")
+        #logger.info(f"User interface callback from user {user_id}")
         await user_interface_callback_handler(client, callback_query)
         return
 
@@ -429,7 +424,7 @@ async def user_series_callback_handler(client: Bot, query: CallbackQuery):
     clicked_user = query.from_user.id
     chat_id = query.message.chat.id
     message_id = query.message.id
-    logger.info(f"Processing user series callback: {data}")
+    #logger.info(f"Processing user series callback: {data}")
 
     try:
         await query.answer()
@@ -447,9 +442,9 @@ async def user_series_callback_handler(client: Bot, query: CallbackQuery):
             requested_user = stored_data
     
     if chat_id < 0 and requested_user and clicked_user != requested_user:
-        logger.warning(f"User {clicked_user} tried to access another user's request")
+        #logger.warning(f"User {clicked_user} tried to access another user's request")
         try:
-            await query.answer("Not your request!", show_alert=True)
+            await query.answer("Not your request!")
         except:
             pass
         return
@@ -459,7 +454,7 @@ async def user_series_callback_handler(client: Bot, query: CallbackQuery):
 
     elif data.startswith("user_series>"):
         series_key = parts[1]
-        logger.info(f"Processing series with key: {series_key}")
+        #logger.info(f"Processing series with key: {series_key}")
         series = get_series_name(series_key)
         if not series or not series.get('published', False):
             logger.warning(f"Series not found or not published for key: {series_key}")
@@ -533,7 +528,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
     chat_id = query.message.chat.id
     message_id = query.message.id
     data = query.data
-    logger.info(f"Processing user interface callback: {data}")
+    #logger.info(f"Processing user interface callback: {data}")
     
     try:
         await query.answer()
