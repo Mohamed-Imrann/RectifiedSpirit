@@ -5,6 +5,32 @@ Light-weight series bot – APScheduler + LRU-cache + semaphore
 """
 import asyncio
 import re
+import logging
+import random
+import time
+from typing import Dict, Optional, List
+
+from pyrogram import Client, filters, enums
+from pyrogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery, 
+    InputMediaPhoto
+)
+from info import SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG, ADMINS, CHANNELS
+from database.crazy_db import (
+    get_series, get_series_name, get_poster_manuel
+)
+from pyrogram.errors import MessageNotModified
+from database.gfilters_mdb import (
+    find_gfilter,
+    get_gfilters
+)
+from utils import temp, get_links_for_quality
+import imdb
+import difflib
+import aiohttp
+
+import asyncio
+import re
 import random
 import time
 import logging
@@ -19,7 +45,7 @@ from pyrogram.types import (
 from pyrogram.errors import MessageNotModified, FloodWait, BadRequest
 import aiohttp
 import difflib
-
+import imdb
 from bot import Bot
 from info import SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG, ADMINS, CHANNELS
 from database.crazy_db import get_series, get_series_name, get_poster_manuel, update_poster_file_id
