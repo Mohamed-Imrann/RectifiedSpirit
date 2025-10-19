@@ -805,8 +805,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
             season_layout = languages[callback_index].get("season_layout", [1] * len(seasons))
             season_names = [season['name'] for season in seasons]
             
-            text = base_text + f"○ **Language:** `{language_name}`
-Select the season you need...!"
+            text = base_text + f"○ **Language:** `{language_name}` Select the season you need...!"
             
             layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
             
