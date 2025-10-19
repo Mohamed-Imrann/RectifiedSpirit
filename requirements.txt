@@ -24,3 +24,4 @@ tmdbv3api
 asyncpg
 tenacity
 speedtest-cli
+cachetools
