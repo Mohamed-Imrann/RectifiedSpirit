@@ -7,14 +7,12 @@ import logging
 import random
 import time
 from typing import Dict, Optional, List
-from datetime import datetime, timedelta
-import imdb
+
 from pyrogram import Client, filters, enums
 from pyrogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery, 
     InputMediaPhoto
 )
-from pyrogram.errors import MessageDeleteForbidden, FloodWait, BadRequest
 from info import SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG, ADMINS, CHANNELS
 from database.crazy_db import (
     get_series, get_series_name, get_poster_manuel
@@ -29,24 +27,12 @@ import imdb
 import difflib
 import aiohttp
 
-# APScheduler imports
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from cachetools import TTLCache
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# Initialize cache and scheduler
-cache = TTLCache(maxsize=10000, ttl=3600)
-
-scheduler = AsyncIOScheduler()
-if not scheduler.running:
-    scheduler.start()
-    logger.info("APScheduler started successfully")
 
 # Global variables
 user_requestor: Dict[str, Dict] = {}
@@ -56,80 +42,31 @@ request_timestamps: Dict[str, float] = {}
 ia = imdb.IMDb()
 
 # Helper functions
-async def delete_message_task(client: Client, chat_id: int, message_id: int):
-    """Scheduled task to delete a message"""
+async def DeleteMessage(msg):
+    await asyncio.sleep(temp.AUTO_DELETE_TIME)
     try:
-        result = await client.delete_messages(chat_id, [message_id])
-        if result:
-            logger.info(f"Auto-deleted message {message_id} from chat {chat_id} (scheduled task)")
-        else:
-            logger.info(f"Message {message_id} might not have been deleted from chat {chat_id} (scheduled task)")
-    except MessageDeleteForbidden:
-        logger.error(f"Cannot delete message {message_id} from {chat_id}. No delete permission (scheduled task).")
-    except asyncio.CancelledError:
-        logger.info(f"Deletion of message {message_id} from {chat_id} was cancelled (scheduled task).")
+        await msg.delete()
+        logger.debug(f"Deleted message {msg.id} from chat {msg.chat.id}")
     except Exception as e:
-        logger.error(f"Unexpected error deleting message {message_id} from {chat_id} (scheduled task): {e}", exc_info=True)
+        logger.warning(f"Failed to delete message {msg.id}: {e}")
 
-def schedule_message_deletion(client: Client, message: Message, delay_seconds: int = None):
-    """
-    Schedule a message for deletion using APScheduler
-    
-    Args:
-        client: Bot client instance
-        message: Message object to delete
-        delay_seconds: Delay in seconds (uses temp.AUTO_DELETE_TIME if None)
-    """
-    if delay_seconds is None:
-        delay_seconds = getattr(temp, 'AUTO_DELETE_TIME', 300)  # Default 5 minutes
-    
-    deletion_time = datetime.now() + timedelta(seconds=delay_seconds)
-    job_id = f"delete_msg_{message.chat.id}_{message.id}_{int(time.time())}"
-    
-    scheduler.add_job(
-        delete_message_task,
-        'date',
-        run_date=deletion_time,
-        args=[client, message.chat.id, message.id],
-        id=job_id,
-        replace_existing=True
-    )
-    logger.debug(f"Scheduled deletion for message {message.id} in {delay_seconds} seconds (job_id: {job_id})")
-
-def clean_expired_user_requests():
-    """
-    Clean up user_requestor entries older than 30 minutes
-    This function is called by APScheduler
-    """
-    current_time = time.time()
-    expired_keys = []
-    
-    # Find all expired keys
-    for key, entry in user_requestor.items():
-        timestamp = entry.get('timestamp', 0) if isinstance(entry, dict) else 0
-        if current_time - timestamp > 1800:  # 1800 seconds = 30 minutes
-            expired_keys.append(key)
-    
-    # Remove expired entries
-    for key in expired_keys:
-        user_requestor.pop(key, None)
-        request_timestamps.pop(key, None)
-    
-    if expired_keys:
-        logger.info(f"Cleaned {len(expired_keys)} expired user requests")
-    else:
-        logger.debug("No expired user requests to clean")
-
-# Schedule the cleanup job to run every 10 minutes
-scheduler.add_job(
-    clean_expired_user_requests,
-    'interval',
-    minutes=10,
-    id='clean_user_requests',
-    replace_existing=True,
-    next_run_time=datetime.now() + timedelta(minutes=1)  # First run after 1 minute
-)
-logger.info("Scheduled user_requestor cleanup job to run every 10 minutes")
+async def clean_expired_requests():
+    """Clean up user_requestor entries older than 30 minutes"""
+    while True:
+        await asyncio.sleep(600)
+        current_time = time.time()
+        expired_keys = []
+        
+        for key, timestamp in request_timestamps.items():
+            if current_time - timestamp > 1800:
+                expired_keys.append(key)
+        
+        for key in expired_keys:
+            user_requestor.pop(key, None)
+            request_timestamps.pop(key, None)
+        
+        if expired_keys:
+            logger.info(f"Cleaned {len(expired_keys)} expired requests")
 
 def create_user_layout_from_pattern(items: List[str], layout_pattern: List[int], callback_prefix: str = "user_item", add_back_button: bool = False, back_target: str = "") -> List[List[InlineKeyboardButton]]:
     if not items:
@@ -177,6 +114,9 @@ def create_user_layout_from_pattern(items: List[str], layout_pattern: List[int],
 def find_close_matches(query, possibilities, n=3, cutoff=0.6):
     import difflib
     return difflib.get_close_matches(query, possibilities, n, cutoff)
+
+from pyrogram.errors import FloodWait, BadRequest
+import asyncio
 
 async def get_main_poster(client: Bot, series_key: str) -> str:
     """
@@ -314,10 +254,6 @@ async def global_filters(client: Bot, message: Message, text=False) -> bool:
                         reply_to_message_id=reply_id
                     )
                 logger.info(f"Successfully sent global filter response for keyword: {keyword}")
-                
-                # Schedule deletion using APScheduler
-                schedule_message_deletion(client, piroxrk)
-                
                 return True
             except Exception as e:
                 logger.exception(f"Error in global filter for keyword {keyword}: {e}")
@@ -377,10 +313,7 @@ async def series_filter(client: Bot, message: Message):
                         "timestamp": time.time()
                     }
                     request_timestamps[f"{etho.chat.id}•{etho.id}"] = time.time()
-                    
-                    # Schedule deletion using APScheduler
-                    schedule_message_deletion(client, etho)
-                    
+                    #asyncio.create_task(DeleteMessage(etho))
                     logger.info(f"Sent series selection message with {len(buttons)} options")
                     return
     
@@ -395,10 +328,10 @@ async def series_filter(client: Bot, message: Message):
         language_layout = series.get("language_layout", [1] * len(languages))
         
         reply_text = (
-            f"○ **Title:** `{series['title']}`"
-            f"○ **Released On:** `{series['released_on']}`"
-            f"○ **Genre:** `{series['genre']}`"
-            f"○ **Rating:** `{series['rating']}`"
+            f"○ **Title:** `{series['title']}`\n"
+            f"○ **Released On:** `{series['released_on']}`\n"
+            f"○ **Genre:** `{series['genre']}`\n"
+            f"○ **Rating:** `{series['rating']}`\n\n"
             "Select the language you need...!"
         )
         poster_url = await get_main_poster(client, series_key)
@@ -428,10 +361,7 @@ async def series_filter(client: Bot, message: Message):
                 "timestamp": time.time()
             }
             request_timestamps[f"{etho.chat.id}•{etho.id}"] = time.time()
-            
-            # Schedule deletion using APScheduler
-            schedule_message_deletion(client, etho)
-            
+            #asyncio.create_task(DeleteMessage(etho))
             logger.info(f"Sent series filter response for {series['title']}")
         except Exception as e:
             logger.error(f"Error sending series filter message: {e}")
@@ -458,6 +388,10 @@ async def handle_message(client: Bot, message: Message):
         glob = await global_filters(client, message)
         if glob == False:
             await series_filter(client, message)
+
+# Start the cleanup scheduler when the bot starts
+async def start_scheduler():
+    asyncio.create_task(clean_expired_requests())
 
 # Callback handlers
 @Bot.on_callback_query()
@@ -548,10 +482,10 @@ async def user_series_callback_handler(client: Bot, query: CallbackQuery):
         language_layout = series.get("language_layout", [1] * len(languages))
         
         base_text = (
-            f"○ **Title:** `{series['title']}`"
-            f"○ **Released On:** `{series['released_on']}`"
-            f"○ **Genre:** `{series['genre']}`"
-            f"○ **Rating:** `{series['rating']}`"
+            f"○ **Title:** `{series['title']}`\n"
+            f"○ **Released On:** `{series['released_on']}`\n"
+            f"○ **Genre:** `{series['genre']}`\n"
+            f"○ **Rating:** `{series['rating']}`\n\n"
         )
         
         language_names = [lang['name'] for lang in languages]
@@ -636,10 +570,10 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
         return
     
     base_text = (
-        f"○ **Title:** `{series['title']}`"
-        f"○ **Released On:** `{series['released_on']}`"
-        f"○ **Genre:** `{series['genre']}`"
-        f"○ **Rating:** `{series['rating']}`"
+        f"○ **Title:** `{series['title']}`\n"
+        f"○ **Released On:** `{series['released_on']}`\n"
+        f"○ **Genre:** `{series['genre']}`\n"
+        f"○ **Rating:** `{series['rating']}`\n\n"
     )
     
     if data.startswith("back_"):
@@ -722,7 +656,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
             season_layout = languages[language_index].get("season_layout", [1] * len(seasons))
             season_names = [season['name'] for season in seasons]
             
-            text = base_text + f"○ **Language:** `{language_name}` Select the season you need...!"
+            text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
             
             layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
             
@@ -805,7 +739,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
             season_layout = languages[callback_index].get("season_layout", [1] * len(seasons))
             season_names = [season['name'] for season in seasons]
             
-            text = base_text + f"○ **Language:** `{language_name}` Select the season you need...!"
+            text = base_text + f"○ **Language:** `{language_name}`\nSelect the season you need...!"
             
             layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
             
@@ -887,7 +821,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
             
             qualities = seasons[callback_index].get("qualities", [])
             
-            text = base_text + f"○ **Language:** `{stored_data.get('language_name')}` ○ **Season:** `{season_name}` Select the quality you need...!"
+            text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`\n○ **Season:** `{season_name}`\nSelect the quality you need...!"
             
             layout = []
             for quality in qualities:
