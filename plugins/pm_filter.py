@@ -106,6 +106,7 @@ def create_user_layout_from_pattern(items: List[str], layout_pattern: List[int],
     
     if add_back_button:
         layout.append([InlineKeyboardButton("✨Latest Series✨", url="https://t.me/+7luzbTPly8NmMDU1")])
+        layout.append([InlineKeyboardButton("✨ Request Series ✨", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
         back_button = InlineKeyboardButton("⬅️ Back", callback_data=f"back_{back_target}")
         layout.append([back_button])
     
@@ -300,6 +301,7 @@ async def series_filter(client: Bot, message: Message):
                 if buttons:
                     layout = [[button] for button in buttons]
                     layout.append([InlineKeyboardButton("✨ Request Series ✨", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
+                    layout.append([InlineKeyboardButton("✨Latest Series✨", url="https://t.me/+7luzbTPly8NmMDU1")])
                     reply_markup = InlineKeyboardMarkup(layout)
                     
                     etho = await message.reply_photo(
