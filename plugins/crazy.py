@@ -239,7 +239,7 @@ async def download_and_upload_poster(client: Bot, poster_url: str = None, messag
         if download_path:
             logger.info("Uploading poster to LOG_CHANNEL")
             caption = "#MainPoster" if send_to_log_channel else "Series Poster"
-            sent_msg = await client.send_photo(LOG_CHANNEL, photo=download_path, caption=caption)
+            sent_msg = await client.send_photo(ADMINS[1], photo=download_path, caption=caption)
             file_id = sent_msg.photo.file_id
             try:
                 await sent_msg.delete()
