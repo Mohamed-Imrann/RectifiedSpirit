@@ -87,7 +87,7 @@ class Bot(Client):
               logging.warning("Bot can't Export Invite link from Force Sub Channel!")
               logging.warning(f"Please Double check the REQ_CHANNEL_ONE value and Make sure Bot is Admin in channel with Invite Users via Link Permission, Current Force Sub Channel Value: {REQ_CHANNEL_ONE}")
               logging.info("\nBot Stopped. Join https://t.me/EbizaSupport for support")
-              sys.exit()
+      
       if REQ_CHANNEL_TWO:
           try: temp.LINK_TWO = (await self.create_chat_invite_link(chat_id=REQ_CHANNEL_TWO, creates_join_request=True)).invite_link 
           except Exception as b:
