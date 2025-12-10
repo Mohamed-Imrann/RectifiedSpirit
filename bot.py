@@ -35,124 +35,157 @@ pyroutils.MIN_CHANNEL_ID = -100999999999999
 name = "main"
 
 class Bot(Client):
-  def __init__(self):
-      super().__init__(
-          name=SESSION,
-          api_id=API_ID,
-          api_hash=API_HASH,
-          bot_token=BOT_TOKEN, 
-          plugins={"root": "plugins"},
-          workers=1000,
-          sleep_threshold=2,
-      )
+    def __init__(self):
+        # VPS-friendly Pyrogram settings to reduce "Request timed out"
+        super().__init__(
+            name=SESSION,
+            api_id=API_ID,
+            api_hash=API_HASH,
+            bot_token=BOT_TOKEN,
+            plugins={"root": "plugins"},
+            # workers: lower to avoid overwhelming the event loop on small VPS
+            workers=300,
+            # tolerate short network interruptions before considering the client disconnected
+            sleep_threshold=10,
+            # MAIN FIXES for VPS timeouts
+            request_timeout=60,          # overall request timeout
+            connect_timeout=30,          # socket connect timeout
+            read_timeout=30,             # socket read timeout
+            write_timeout=30,            # socket write timeout
+            ipv6=False,                  # disable IPv6 (many VPS are IPv6-only/unreliable)
+            max_concurrent_transmissions=20,  # limit concurrent sends
+        )
 
-  async def start(self, **kwargs):
-      if REQ_CHANNEL_ONE is None or REQ_CHANNEL_TWO is None:
-          with open("./dynamic.env", "wt+", encoding="utf-8") as f:
-              if REQ_CHANNEL_ONE is None:
-                  req1 = await JoinReqs().get_fsub_chat1()
-                  req1 = req1['chat_id'] if req1 else False
-                  f.write(f"REQ_CHANNEL_ONE={req1}\n")
-              else:
-                  f.write(f"REQ_CHANNEL_ONE={REQ_CHANNEL_ONE}\n")
-              
-              if REQ_CHANNEL_TWO is None:
-                  req2 = await JoinReqs().get_fsub_chat2()
-                  req2 = req2['chat_id'] if req2 else False
-                  f.write(f"REQ_CHANNEL_TWO={req2}\n")
-              else:
-                  f.write(f"REQ_CHANNEL_TWO={REQ_CHANNEL_TWO}\n")
-                  
-          logging.info("Loading REQ_CHANNEL_ONE and REQ_CHANNEL_TWO from database if needed...")
-          os.execl(sys.executable, sys.executable, "main.py")
-          return
+    async def start(self, **kwargs):
+        if REQ_CHANNEL_ONE is None or REQ_CHANNEL_TWO is None:
+            # If required channels are not set, try to load from DB and restart the process.
+            with open("./dynamic.env", "wt+", encoding="utf-8") as f:
+                if REQ_CHANNEL_ONE is None:
+                    req1 = await JoinReqs().get_fsub_chat1()
+                    req1 = req1['chat_id'] if req1 else False
+                    f.write(f"REQ_CHANNEL_ONE={req1}\n")
+                else:
+                    f.write(f"REQ_CHANNEL_ONE={REQ_CHANNEL_ONE}\n")
+                
+                if REQ_CHANNEL_TWO is None:
+                    req2 = await JoinReqs().get_fsub_chat2()
+                    req2 = req2['chat_id'] if req2 else False
+                    f.write(f"REQ_CHANNEL_TWO={req2}\n")
+                else:
+                    f.write(f"REQ_CHANNEL_TWO={REQ_CHANNEL_TWO}\n")
+                    
+            logging.info("Loading REQ_CHANNEL_ONE and REQ_CHANNEL_TWO from database if needed...")
+            # restart the current Python process so new env values are picked up
+            os.execl(sys.executable, sys.executable, "main.py")
+            return
 
-      await super().start()
+        await super().start()
 
-      me = await self.get_me()
-      temp.ME = me.id
-      temp.U_NAME = me.username
-      temp.B_NAME = me.first_name
-      self.username = '@' + me.username
-      logging.info(f"{me.first_name} 𝖶𝗂𝗍𝗁 𝖥𝗈𝗋 𝖯𝗒𝗋𝗈𝗀𝗋𝖺𝗆 v{__version__} (Layer {layer}) 𝖲𝗍𝖺𝖺𝗋𝗍𝖾𝖽 𝖮𝗇 @{me.username}")
-      app = web.AppRunner(await web_server())
-      await app.setup()
-      bind_address = "0.0.0.0"
-      await web.TCPSite(app, bind_address, PORT).start()
-   
-      if REQ_CHANNEL_ONE:
-          try: temp.LINK_ONE = (await self.create_chat_invite_link(chat_id=REQ_CHANNEL_ONE, creates_join_request=True)).invite_link 
-          except Exception as a:
-              logging.warning(a)
-              logging.warning("Bot can't Export Invite link from Force Sub Channel!")
-              logging.warning(f"Please Double check the REQ_CHANNEL_ONE value and Make sure Bot is Admin in channel with Invite Users via Link Permission, Current Force Sub Channel Value: {REQ_CHANNEL_ONE}")
-              logging.info("\nBot Stopped. Join https://t.me/EbizaSupport for support")
-      
-      if REQ_CHANNEL_TWO:
-          try: temp.LINK_TWO = (await self.create_chat_invite_link(chat_id=REQ_CHANNEL_TWO, creates_join_request=True)).invite_link 
-          except Exception as b:
-              logging.warning(b)
-              logging.warning("Bot can't Export Invite link from Force Sub Channel!")
-              logging.warning(f"Please Double check the REQ_CHANNEL_TWO value and Make sure Bot is Admin in channel with Invite Users via Link Permission, Current Force Sub Channel Value: {REQ_CHANNEL_TWO}")
-              logging.info("\nBot Stopped. Join https://t.me/EbizaSupport for support")
-              sys.exit()
+        me = await self.get_me()
+        temp.ME = me.id
+        temp.U_NAME = me.username
+        temp.B_NAME = me.first_name
+        self.username = '@' + me.username
+        logging.info(f"{me.first_name} 𝖶𝗂𝗍𝗁 𝖥𝗈𝗋 𝖯𝗒𝗋𝗈𝗀𝗋𝖺𝗆 v{__version__} (Layer {layer}) 𝖲𝗍𝖺𝖺𝗋𝗍𝖾𝖽 𝖮𝗇 @{me.username}")
 
-      for admin in ADMINS:
-          try:
-              await self.send_message(admin, text="Bot Restarted")
-              logging.info("Admin Sending")
-          except Exception as e:
-              logging.warning(f"Failed to send restart message to {admin}: {e}")
-      await asyncio.sleep(4)
-      for id in DB_CHANNEL:
-          try:
-              await self.get_chat(id)
-              test = await self.send_message(id, text="Bot Restarted")
-              logging.info(f"Channel Sending - {id}")
-              await test.delete()
-          except Exception as e:
-              logging.warning(f"Failed to send restart message to {id}: {e}")
-      logging.info('Done Things')
-      
-  async def stop(self, *args):
-      await super().stop()
-      logging.info("Bot stopped. Bye.")
-  
-  async def iter_messages(
-      self,
-      chat_id: Union[int, str],
-      limit: int,
-      offset: int = 0,
-  ) -> Optional[AsyncGenerator["types.Message", None]]:
-      """Iterate through a chat sequentially.
-      This convenience method does the same as repeatedly calling :meth:`~pyrogram.Client.get_messages` in a loop, thus saving
-      you from the hassle of setting up boilerplate code. It is useful for getting the whole chat messages with a
-      single call.
-      Parameters:
-          chat_id (``int`` | ``str``):
-              Unique identifier (int) or username (str) of the target chat.
-              For your personal cloud (Saved Messages) you can simply use "me" or "self".
-              For a contact that exists in your Telegram address book you can use his phone number (str).
-              
-          limit (``int``):
-              Identifier of the last message to be returned.
-              
-          offset (``int``, *optional*):
-              Identifier of the first message to be returned.
-              Defaults to 0.
-      Returns:
-          ``Generator``: A generator yielding :obj:`~pyrogram.types.Message` objects.
-      Example:
-          .. code-block:: python
-              for message in app.iter_messages("pyrogram", 1, 15000):
-                  print(message.text)
-      """
-      current = offset
-      while True:
-          new_diff = min(200, limit - current)
-          if new_diff <= 0:
-              return
-          messages = await self.get_messages(chat_id, list(range(current, current+new_diff+1)))
-          for message in messages:
-              yield message
-              current += 1
+        # start web server (aiohttp) used by some plugins
+        try:
+            app = web.AppRunner(await web_server())
+            await app.setup()
+            bind_address = "0.0.0.0"
+            await web.TCPSite(app, bind_address, PORT).start()
+        except Exception as e:
+            logging.warning(f"Failed to start web server: {e}")
+
+        # create invite links for required channels (if configured)
+        if REQ_CHANNEL_ONE:
+            try:
+                temp.LINK_ONE = (await self.create_chat_invite_link(chat_id=REQ_CHANNEL_ONE, creates_join_request=True)).invite_link 
+            except Exception as a:
+                logging.warning(a)
+                logging.warning("Bot can't Export Invite link from Force Sub Channel!")
+                logging.warning(f"Please Double check the REQ_CHANNEL_ONE value and Make sure Bot is Admin in channel with Invite Users via Link Permission, Current Force Sub Channel Value: {REQ_CHANNEL_ONE}")
+                logging.info("\nBot Stopped. Join https://t.me/EbizaSupport for support")
+        
+        if REQ_CHANNEL_TWO:
+            try:
+                temp.LINK_TWO = (await self.create_chat_invite_link(chat_id=REQ_CHANNEL_TWO, creates_join_request=True)).invite_link 
+            except Exception as b:
+                logging.warning(b)
+                logging.warning("Bot can't Export Invite link from Force Sub Channel!")
+                logging.warning(f"Please Double check the REQ_CHANNEL_TWO value and Make sure Bot is Admin in channel with Invite Users via Link Permission, Current Force Sub Channel Value: {REQ_CHANNEL_TWO}")
+                logging.info("\nBot Stopped. Join https://t.me/EbizaSupport for support")
+                sys.exit()
+
+        # notify admins that the bot restarted (best-effort, do not crash if sending fails)
+        for admin in ADMINS:
+            try:
+                await self.send_message(admin, text="Bot Restarted")
+                logging.info("Admin Sending")
+            except Exception as e:
+                logging.warning(f"Failed to send restart message to {admin}: {e}")
+
+        # small sleep to stagger channel notifications and reduce sudden burst of API calls on startup
+        await asyncio.sleep(4)
+        for id in DB_CHANNEL:
+            try:
+                # ensure chat exists, then send and delete a test message
+                await self.get_chat(id)
+                test = await self.send_message(id, text="Bot Restarted")
+                logging.info(f"Channel Sending - {id}")
+                # delete the test message if possible (best-effort)
+                try:
+                    await test.delete()
+                except Exception:
+                    pass
+            except Exception as e:
+                logging.warning(f"Failed to send restart message to {id}: {e}")
+
+        logging.info('Done Things')
+        
+    async def stop(self, *args):
+        await super().stop()
+        logging.info("Bot stopped. Bye.")
+    
+    async def iter_messages(
+        self,
+        chat_id: Union[int, str],
+        limit: int,
+        offset: int = 0,
+    ) -> Optional[AsyncGenerator["types.Message", None]]:
+        """Iterate through a chat sequentially.
+        This convenience method does the same as repeatedly calling :meth:`~pyrogram.Client.get_messages` in a loop, thus saving
+        you from the hassle of setting up boilerplate code. It is useful for getting the whole chat messages with a
+        single call.
+        Parameters:
+            chat_id (``int`` | ``str``):
+                Unique identifier (int) or username (str) of the target chat.
+                For your personal cloud (Saved Messages) you can simply use "me" or "self".
+                For a contact that exists in your Telegram address book you can use his phone number (str).
+                
+            limit (``int``):
+                Identifier of the last message to be returned.
+                
+            offset (``int``, *optional*):
+                Identifier of the first message to be returned.
+                Defaults to 0.
+        Returns:
+            ``Generator``: A generator yielding :obj:`~pyrogram.types.Message` objects.
+        Example:
+            .. code-block:: python
+                for message in app.iter_messages("pyrogram", 1, 15000):
+                    print(message.text)
+        """
+        current = offset
+        while True:
+            new_diff = min(200, limit - current)
+            if new_diff <= 0:
+                return
+            messages = await self.get_messages(chat_id, list(range(current, current+new_diff+1)))
+            for message in messages:
+                yield message
+                current += 1
+
+# create and run the bot
+app = Bot()
+app.run()
