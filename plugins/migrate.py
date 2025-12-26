@@ -1,407 +1,396 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-import os
+# plugins/migrate.py
 import asyncio
+import time
 import logging
 from datetime import datetime
-from pymongo import MongoClient
-from pymongo.errors import BulkWriteError
-from info import ADMINS, DATABASE_URI, NEW_DATABASE_URI, MIGRATION_MODE
-from pyrogram import Client, filters
-from pyrogram.types import Message
+from typing import Dict, List
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+from pyrogram import Client, filters, enums
+from pyrogram.types import Message
+from pymongo import MongoClient
+
+from info import ADMINS, DATABASE_URI, POSTGRES_URI, REDIS_URL
+from database.pg_db import PostgresDB
+from database.cache import Cache
+
 logger = logging.getLogger(__name__)
 
-class MongoToMongoMigration:
+
+class MigrationStats:
+    """Track migration progress and statistics."""
+    
     def __init__(self):
-        self.old_mongo_uri = DATABASE_URI
-        self.new_mongo_uri = NEW_DATABASE_URI
-        self.batch_size = 100
-        
-    async def connect_databases(self):
-        """Connect to both old and new MongoDB databases"""
-        try:
-            # Connect to old MongoDB
-            self.old_client = MongoClient(self.old_mongo_uri)
-            self.old_db = self.old_client['series_database']
-            self.old_series_collection = self.old_db['series']
-            self.old_links_collection = self.old_db['series_links']
-            self.old_posters_collection = self.old_db['posters']
-            self.old_episodes_collection = self.old_db.get('episodes', None)
-            logger.info("Connected to old MongoDB successfully")
-            
-            # Connect to new MongoDB
-            self.new_client = MongoClient(self.new_mongo_uri)
-            self.new_db = self.new_client['series_database']
-            self.new_series_collection = self.new_db['series']
-            self.new_episodes_collection = self.new_db['episodes']
-            self.new_posters_collection = self.new_db['posters']
-            self.new_admin_assignments_collection = self.new_db['admin_assignments']
-            logger.info("Connected to new MongoDB successfully")
-            
-            return True
-        except Exception as e:
-            logger.error(f"Database connection error: {e}")
-            return False
+        self.start_time = time.time()
+        self.phase = "Initializing"
+        self.totals = {'series': 0, 'links': 0, 'posters': 0}
+        self.migrated = {'series': 0, 'links': 0, 'posters': 0}
+        self.errors: List[str] = []
+        self.warnings: List[str] = []
     
-    async def migrate_series(self, progress_callback=None):
-        """Migrate series data from old MongoDB to new MongoDB"""
-        try:
-            # Get all series from old MongoDB
-            series_list = list(self.old_series_collection.find())
-            total_series = len(series_list)
-            logger.info(f"Found {total_series} series to migrate")
-            
-            migrated_series = 0
-            skipped_series = 0
-            
-            # Prepare batch operations
-            series_batch = []
-            episodes_batch = []
-            posters_batch = []
-            
-            for series_data in series_list:
-                try:
-                    # Transform series data to new structure
-                    new_series_data = {
-                        "_id": series_data.get('key', series_data.get('_id')),
-                        "title": series_data.get('title', 'Unknown'),
-                        "released_on": series_data.get('released_on', 'N/A'),
-                        "genre": series_data.get('genre', 'N/A'),
-                        "rating": series_data.get('rating', 'N/A'),
-                        "media_type": series_data.get('media_type', 'tv'),
-                        "published": True,  # Mark all migrated series as published
-                        "languages": [],
-                        "language_layout": [1] * len(series_data.get('languages', [])),
-                        "poster_file_id": None
-                    }
-                    
-                    # Get poster for this series
-                    poster_doc = self.old_posters_collection.find_one({"series_key": series_data.get('key')})
-                    if poster_doc:
-                        new_series_data["poster_file_id"] = poster_doc.get('poster_url')
-                    
-                    # Process languages
-                    languages = series_data.get('languages', [])
-                    for language in languages:
-                        language_name = language if isinstance(language, str) else language.get('name', 'Unknown')
-                        
-                        # Create language object
-                        language_obj = {
-                            "name": language_name,
-                            "seasons": [],
-                            "season_layout": [],
-                            "poster_file_id": None
-                        }
-                        
-                        # Get seasons for this language
-                        seasons = series_data.get('seasons', {})
-                        if isinstance(seasons, dict):
-                            season_names = list(seasons.keys())
-                        elif isinstance(seasons, list):
-                            season_names = [s.get('name', 'Unknown') for s in seasons]
-                        else:
-                            season_names = []
-                        
-                        # Set season layout (1 button per row by default)
-                        language_obj["season_layout"] = [1] * len(season_names)
-                        
-                        for season_name in season_names:
-                            # Create season object
-                            season_obj = {
-                                "name": season_name,
-                                "qualities": [],
-                                "quality_layout": [],
-                                "poster_file_id": None
-                            }
-                            
-                            # Get links for this season
-                            link_key = f"{series_data.get('key')}-{language_name.lower().replace(' ', '')}-{season_name.lower().replace(' ', '')}"
-                            links_doc = self.old_links_collection.find_one({"series_key": link_key})
-                            
-                            if links_doc:
-                                links = links_doc.get("links", {})
-                                quality_names = list(links.keys())
-                                
-                                # Set quality layout (1 button per row by default)
-                                season_obj["quality_layout"] = [1] * len(quality_names)
-                                
-                                for quality_name, link_value in links.items():
-                                    # Create quality object
-                                    quality_obj = {
-                                        "name": quality_name,
-                                        "link_key": link_value
-                                    }
-                                    
-                                    # Add to episodes collection if needed
-                                    if link_value and not link_value.startswith("get_"):
-                                        episodes_batch.append({
-                                            "file_link_key": link_value,
-                                            "files": [{"file_id": link_value, "caption": ""}],
-                                            "channel_id": 0,
-                                            "first_msg_id": 0,
-                                            "last_msg_id": 0
-                                        })
-                                    
-                                    season_obj["qualities"].append(quality_obj)
-                            
-                            language_obj["seasons"].append(season_obj)
-                        
-                        new_series_data["languages"].append(language_obj)
-                    
-                    # Add to batch
-                    series_batch.append(new_series_data)
-                    
-                    # Add poster to batch if exists
-                    if poster_doc:
-                        posters_batch.append({
-                            "series_key": series_data.get('key'),
-                            "poster_url": poster_doc.get('poster_url')
-                        })
-                    
-                    # Process batch if it reaches batch size
-                    if len(series_batch) >= self.batch_size:
-                        await self.process_batches(series_batch, episodes_batch, posters_batch)
-                        series_batch = []
-                        episodes_batch = []
-                        posters_batch = []
-                    
-                    migrated_series += 1
-                    if progress_callback and migrated_series % 10 == 0:
-                        await progress_callback(migrated_series, total_series)
-                        
-                except Exception as e:
-                    logger.error(f"Error migrating series {series_data.get('key')}: {e}")
-                    skipped_series += 1
-            
-            # Process remaining items in batches
-            if series_batch:
-                await self.process_batches(series_batch, episodes_batch, posters_batch)
-            
-            # Migrate episodes collection if it exists in old database
-            if self.old_episodes_collection:
-                await self.migrate_episodes_collection()
-            
-            logger.info(f"Migration completed: {migrated_series} series migrated, {skipped_series} skipped")
-            return {"migrated": migrated_series, "skipped": skipped_series}
-            
-        except Exception as e:
-            logger.error(f"Error during migration: {e}")
-            return {"migrated": 0, "skipped": len(series_list) if 'series_list' in locals() else 0}
+    @property
+    def elapsed(self) -> str:
+        secs = int(time.time() - self.start_time)
+        mins, secs = divmod(secs, 60)
+        return f"{mins}m {secs}s"
     
-    async def process_batches(self, series_batch, episodes_batch, posters_batch):
-        """Process and insert batches into new database"""
-        try:
-            # Insert series batch
-            if series_batch:
-                self.new_series_collection.insert_many(series_batch, ordered=False)
-            
-            # Insert episodes batch
-            if episodes_batch:
-                # Remove duplicates based on file_link_key
-                unique_episodes = {}
-                for episode in episodes_batch:
-                    key = episode["file_link_key"]
-                    if key not in unique_episodes:
-                        unique_episodes[key] = episode
-                    else:
-                        # Merge files if duplicate key
-                        unique_episodes[key]["files"].extend(episode["files"])
-                
-                self.new_episodes_collection.insert_many(list(unique_episodes.values()), ordered=False)
-            
-            # Insert posters batch
-            if posters_batch:
-                self.new_posters_collection.insert_many(posters_batch, ordered=False)
-                
-        except BulkWriteError as bwe:
-            logger.warning(f"Bulk write error: {bwe.details}")
-        except Exception as e:
-            logger.error(f"Error processing batches: {e}")
+    def progress_bar(self, done: int, total: int, width: int = 10) -> str:
+        if total == 0:
+            return "░" * width + " 0%"
+        pct = done / total
+        filled = int(pct * width)
+        return f"{'█' * filled}{'░' * (width - filled)} {pct:.0%}"
     
-    async def migrate_episodes_collection(self):
-        """Migrate episodes collection from old to new database"""
-        try:
-            episodes_list = list(self.old_episodes_collection.find())
-            total_episodes = len(episodes_list)
-            logger.info(f"Found {total_episodes} episodes to migrate")
-            
-            migrated_episodes = 0
-            episodes_batch = []
-            
-            for episode_data in episodes_list:
-                try:
-                    # Transform episode data to new structure
-                    new_episode_data = {
-                        "file_link_key": episode_data.get("file_link_key"),
-                        "files": episode_data.get("files", []),
-                        "channel_id": episode_data.get("channel_id", 0),
-                        "first_msg_id": episode_data.get("first_msg_id", 0),
-                        "last_msg_id": episode_data.get("last_msg_id", 0)
-                    }
-                    
-                    episodes_batch.append(new_episode_data)
-                    
-                    # Process batch if it reaches batch size
-                    if len(episodes_batch) >= self.batch_size:
-                        self.new_episodes_collection.insert_many(episodes_batch, ordered=False)
-                        episodes_batch = []
-                    
-                    migrated_episodes += 1
-                    
-                except Exception as e:
-                    logger.error(f"Error migrating episode {episode_data.get('file_link_key')}: {e}")
-            
-            # Process remaining items in batch
-            if episodes_batch:
-                self.new_episodes_collection.insert_many(episodes_batch, ordered=False)
-            
-            logger.info(f"Episodes migration completed: {migrated_episodes} episodes migrated")
-            
-        except Exception as e:
-            logger.error(f"Error during episodes migration: {e}")
-    
-    async def close_connections(self):
-        """Close database connections"""
-        try:
-            if hasattr(self, 'old_client'):
-                self.old_client.close()
-            if hasattr(self, 'new_client'):
-                self.new_client.close()
-            logger.info("Database connections closed")
-        except Exception as e:
-            logger.error(f"Error closing connections: {e}")
+    def format_progress(self) -> str:
+        return f"""
+<b>🔄 Migration Progress</b>
 
-# Create migration instance
-migration = MongoToMongoMigration()
+<b>Phase:</b> <code>{self.phase}</code>
+<b>Elapsed:</b> <code>{self.elapsed}</code>
 
-@Client.on_message(filters.command("migrate_mongo") & filters.user(ADMINS))
-async def start_migration(client: Client, message: Message):
-    """Start the migration process from old MongoDB to new MongoDB"""
-    try:
-        progress_msg = await message.reply("🔄 **Starting MongoDB Migration**\n\nConnecting to databases...")
-        
-        # Check if MIGRATION_MODE is enabled
-        if not MIGRATION_MODE:
-            await progress_msg.edit("❌ **Migration Failed**\n\nMIGRATION_MODE is not enabled in info.py. Please set MIGRATION_MODE = True and restart the bot.")
-            return
-        
-        # Connect to databases
-        if not await migration.connect_databases():
-            await progress_msg.edit("❌ **Migration Failed**\n\nCould not connect to databases. Check your MongoDB URIs.")
-            return
-        
-        await progress_msg.edit("🔄 **Migrating Data**\n\nStarting series migration...")
-        
-        # Progress callback function
-        async def update_progress(migrated, total):
+<b>📚 Series</b>
+{self.progress_bar(self.migrated['series'], self.totals['series'])}
+<code>{self.migrated['series']:,} / {self.totals['series']:,}</code>
+
+<b>🔗 Links</b>
+{self.progress_bar(self.migrated['links'], self.totals['links'])}
+<code>{self.migrated['links']:,} / {self.totals['links']:,}</code>
+
+<b>🖼 Posters</b>
+{self.progress_bar(self.migrated['posters'], self.totals['posters'])}
+<code>{self.migrated['posters']:,} / {self.totals['posters']:,}</code>
+
+<b>⚠️ Errors:</b> <code>{len(self.errors)}</code>
+<b>⚡ Warnings:</b> <code>{len(self.warnings)}</code>
+"""
+    
+    def format_final(self, pg_stats: Dict) -> str:
+        status = "✅ Completed" if not self.errors else "⚠️ Completed with errors"
+        return f"""
+<b>{status}</b>
+
+<b>⏱ Total Time:</b> <code>{self.elapsed}</code>
+
+<b>📊 Migration Summary:</b>
+├ Series: <code>{self.migrated['series']:,} / {self.totals['series']:,}</code>
+├ Links: <code>{self.migrated['links']:,} / {self.totals['links']:,}</code>
+└ Posters: <code>{self.migrated['posters']:,} / {self.totals['posters']:,}</code>
+
+<b>📈 PostgreSQL Stats:</b>
+├ Series: <code>{pg_stats.get('series', 0):,}</code>
+├ Links: <code>{pg_stats.get('links', 0):,}</code>
+└ Posters: <code>{pg_stats.get('posters', 0):,}</code>
+
+<b>⚠️ Errors:</b> <code>{len(self.errors)}</code>
+<b>⚡ Warnings:</b> <code>{len(self.warnings)}</code>
+"""
+
+
+async def migrate_data(stats: MigrationStats, pg: PostgresDB, cache: Cache):
+    """Perform the actual migration."""
+    
+    # Connect to MongoDB
+    mongo = MongoClient(DATABASE_URI)
+    mongo_db = mongo['series_database']
+    
+    # Collections (adjust names as per your schema)
+    series_col = mongo_db['series']
+    links_col = mongo_db['series_links']
+    posters_col = mongo_db['posters']
+    
+    # Count documents
+    stats.phase = "Counting documents..."
+    stats.totals['series'] = series_col.count_documents({})
+    stats.totals['links'] = links_col.count_documents({})
+    stats.totals['posters'] = posters_col.count_documents({})
+    
+    # Clear PostgreSQL
+    stats.phase = "Clearing PostgreSQL..."
+    await pg.truncate_all()
+    
+    # Clear Redis cache
+    stats.phase = "Clearing Redis cache..."
+    await cache.clear_all()
+    
+    # ==================== MIGRATE SERIES ====================
+    stats.phase = "Migrating series..."
+    batch = []
+    batch_size = 100
+    
+    for doc in series_col.find({}):
+        try:
+            # Handle _id if needed
+            doc.pop('_id', None)
+            
+            # Ensure key exists
+            key = doc.get('key', '')
+            if not key and doc.get('title'):
+                key = doc['title'].lower().replace(' ', '')
+            
+            if not key:
+                stats.warnings.append(f"Series without key: {doc.get('title', 'unknown')}")
+                continue
+            
+            batch.append({
+                'key': key.lower().replace(' ', ''),
+                'title': doc.get('title', ''),
+                'released_on': doc.get('released_on', ''),
+                'genre': doc.get('genre', ''),
+                'rating': str(doc.get('rating', '')),
+                'languages': doc.get('languages', []),
+                'seasons': doc.get('seasons', {})
+            })
+            
+            if len(batch) >= batch_size:
+                await pg.bulk_upsert_series(batch)
+                stats.migrated['series'] += len(batch)
+                batch = []
+                
+        except Exception as e:
+            stats.errors.append(f"Series error: {str(e)[:50]}")
+    
+    # Final batch
+    if batch:
+        await pg.bulk_upsert_series(batch)
+        stats.migrated['series'] += len(batch)
+    
+    # ==================== MIGRATE LINKS ====================
+    stats.phase = "Migrating links..."
+    
+    for doc in links_col.find({}):
+        try:
+            doc.pop('_id', None)
+            
+            # Handle different link storage formats
+            series_key = doc.get('series_key', '')
+            links_data = doc.get('links', {})
+            
+            if not series_key or not links_data:
+                continue
+            
+            # Parse composite key if needed: serieskey-language-season
+            parts = series_key.split('-')
+            if len(parts) >= 3:
+                season = parts[-1]
+                language = parts[-2]
+                base_key = '-'.join(parts[:-2])
+                
+                # Insert each quality/link pair
+                for quality, link in links_data.items():
+                    await pg.upsert_link(base_key, language, season, quality, link)
+                    stats.migrated['links'] += 1
+            else:
+                # Alternative format handling
+                stats.warnings.append(f"Unknown link format: {series_key}")
+                
+        except Exception as e:
+            stats.errors.append(f"Links error: {str(e)[:50]}")
+    
+    # ==================== MIGRATE POSTERS ====================
+    stats.phase = "Migrating posters..."
+    batch = []
+    
+    for doc in posters_col.find({}):
+        try:
+            doc.pop('_id', None)
+            
+            series_key = doc.get('series_key', '')
+            poster_url = doc.get('poster_url', '')
+            
+            if series_key and poster_url:
+                batch.append({
+                    'series_key': series_key.lower().replace(' ', ''),
+                    'poster_url': poster_url
+                })
+                
+            if len(batch) >= batch_size:
+                await pg.bulk_upsert_posters(batch)
+                stats.migrated['posters'] += len(batch)
+                batch = []
+                
+        except Exception as e:
+            stats.errors.append(f"Poster error: {str(e)[:50]}")
+    
+    # Final batch
+    if batch:
+        await pg.bulk_upsert_posters(batch)
+        stats.migrated['posters'] += len(batch)
+    
+    # Optimize database
+    stats.phase = "Optimizing database..."
+    await pg.vacuum_analyze()
+    
+    # Close MongoDB
+    mongo.close()
+    
+    stats.phase = "Complete"
+
+
+@Client.on_message(filters.command("migrate") & filters.user(ADMINS))
+async def migrate_command(client: Client, message: Message):
+    """Migrate data from MongoDB to PostgreSQL."""
+    
+    if not POSTGRES_URI or not REDIS_URL:
+        return await message.reply(
+            "❌ <b>Configuration Error</b>\n\n"
+            "<code>POSTGRES_URI</code> or <code>REDIS_URL</code> not set!",
+            parse_mode=enums.ParseMode.HTML
+        )
+    
+    # Initialize tracker
+    stats = MigrationStats()
+    msg = await message.reply(stats.format_progress(), parse_mode=enums.ParseMode.HTML)
+    
+    # Progress updater
+    stop_event = asyncio.Event()
+    
+    async def update_progress():
+        while not stop_event.is_set():
             try:
-                await progress_msg.edit(
-                    f"🔄 **Migrating Data**\n\n"
-                    f"Progress: {migrated}/{total} series\n"
-                    f"Percentage: {migrated/total*100:.1f}%"
-                )
+                await msg.edit_text(stats.format_progress(), parse_mode=enums.ParseMode.HTML)
             except:
                 pass
-        
-        # Start migration
-        results = await migration.migrate_series(update_progress)
-        
-        # Close connections
-        await migration.close_connections()
-        
-        # Send results
-        await progress_msg.edit(
-            f"✅ **Migration Completed**\n\n"
-            f"📊 **Results:**\n"
-            f"• Migrated: {results['migrated']} series\n"
-            f"• Skipped: {results['skipped']} series\n\n"
-            f"🎉 All data has been successfully migrated to the new MongoDB!\n\n"
-            f"⚠️ **Important:** Please set MIGRATION_MODE = False in info.py and restart the bot to use the new database."
-        )
-        
-    except Exception as e:
-        logger.error(f"Migration error: {e}", exc_info=True)
-        await message.reply(f"❌ **Migration Failed**\n\nError: {str(e)}")
-
-@Client.on_message(filters.command("check_migration") & filters.user(ADMINS))
-async def check_migration_status(client: Client, message: Message):
-    """Check the status of migrated data in new MongoDB"""
+            await asyncio.sleep(3)
+    
+    progress_task = asyncio.create_task(update_progress())
+    
     try:
-        status_msg = await message.reply("🔍 **Checking Migration Status**\n\nConnecting to new MongoDB...")
+        # Connect to PostgreSQL
+        stats.phase = "Connecting to PostgreSQL..."
+        pg = PostgresDB(POSTGRES_URI)
+        await pg.connect()
         
-        # Connect to new MongoDB
-        if not hasattr(migration, 'new_client') or migration.new_client is None:
-            if not await migration.connect_databases():
-                await status_msg.edit("❌ **Status Check Failed**\n\nCould not connect to new MongoDB.")
-                return
+        # Connect to Redis
+        stats.phase = "Connecting to Redis..."
+        cache = Cache(REDIS_URL)
+        await cache.connect()
         
-        # Get counts from each collection
-        series_count = migration.new_series_collection.count_documents({})
-        episodes_count = migration.new_episodes_collection.count_documents({})
-        posters_count = migration.new_posters_collection.count_documents({})
+        # Run migration
+        await migrate_data(stats, pg, cache)
         
-        # Get sample data
-        sample_series = list(migration.new_series_collection.find().limit(5))
-        sample_text = "\n".join([f"• {s['title']} ({s['_id']})" for s in sample_series])
+        # Get final stats
+        pg_stats = await pg.get_stats()
         
-        await status_msg.edit(
-            f"📊 **Migration Status Report**\n\n"
-            f"📈 **Data Counts:**\n"
-            f"• Series: {series_count}\n"
-            f"• Episodes: {episodes_count}\n"
-            f"• Posters: {posters_count}\n\n"
-            f"📝 **Sample Series:**\n{sample_text}"
-        )
+        # Cleanup
+        await pg.close()
+        await cache.close()
         
-        # Close connections
-        await migration.close_connections()
+        # Stop progress updater
+        stop_event.set()
+        progress_task.cancel()
+        
+        # Show final results
+        final_text = stats.format_final(pg_stats)
+        
+        # Add error details if any
+        if stats.errors:
+            final_text += "\n<b>Recent Errors:</b>\n"
+            for err in stats.errors[-5:]:
+                final_text += f"<code>• {err}</code>\n"
+        
+        await msg.edit_text(final_text, parse_mode=enums.ParseMode.HTML)
         
     except Exception as e:
-        logger.error(f"Status check error: {e}", exc_info=True)
-        await message.reply(f"❌ **Status Check Failed**\n\nError: {str(e)}")
+        stop_event.set()
+        progress_task.cancel()
+        logger.exception("Migration failed")
+        await msg.edit_text(
+            f"❌ <b>Migration Failed</b>\n\n"
+            f"<b>Phase:</b> <code>{stats.phase}</code>\n"
+            f"<b>Error:</b> <code>{str(e)}</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
 
-@Client.on_message(filters.command("rollback_migration") & filters.user(ADMINS))
-async def rollback_migration(client: Client, message: Message):
-    """Rollback the migration by dropping all collections in the new database"""
+
+@Client.on_message(filters.command("dbstats") & filters.user(ADMINS))
+async def db_stats_command(client: Client, message: Message):
+    """Show database statistics."""
+    
     try:
-        confirm_msg = await message.reply(
-            "⚠️ **Rollback Migration**\n\n"
-            "This will permanently delete all migrated data from the new MongoDB.\n\n"
-            "Reply with 'CONFIRM' to continue or 'CANCEL' to abort."
-        )
+        # PostgreSQL stats
+        pg = PostgresDB(POSTGRES_URI)
+        await pg.connect()
+        pg_stats = await pg.get_stats()
+        await pg.close()
         
-        # Wait for confirmation
-        response = await client.listen(filters.text & filters.user(message.from_user.id), timeout=30)
-        if response.text.upper() != "CONFIRM":
-            await confirm_msg.edit("❌ **Rollback Aborted**")
-            return
+        # Redis stats
+        cache = Cache(REDIS_URL)
+        await cache.connect()
+        cache_stats = await cache.get_stats()
+        await cache.close()
         
-        await confirm_msg.edit("🔄 **Rolling Back Migration**\n\nDropping collections...")
-        
-        # Connect to new MongoDB
-        if not hasattr(migration, 'new_client') or migration.new_client is None:
-            if not await migration.connect_databases():
-                await confirm_msg.edit("❌ **Rollback Failed**\n\nCould not connect to new MongoDB.")
-                return
-        
-        # Drop collections
-        migration.new_series_collection.drop()
-        migration.new_episodes_collection.drop()
-        migration.new_posters_collection.drop()
-        migration.new_admin_assignments_collection.drop()
-        
-        await confirm_msg.edit("✅ **Rollback Completed**\n\nAll collections have been dropped. Migration data has been removed.")
-        
-        # Close connections
-        await migration.close_connections()
+        await message.reply(f"""
+<b>📊 Database Statistics</b>
+
+<b>🐘 PostgreSQL</b>
+├ Series: <code>{pg_stats.get('series', 0):,}</code>
+├ Links: <code>{pg_stats.get('links', 0):,}</code>
+└ Posters: <code>{pg_stats.get('posters', 0):,}</code>
+
+<b>🔴 Redis Cache</b>
+├ Keys: <code>{cache_stats.get('keys', 0):,}</code>
+├ Memory: <code>{cache_stats.get('memory_used', 'N/A')}</code>
+└ Peak: <code>{cache_stats.get('memory_peak', 'N/A')}</code>
+""", parse_mode=enums.ParseMode.HTML)
         
     except Exception as e:
-        logger.error(f"Rollback error: {e}", exc_info=True)
-        await message.reply(f"❌ **Rollback Failed**\n\nError: {str(e)}")
+        await message.reply(
+            f"❌ <b>Error:</b> <code>{e}</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
+
+
+@Client.on_message(filters.command("clearcache") & filters.user(ADMINS))
+async def clear_cache_command(client: Client, message: Message):
+    """Clear Redis cache."""
+    
+    try:
+        cache = Cache(REDIS_URL)
+        await cache.connect()
+        
+        stats_before = await cache.get_stats()
+        await cache.clear_all()
+        
+        await cache.close()
+        
+        await message.reply(
+            f"✅ <b>Cache Cleared</b>\n\n"
+            f"<b>Keys removed:</b> <code>{stats_before.get('keys', 0):,}</code>\n"
+            f"<b>Memory freed:</b> <code>{stats_before.get('memory_used', 'N/A')}</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
+        
+    except Exception as e:
+        await message.reply(
+            f"❌ <b>Error:</b> <code>{e}</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
+
+
+@Client.on_message(filters.command("invalidate") & filters.user(ADMINS))
+async def invalidate_command(client: Client, message: Message):
+    """Invalidate cache for a specific series."""
+    
+    if len(message.command) < 2:
+        return await message.reply(
+            "❌ <b>Usage:</b> <code>/invalidate series_key</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
+    
+    key = message.command[1].lower().replace(' ', '')
+    
+    try:
+        cache = Cache(REDIS_URL)
+        await cache.connect()
+        await cache.invalidate_series(key)
+        await cache.close()
+        
+        await message.reply(
+            f"✅ Cache invalidated for: <code>{key}</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
+        
+    except Exception as e:
+        await message.reply(
+            f"❌ <b>Error:</b> <code>{e}</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
