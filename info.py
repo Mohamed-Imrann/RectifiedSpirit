@@ -56,7 +56,8 @@ AUTH_CHANNEL = int(auth_channel) if auth_channel and id_pattern.search(auth_chan
 REQ_CHANNEL = environ.get("REQ_CHANNEL", -1002962062109)
 JOIN_REQS_DB = environ.get("JOIN_REQS_DB", DATABASE_URI)
 LIMIT = 2000
-
+POSTGRES_URI="postgres://SP:root@spidy_bots_x1spidy:5432/psspidt?sslmode=disable"
+REDIS_URL="redis://default:root@spidy_bots_x1redis:6379"
 CHANNELS = "-1002400599577"
 BOT_USERNAME = "Spidy_Series_bot"
 # Others
