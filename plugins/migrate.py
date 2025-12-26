@@ -3,7 +3,7 @@ import asyncio
 import time
 import logging
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Any
 
 from pyrogram import Client, filters, enums
 from pyrogram.types import Message
@@ -85,6 +85,75 @@ class MigrationStats:
 """
 
 
+def safe_str(value: Any, default: str = '') -> str:
+    """Safely convert any value to string."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, (list, dict)):
+        return str(value)
+    return str(value) if value else default
+
+
+def safe_list(value: Any, default: List = None) -> List:
+    """Safely convert value to list."""
+    if default is None:
+        default = []
+    if value is None:
+        return default
+    if isinstance(value, list):
+        return [safe_str(item) for item in value]
+    if isinstance(value, str):
+        return [value] if value else default
+    return default
+
+
+def safe_dict(value: Any, default: Dict = None) -> Dict:
+    """Safely convert value to dict."""
+    if default is None:
+        default = {}
+    if value is None:
+        return default
+    if isinstance(value, dict):
+        return value
+    return default
+
+
+def normalize_key(value: Any) -> str:
+    """Normalize a key value."""
+    if value is None:
+        return ''
+    s = safe_str(value)
+    return s.lower().replace(' ', '').strip()
+
+
+def clean_series_doc(doc: Dict) -> Dict:
+    """Clean and normalize a MongoDB series document for PostgreSQL."""
+    # Remove MongoDB _id
+    doc.pop('_id', None)
+    
+    # Get or generate key
+    key = doc.get('key', '')
+    if not key and doc.get('title'):
+        key = doc['title']
+    key = normalize_key(key)
+    
+    # Clean all fields with proper type conversion
+    return {
+        'key': key,
+        'title': safe_str(doc.get('title', '')),
+        'released_on': safe_str(doc.get('released_on', '')),  # Convert int/float to str
+        'genre': safe_str(doc.get('genre', '')),
+        'rating': safe_str(doc.get('rating', '')),  # Convert int/float to str
+        'languages': safe_list(doc.get('languages', [])),
+        'seasons': safe_dict(doc.get('seasons', {})),
+        'metadata': safe_dict(doc.get('metadata', {}))
+    }
+
+
 async def migrate_data(stats: MigrationStats, pg: PostgresDB, cache: Cache):
     """Perform the actual migration."""
     
@@ -118,27 +187,14 @@ async def migrate_data(stats: MigrationStats, pg: PostgresDB, cache: Cache):
     
     for doc in series_col.find({}):
         try:
-            # Handle _id if needed
-            doc.pop('_id', None)
+            # Clean and normalize the document
+            cleaned = clean_series_doc(doc)
             
-            # Ensure key exists
-            key = doc.get('key', '')
-            if not key and doc.get('title'):
-                key = doc['title'].lower().replace(' ', '')
-            
-            if not key:
-                stats.warnings.append(f"Series without key: {doc.get('title', 'unknown')}")
+            if not cleaned['key']:
+                stats.warnings.append(f"Series without key: {cleaned.get('title', 'unknown')[:30]}")
                 continue
             
-            batch.append({
-                'key': key.lower().replace(' ', ''),
-                'title': doc.get('title', ''),
-                'released_on': doc.get('released_on', ''),
-                'genre': doc.get('genre', ''),
-                'rating': str(doc.get('rating', '')),
-                'languages': doc.get('languages', []),
-                'seasons': doc.get('seasons', {})
-            })
+            batch.append(cleaned)
             
             if len(batch) >= batch_size:
                 await pg.bulk_upsert_series(batch)
@@ -146,12 +202,16 @@ async def migrate_data(stats: MigrationStats, pg: PostgresDB, cache: Cache):
                 batch = []
                 
         except Exception as e:
-            stats.errors.append(f"Series error: {str(e)[:50]}")
+            stats.errors.append(f"Series: {str(e)[:50]}")
+            logger.error(f"Series migration error: {e}", exc_info=True)
     
     # Final batch
     if batch:
-        await pg.bulk_upsert_series(batch)
-        stats.migrated['series'] += len(batch)
+        try:
+            await pg.bulk_upsert_series(batch)
+            stats.migrated['series'] += len(batch)
+        except Exception as e:
+            stats.errors.append(f"Series final batch: {str(e)[:50]}")
     
     # ==================== MIGRATE LINKS ====================
     stats.phase = "Migrating links..."
@@ -161,8 +221,8 @@ async def migrate_data(stats: MigrationStats, pg: PostgresDB, cache: Cache):
             doc.pop('_id', None)
             
             # Handle different link storage formats
-            series_key = doc.get('series_key', '')
-            links_data = doc.get('links', {})
+            series_key = safe_str(doc.get('series_key', ''))
+            links_data = safe_dict(doc.get('links', {}))
             
             if not series_key or not links_data:
                 continue
@@ -176,14 +236,41 @@ async def migrate_data(stats: MigrationStats, pg: PostgresDB, cache: Cache):
                 
                 # Insert each quality/link pair
                 for quality, link in links_data.items():
-                    await pg.upsert_link(base_key, language, season, quality, link)
-                    stats.migrated['links'] += 1
+                    try:
+                        await pg.upsert_link(
+                            normalize_key(base_key),
+                            normalize_key(language),
+                            normalize_key(season),
+                            safe_str(quality),
+                            safe_str(link)
+                        )
+                        stats.migrated['links'] += 1
+                    except Exception as e:
+                        stats.errors.append(f"Link insert: {str(e)[:40]}")
             else:
-                # Alternative format handling
-                stats.warnings.append(f"Unknown link format: {series_key}")
+                # Try alternative formats
+                # Format could be: {series_key: key, language: lang, season: s, links: {...}}
+                language = safe_str(doc.get('language', ''))
+                season = safe_str(doc.get('season', ''))
+                
+                if language and season:
+                    for quality, link in links_data.items():
+                        try:
+                            await pg.upsert_link(
+                                normalize_key(series_key),
+                                normalize_key(language),
+                                normalize_key(season),
+                                safe_str(quality),
+                                safe_str(link)
+                            )
+                            stats.migrated['links'] += 1
+                        except Exception as e:
+                            stats.errors.append(f"Link insert: {str(e)[:40]}")
+                else:
+                    stats.warnings.append(f"Unknown link format: {series_key[:30]}")
                 
         except Exception as e:
-            stats.errors.append(f"Links error: {str(e)[:50]}")
+            stats.errors.append(f"Links: {str(e)[:50]}")
     
     # ==================== MIGRATE POSTERS ====================
     stats.phase = "Migrating posters..."
@@ -193,12 +280,12 @@ async def migrate_data(stats: MigrationStats, pg: PostgresDB, cache: Cache):
         try:
             doc.pop('_id', None)
             
-            series_key = doc.get('series_key', '')
-            poster_url = doc.get('poster_url', '')
+            series_key = normalize_key(doc.get('series_key', ''))
+            poster_url = safe_str(doc.get('poster_url', '') or doc.get('poster', ''))
             
             if series_key and poster_url:
                 batch.append({
-                    'series_key': series_key.lower().replace(' ', ''),
+                    'series_key': series_key,
                     'poster_url': poster_url
                 })
                 
@@ -208,12 +295,15 @@ async def migrate_data(stats: MigrationStats, pg: PostgresDB, cache: Cache):
                 batch = []
                 
         except Exception as e:
-            stats.errors.append(f"Poster error: {str(e)[:50]}")
+            stats.errors.append(f"Poster: {str(e)[:50]}")
     
     # Final batch
     if batch:
-        await pg.bulk_upsert_posters(batch)
-        stats.migrated['posters'] += len(batch)
+        try:
+            await pg.bulk_upsert_posters(batch)
+            stats.migrated['posters'] += len(batch)
+        except Exception as e:
+            stats.errors.append(f"Poster final batch: {str(e)[:50]}")
     
     # Optimize database
     stats.phase = "Optimizing database..."
@@ -287,6 +377,9 @@ async def migrate_command(client: Client, message: Message):
             for err in stats.errors[-5:]:
                 final_text += f"<code>• {err}</code>\n"
         
+        if stats.warnings:
+            final_text += f"\n<b>Warnings:</b> <code>{len(stats.warnings)}</code>\n"
+        
         await msg.edit_text(final_text, parse_mode=enums.ParseMode.HTML)
         
     except Exception as e:
@@ -297,6 +390,58 @@ async def migrate_command(client: Client, message: Message):
             f"❌ <b>Migration Failed</b>\n\n"
             f"<b>Phase:</b> <code>{stats.phase}</code>\n"
             f"<b>Error:</b> <code>{str(e)}</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
+
+
+@Client.on_message(filters.command("inspect") & filters.user(ADMINS))
+async def inspect_mongo_command(client: Client, message: Message):
+    """Inspect MongoDB schema to help debug migration issues."""
+    
+    try:
+        mongo = MongoClient(DATABASE_URI)
+        mongo_db = mongo['series_database']
+        
+        # Get sample documents
+        series_sample = mongo_db['series'].find_one()
+        links_sample = mongo_db['series_links'].find_one()
+        posters_sample = mongo_db['posters'].find_one()
+        
+        def format_doc(doc: Dict, name: str) -> str:
+            if not doc:
+                return f"<b>{name}:</b> No documents found\n"
+            
+            # Remove _id for display
+            doc.pop('_id', None)
+            
+            fields = []
+            for k, v in list(doc.items())[:10]:  # Limit fields shown
+                type_name = type(v).__name__
+                value_preview = str(v)[:50] + "..." if len(str(v)) > 50 else str(v)
+                fields.append(f"  • <code>{k}</code> ({type_name}): <code>{value_preview}</code>")
+            
+            return f"<b>{name}:</b>\n" + "\n".join(fields) + "\n"
+        
+        report = "<b>📋 MongoDB Schema Inspection</b>\n\n"
+        report += format_doc(series_sample, "📚 Series")
+        report += "\n"
+        report += format_doc(links_sample, "🔗 Links")
+        report += "\n"
+        report += format_doc(posters_sample, "🖼 Posters")
+        
+        # Collection counts
+        report += "\n<b>📊 Counts:</b>\n"
+        report += f"  • Series: <code>{mongo_db['series'].count_documents({})}</code>\n"
+        report += f"  • Links: <code>{mongo_db['series_links'].count_documents({})}</code>\n"
+        report += f"  • Posters: <code>{mongo_db['posters'].count_documents({})}</code>\n"
+        
+        mongo.close()
+        
+        await message.reply(report, parse_mode=enums.ParseMode.HTML)
+        
+    except Exception as e:
+        await message.reply(
+            f"❌ <b>Error:</b> <code>{e}</code>",
             parse_mode=enums.ParseMode.HTML
         )
 
@@ -356,36 +501,6 @@ async def clear_cache_command(client: Client, message: Message):
             f"✅ <b>Cache Cleared</b>\n\n"
             f"<b>Keys removed:</b> <code>{stats_before.get('keys', 0):,}</code>\n"
             f"<b>Memory freed:</b> <code>{stats_before.get('memory_used', 'N/A')}</code>",
-            parse_mode=enums.ParseMode.HTML
-        )
-        
-    except Exception as e:
-        await message.reply(
-            f"❌ <b>Error:</b> <code>{e}</code>",
-            parse_mode=enums.ParseMode.HTML
-        )
-
-
-@Client.on_message(filters.command("invalidate") & filters.user(ADMINS))
-async def invalidate_command(client: Client, message: Message):
-    """Invalidate cache for a specific series."""
-    
-    if len(message.command) < 2:
-        return await message.reply(
-            "❌ <b>Usage:</b> <code>/invalidate series_key</code>",
-            parse_mode=enums.ParseMode.HTML
-        )
-    
-    key = message.command[1].lower().replace(' ', '')
-    
-    try:
-        cache = Cache(REDIS_URL)
-        await cache.connect()
-        await cache.invalidate_series(key)
-        await cache.close()
-        
-        await message.reply(
-            f"✅ Cache invalidated for: <code>{key}</code>",
             parse_mode=enums.ParseMode.HTML
         )
         
