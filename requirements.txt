@@ -23,3 +23,7 @@ apscheduler==3.10.4
 tmdbv3api
 asyncpg
 tenacity
+# requirements.txt
+asyncpg>=0.29.0
+redis>=5.0.0
+cinemagoer>=2023.0.0
