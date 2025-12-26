@@ -40,12 +40,7 @@ class Bot(Client):
             bot_token=BOT_TOKEN, 
             workers=300,
             plugins={"root": "plugins"},
-            sleep_threshold=10,
-            request_timeout=60,     # MAIN FIX
-            connect_timeout=30,
-            read_timeout=30,
-            write_timeout=30,
-            ipv6=False              # VPS FIX
+            sleep_threshold=10
         )
 
     async def start(self, **kwargs):
