@@ -1,497 +1,583 @@
+# plugins/pmfilter.py
 import logging
 import asyncio
-import time
-import difflib
 import random
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Optional, Tuple
 
-import pyrogram
 from pyrogram import Client, filters, enums
 from pyrogram.types import (
+    Message,
+    CallbackQuery,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    CallbackQuery,
-    InputMediaPhoto,
+    InputMediaPhoto
 )
 
-from info import ADMINS
-from database.crazy_db import (
-    get_series,
-    get_links,
-    get_series_name,
-    get_languages,
-    get_seasons,
-    get_poster_manuel,
-)
+from info import ADMINS, POSTGRES_URI, REDIS_URL
+from database.manager import db, get_pg, get_cache, init_databases
 from utils import temp
 from imdb import Cinemagoer
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.ERROR)
 
-SPELL = (
-    'https://envs.sh/kJj.jpg'
-).split()
-
-imdb = Cinemagoer()
-
-# CACHING / CONCURRENCY CONFIG
-SERIES_CACHE_TTL = 300            # 5 minutes for series list
-POSTER_CACHE_TTL = 24 * 3600      # 1 day for posters
-IMDB_CONCURRENCY = 3              # concurrent IMDb searches
-POSTER_FETCH_LIMIT = 4            # only fetch posters for top N results in callbacks
-
+# Configuration
+SPELL_CHECK_IMAGES = ['https://envs.sh/kJj.jpg']
 DEFAULT_POSTER = "https://envs.sh/kJK.jpg"
+AUTO_DELETE_DELAY = 600  # 10 minutes
 
-# in-memory caches
-_series_cache: Dict[str, float] = {"ts": 0.0}
-_series_list_cache: List[Dict] = []
-_poster_cache: Dict[str, Tuple[Optional[str], float]] = {}
-
-_imdb_semaphore = asyncio.Semaphore(IMDB_CONCURRENCY)
+# IMDb client with rate limiting
+imdb_client = Cinemagoer()
+imdb_semaphore = asyncio.Semaphore(3)
 
 
-# -------------------------
-# Helper async wrappers
-# -------------------------
-async def _get_series_async():
-    """Fetch series list in a thread so it doesn't block."""
-    global _series_list_cache, _series_cache
-    now = time.time()
-    if now - _series_cache.get("ts", 0) < SERIES_CACHE_TTL and _series_list_cache:
-        return _series_list_cache
+# ==================== HELPERS ====================
+
+def chunk_buttons(buttons: List[InlineKeyboardButton], cols: int = 2) -> List[List[InlineKeyboardButton]]:
+    """Split buttons into rows."""
+    return [buttons[i:i + cols] for i in range(0, len(buttons), cols)]
+
+
+async def auto_delete(message: Message, delay: int = AUTO_DELETE_DELAY):
+    """Delete message after delay."""
+    await asyncio.sleep(delay)
     try:
-        series = await asyncio.to_thread(get_series)
-        if series:
-            _series_list_cache = series
-            _series_cache["ts"] = now
-        return series or []
-    except Exception as e:
-        logger.exception("Error loading series list: %s", e)
-        return _series_list_cache or []
-
-
-async def _get_series_name_async(arg):
-    return await asyncio.to_thread(get_series_name, arg)
-
-
-async def _get_links_async(arg):
-    return await asyncio.to_thread(get_links, arg)
-
-
-async def _get_seasons_async(arg):
-    return await asyncio.to_thread(get_seasons, arg)
-
-
-async def _get_poster_manuel_async(series_key):
-    return await asyncio.to_thread(get_poster_manuel, series_key)
-
-
-async def _imdb_search_async(title: str, results: int = 5):
-    # Cinemagoer is blocking: run in thread and limit concurrency
-    async with _imdb_semaphore:
-        return await asyncio.to_thread(imdb.search_movie, title, results)
-
-
-async def _find_most_similar_title_async(query_title: str, search_results):
-    # Use difflib in thread (may be CPU-bound for larger lists)
-    def _inner():
-        titles = [m.get("title", "").lower() for m in search_results]
-        matches = difflib.get_close_matches(query_title.lower(), titles, n=1, cutoff=0.6)
-        if matches:
-            for movie in search_results:
-                if movie.get("title", "").lower() == matches[0]:
-                    return movie
-        return None
-    return await asyncio.to_thread(_inner)
-
-
-# -------------------------
-# Poster fetch with cache
-# -------------------------
-async def get_movie_poster(series_key: str) -> Optional[str]:
-    """Try manual poster -> cached poster -> imdb lookup (limited)."""
-    # manual poster from DB
-    try:
-        poster_url = await _get_poster_manuel_async(series_key)
-        if poster_url:
-            return poster_url
-    except Exception:
-        logger.exception("Error fetching manual poster for %s", series_key)
-
-    # check poster cache
-    cached = _poster_cache.get(series_key)
-    if cached:
-        url, ts = cached
-        if time.time() - ts < POSTER_CACHE_TTL:
-            return url
-        else:
-            _poster_cache.pop(series_key, None)
-
-    # fallback: try imdb (search + match)
-    series = await _get_series_name_async(series_key)
-    if not series:
-        return None
-
-    title = series.get("title", "")
-    if not title:
-        return None
-
-    try:
-        search_results = await _imdb_search_async(title.lower(), results=6)
-        if search_results:
-            movie = await _find_most_similar_title_async(title, search_results)
-            poster_url = movie.get("full-size cover url") if movie else None
-            if poster_url:
-                _poster_cache[series_key] = (poster_url, time.time())
-                return poster_url
-    except Exception:
-        logger.exception("IMDb poster lookup failed for %s", title)
-
-    return None
-
-
-# -------------------------
-# Utility functions
-# -------------------------
-def chunk_buttons(buttons: List[InlineKeyboardButton], chunk_size: int = 3):
-    return [buttons[i:i + chunk_size] for i in range(0, len(buttons), chunk_size)]
-
-
-async def alert_admins(client: Client, series_key: str):
-    alert_message = f"⚠️ Failed to fetch poster for series: <code>{series_key}</code>"
-    for admin_id in ADMINS:
-        try:
-            await client.send_message(chat_id=admin_id, text=alert_message, parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            logger.exception("Failed to alert admin %s about %s", admin_id, series_key)
-
-
-async def DeleteMessage(msg):
-    await asyncio.sleep(600)
-    try:
-        await msg.delete()
-    except Exception:
+        await message.delete()
+    except:
         pass
 
 
-# -------------------------
-# Message handler (non-blocking)
-# -------------------------
-@Client.on_message(filters.text & (filters.private | filters.group))
-async def handle_message(client: Client, message):
-    # Offload all blocking work into the series_filter async function which uses to_thread safely.
+async def ensure_db():
+    """Ensure database is initialized."""
+    if not db.is_ready:
+        await init_databases(POSTGRES_URI, REDIS_URL)
+
+
+# ==================== CACHED DATA ACCESS ====================
+
+async def fetch_search_results(query: str, limit: int = 10, offset: int = 0) -> Tuple[List[Dict], int, int]:
+    """Search with caching."""
+    await ensure_db()
+    cache = get_cache()
+    pg = get_pg()
+    
+    # Check cache
+    cached = await cache.get_search(query, offset)
+    if cached:
+        return cached
+    
+    # Query database
+    results, next_offset, total = await pg.search_series(query, limit, offset)
+    
+    # Cache results
+    await cache.set_search(query, results, next_offset, total, offset)
+    
+    return results, next_offset, total
+
+
+async def fetch_series(key: str) -> Optional[Dict]:
+    """Get series with caching."""
+    await ensure_db()
+    cache = get_cache()
+    pg = get_pg()
+    
+    # Check cache
+    cached = await cache.get_series(key)
+    if cached:
+        return cached
+    
+    # Query database
+    series = await pg.get_series(key)
+    if series:
+        await cache.set_series(key, series)
+    
+    return series
+
+
+async def fetch_suggestions(query: str, limit: int = 5) -> List[Dict]:
+    """Get suggestions with caching."""
+    await ensure_db()
+    cache = get_cache()
+    pg = get_pg()
+    
+    # Check cache
+    cached = await cache.get_suggestions(query)
+    if cached:
+        return cached
+    
+    # Query database
+    suggestions = await pg.get_suggestions(query, limit)
+    if suggestions:
+        await cache.set_suggestions(query, suggestions)
+    
+    return suggestions
+
+
+async def fetch_links(series_key: str, language: str, season: str) -> Dict[str, str]:
+    """Get links with caching."""
+    await ensure_db()
+    cache = get_cache()
+    pg = get_pg()
+    
+    # Check cache
+    cached = await cache.get_links(series_key, language, season)
+    if cached:
+        return cached
+    
+    # Query database
+    links = await pg.get_links(series_key, language, season)
+    if links:
+        await cache.set_links(series_key, language, season, links)
+    
+    return links
+
+
+async def fetch_seasons(key: str) -> List[str]:
+    """Get seasons with caching."""
+    await ensure_db()
+    cache = get_cache()
+    pg = get_pg()
+    
+    # Check cache
+    cached = await cache.get_seasons(key)
+    if cached:
+        return cached
+    
+    # Query database
+    seasons = await pg.get_seasons(key)
+    if seasons:
+        await cache.set_seasons(key, seasons)
+    
+    return seasons
+
+
+async def fetch_poster(key: str, title: str = "") -> Optional[str]:
+    """Get poster with caching and IMDb fallback."""
+    await ensure_db()
+    cache = get_cache()
+    pg = get_pg()
+    
+    # Check cache
+    cached = await cache.get_poster(key)
+    if cached:
+        return cached
+    
+    # Check database
+    poster = await pg.get_poster(key)
+    if poster:
+        await cache.set_poster(key, poster)
+        return poster
+    
+    # IMDb fallback
+    if title:
+        poster = await fetch_imdb_poster(title)
+        if poster:
+            # Save to database and cache
+            await pg.upsert_poster(key, poster, source='imdb')
+            await cache.set_poster(key, poster)
+            return poster
+    
+    return None
+
+
+async def fetch_imdb_poster(title: str) -> Optional[str]:
+    """Fetch poster from IMDb."""
+    if not title:
+        return None
+    
+    async with imdb_semaphore:
+        try:
+            results = await asyncio.to_thread(imdb_client.search_movie, title, 3)
+            for movie in results:
+                url = movie.get('full-size cover url')
+                if url:
+                    return url
+        except Exception as e:
+            logger.error(f"IMDb error for '{title}': {e}")
+    
+    return None
+
+
+# ==================== MESSAGE BUILDERS ====================
+
+async def send_spell_check(message: Message, suggestions: List[Dict], user_id: str) -> Optional[Message]:
+    """Send spell check / suggestions message."""
+    if not suggestions:
+        return None
+    
+    buttons = [
+        InlineKeyboardButton(
+            s.get('title', s.get('key', '')),
+            callback_data=f"sc:{s['key']}:{user_id}"
+        )
+        for s in suggestions[:5]
+    ]
+    
+    keyboard = chunk_buttons(buttons, 2)
+    keyboard.append([
+        InlineKeyboardButton("✨ Latest Series", url="https://t.me/+7luzbTPly8NmMDU1")
+    ])
+    
     try:
-        await series_filter(client, message)
+        msg = await message.reply_photo(
+            photo=random.choice(SPELL_CHECK_IMAGES),
+            caption="<b>🔍 Choose Your Series:</b>",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=enums.ParseMode.HTML
+        )
+        asyncio.create_task(auto_delete(msg))
+        return msg
     except Exception:
-        logger.exception("Error in series_filter for message %s", message.message_id)
+        try:
+            msg = await message.reply_text(
+                "<b>🔍 Choose Your Series:</b>",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=enums.ParseMode.HTML
+            )
+            asyncio.create_task(auto_delete(msg))
+            return msg
+        except:
+            return None
 
 
-async def series_filter(client: Client, message):
+async def send_series_info(
+    message: Message, 
+    series: Dict, 
+    user_id: str, 
+    poster_url: Optional[str] = None
+) -> Optional[Message]:
+    """Send series information with language selection."""
+    
+    languages = series.get('languages', [])
+    key = series['key']
+    title = series.get('title', '')
+    
+    caption = (
+        f"○ <b>Title:</b> <code>{title}</code>\n"
+        f"○ <b>Released:</b> <code>{series.get('released_on', 'Unknown')}</code>\n"
+        f"○ <b>Genre:</b> <code>{series.get('genre', 'Unknown')}</code>\n"
+        f"○ <b>Rating:</b> <code>{series.get('rating', 'N/A')}</code>\n\n"
+        f"<b>🌐 Available Languages:</b>"
+    )
+    
+    # Language buttons
+    buttons = [
+        InlineKeyboardButton(
+            lang,
+            callback_data=f"lang:{key}:{lang.lower().replace(' ', '')}:{user_id}"
+        )
+        for lang in languages
+    ]
+    
+    keyboard = chunk_buttons(buttons, 2)
+    keyboard.append([
+        InlineKeyboardButton("📥 Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")
+    ])
+    
+    try:
+        msg = await message.reply_photo(
+            photo=poster_url or DEFAULT_POSTER,
+            caption=caption,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=enums.ParseMode.HTML
+        )
+        asyncio.create_task(auto_delete(msg))
+        return msg
+    except Exception:
+        try:
+            msg = await message.reply_text(
+                caption,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=enums.ParseMode.HTML
+            )
+            asyncio.create_task(auto_delete(msg))
+            return msg
+        except:
+            return None
+
+
+# ==================== MESSAGE HANDLER ====================
+
+@Client.on_message(
+    filters.text & 
+    (filters.private | filters.group) & 
+    ~filters.command([
+        "start", "help", "migrate", "dbstats", "clearcache", 
+        "invalidate", "logs", "restart", "settings"
+    ])
+)
+async def series_search_handler(client: Client, message: Message):
+    """Handle series search queries."""
+    
     text = message.text.strip()
     user_id = str(message.from_user.id)
-
-    # load series list (cached)
-    series_infos = await _get_series_async()
-    if not series_infos:
-        # nothing to do
+    
+    # Skip empty or command-like messages
+    if not text or text.startswith('/'):
         return
-
-    series_keys = [s["key"] for s in series_infos]
-    series_names = [s["title"] for s in series_infos]
-
-    series_key = None
-    series_name = None
-
-    # direct match by key or title
-    if text in series_keys:
-        series_key = text
-    elif text in series_names:
-        series_name = text
-    else:
-        # fuzzy matches: nearest titles
-        close_matches = difflib.get_close_matches(text, series_names, n=3, cutoff=0.6)
-        if not close_matches:
-            first_word = text.split()[0]
-            close_matches = [name for name in series_names if name.lower().startswith(first_word.lower())][:4]
-
-        if close_matches:
-            # send quick choose buttons (no heavy operations)
-            buttons = [
-                InlineKeyboardButton(
-                    match,
-                    callback_data=f"spellcheck·{series_infos[series_names.index(match)]['key']}·{user_id}"
-                )
-                for match in close_matches
-            ]
-            buttons_chunked = chunk_buttons(buttons, chunk_size=2)
-            buttons_chunked.append([InlineKeyboardButton("✨Latest Series✨", url="https://t.me/+7luzbTPly8NmMDU1")])
-            reply_markup = InlineKeyboardMarkup(buttons_chunked)
+    
+    try:
+        # Search for series
+        results, _, total = await fetch_search_results(text, limit=10)
+        
+        if not results:
+            # Try fuzzy suggestions
+            suggestions = await fetch_suggestions(text, limit=5)
+            if suggestions:
+                await send_spell_check(message, suggestions, user_id)
+            return
+        
+        # Check for exact match
+        query_normalized = text.lower().replace(' ', '')
+        exact_match = None
+        
+        for r in results:
+            if r['key'] == query_normalized or r.get('title', '').lower() == text.lower():
+                exact_match = r
+                break
+        
+        if exact_match:
+            # Get poster with timeout
             try:
-                etho = await message.reply_photo(photo=random.choice(SPELL), caption="<b>Choose Your Series:</b>", reply_markup=reply_markup)
-                asyncio.create_task(DeleteMessage(etho))
-            except Exception:
-                # fallback to text reply if photo fails
-                try:
-                    etho = await message.reply_text("<b>Choose Your Series:</b>", reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
-                    asyncio.create_task(DeleteMessage(etho))
-                except Exception:
-                    pass
-            return
-
-    # At this point either series_key or series_name was found
-    if series_name:
-        series = await _get_series_name_async(series_name)
-        if not series:
-            return
-        series_key = series.get("key")
-
-    if not series_key:
-        return
-
-    # fetch series details (non-blocking)
-    series = await _get_series_name_async(series_key)
-    if not series:
-        return
-
-    languages = series.get("languages", [])
-    reply_text = (
-        f"○ <b>Title:</b> <code>{series['title']}</code>\n"
-        f"○ <b>Released On:</b> <code>{series.get('released_on','Unknown')}</code>\n"
-        f"○ <b>Genre:</b> <code>{series.get('genre','Unknown')}</code>\n"
-        f"○ <b>Rating:</b> <code>{series.get('rating','N/A')}</code>\n\n"
-        "Available Languages:\n"
-    )
-
-    # fetch poster asynchronously but do not block entire flow longer than a short time
-    poster_task = asyncio.create_task(get_movie_poster(series_key))
-
-    buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}·{lang.lower().replace(' ', '')}·{user_id}") for lang in languages]
-    buttons_chunked = chunk_buttons(buttons, chunk_size=2)
-    buttons_chunked.append([InlineKeyboardButton("✨Latest Series✨", url="https://t.me/+7luzbTPly8NmMDU1")])
-    reply_markup = InlineKeyboardMarkup(buttons_chunked)
-
-    # wait a short moment for poster (fast path). If poster takes too long, use DEFAULT_POSTER.
-    try:
-        poster_url = await asyncio.wait_for(poster_task, timeout=2.0)
-    except asyncio.TimeoutError:
-        poster_url = None
-    except Exception:
-        poster_url = None
-
-    try:
-        if poster_url:
-            etho = await message.reply_photo(photo=poster_url, caption=reply_text, reply_markup=reply_markup)
+                poster = await asyncio.wait_for(
+                    fetch_poster(exact_match['key'], exact_match.get('title', '')),
+                    timeout=3.0
+                )
+            except asyncio.TimeoutError:
+                poster = None
+            
+            await send_series_info(message, exact_match, user_id, poster)
         else:
-            etho = await message.reply_photo(photo=DEFAULT_POSTER, caption=reply_text, reply_markup=reply_markup)
-        asyncio.create_task(DeleteMessage(etho))
-    except Exception:
-        # try text fallback
-        try:
-            etho = await message.reply_text(reply_text, reply_markup=reply_markup, parse_mode=enums.ParseMode.HTML)
-            asyncio.create_task(DeleteMessage(etho))
-        except Exception:
-            pass
+            # Show suggestions
+            await send_spell_check(message, results[:5], user_id)
+    
+    except Exception as e:
+        logger.exception(f"Search handler error: {e}")
 
 
-# -------------------------
-# Callback handler
-# -------------------------
+# ==================== CALLBACK HANDLER ====================
+
 @Client.on_callback_query()
-async def cb_handler(client: Client, query: CallbackQuery):
+async def callback_handler(client: Client, query: CallbackQuery):
+    """Handle all callback queries."""
+    
     data = query.data or ""
     user_id = str(query.from_user.id)
-    parts = data.split("·")
-
-    # basic commands
-    if data == "close_data":
-        try:
+    
+    try:
+        # ===== CLOSE BUTTON =====
+        if data == "close":
             await query.message.delete()
-        except Exception:
-            pass
-        return
-
-    if data == "pages":
-        await query.answer()
-        return
-
-    if data.startswith("gt:"):
-        start_parameter = data.split(":", 1)[1]
-        try:
-            await query.answer(url=f"https://t.me/{temp.U_NAME}?start={start_parameter}")
-        except Exception:
-            await query.answer("Invalid URL provided.", show_alert=True)
-        return
-
-    if data.startswith("get:"):
-        start_parameter = data.split(":", 1)[1]
-        try:
-            await query.answer(url=f"https://t.me/{temp.U_NAME}?start={start_parameter}")
-        except Exception:
-            await query.answer("Invalid URL provided.", show_alert=True)
-        return
-
-    # spellcheck flow (user pressed a matched title)
-    if data.startswith("spellcheck·"):
-        try:
-            series_key = parts[1]
-            query_user_id = parts[2]
-        except Exception:
+            return
+        
+        # ===== PLACEHOLDER =====
+        if data in ("pages", "back_home"):
             await query.answer()
             return
-
-        if query_user_id != user_id:
-            await query.answer("Request Yourself", show_alert=True)
+        
+        # ===== GET FILE LINK =====
+        if data.startswith(("gt:", "get:")):
+            link = data.split(":", 1)[1]
+            await query.answer(url=f"https://t.me/{temp.U_NAME}?start={link}")
             return
-
-        series = await _get_series_name_async(series_key)
-        if not series:
-            await query.message.edit_text(text="Series not found.", disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
-            return
-
-        # fetch poster (but limit wait time)
-        poster_task = asyncio.create_task(get_movie_poster(series_key))
-        try:
-            poster_url = await asyncio.wait_for(poster_task, timeout=2.0)
-        except asyncio.TimeoutError:
-            poster_url = None
-        except Exception:
-            poster_url = None
-
-        languages = series.get("languages", [])
-        reply_text = (
-            f"○ <b>Title:</b> <code>{series['title']}</code>\n"
-            f"○ <b>Released On:</b> <code>{series.get('released_on','Unknown')}</code>\n"
-            f"○ <b>Genre:</b> <code>{series.get('genre','Unknown')}</code>\n"
-            f"○ <b>Rating:</b> <code>{series.get('rating','N/A')}</code>\n\n"
-            "Available Languages:\n"
-        )
-        buttons = [InlineKeyboardButton(lang, callback_data=f"{series_key}·{lang.lower().replace(' ', '')}·{user_id}") for lang in languages]
-        buttons_chunked = chunk_buttons(buttons, chunk_size=2)
-        buttons_chunked.append([InlineKeyboardButton("Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
-        reply_markup = InlineKeyboardMarkup(buttons_chunked)
-
-        # Use edit_media + edit_text carefully and separately to avoid MediaEmpty issues
-        try:
-            if poster_url:
-                await query.message.edit_media(media=InputMediaPhoto(poster_url))
-            else:
-                await query.message.edit_media(media=InputMediaPhoto(DEFAULT_POSTER))
-        except Exception:
-            # notify admins if poster repeatedly fails
+        
+        # ===== SPELL CHECK SELECTION =====
+        # Format: sc:series_key:user_id
+        if data.startswith("sc:"):
+            parts = data.split(":")
+            if len(parts) != 3:
+                return await query.answer("Invalid request")
+            
+            key, req_user = parts[1], parts[2]
+            
+            if req_user != user_id:
+                return await query.answer("⚠️ This is not your request!", show_alert=True)
+            
+            series = await fetch_series(key)
+            if not series:
+                return await query.answer("Series not found!", show_alert=True)
+            
+            # Get poster
             try:
-                await alert_admins(client, series_key)
-            except Exception:
-                pass
-
-        try:
-            await query.message.edit_text(text=reply_text, reply_markup=reply_markup)
-        except Exception:
+                poster = await asyncio.wait_for(
+                    fetch_poster(key, series.get('title', '')),
+                    timeout=3.0
+                )
+            except:
+                poster = None
+            
+            languages = series.get('languages', [])
+            
+            caption = (
+                f"○ <b>Title:</b> <code>{series.get('title', '')}</code>\n"
+                f"○ <b>Released:</b> <code>{series.get('released_on', 'Unknown')}</code>\n"
+                f"○ <b>Genre:</b> <code>{series.get('genre', 'Unknown')}</code>\n"
+                f"○ <b>Rating:</b> <code>{series.get('rating', 'N/A')}</code>\n\n"
+                f"<b>🌐 Available Languages:</b>"
+            )
+            
+            buttons = [
+                InlineKeyboardButton(
+                    lang,
+                    callback_data=f"lang:{key}:{lang.lower().replace(' ', '')}:{user_id}"
+                )
+                for lang in languages
+            ]
+            
+            keyboard = chunk_buttons(buttons, 2)
+            keyboard.append([
+                InlineKeyboardButton("📥 Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")
+            ])
+            
             try:
-                await query.message.edit_text(text=reply_text)
-            except Exception:
-                pass
-        return
-
-    # other callback flows: language selection, season selection, quality selection
-    # patterns:
-    #  - "series_key·language·user_id"
-    #  - "series_key·language·season·user_id"
-    if len(parts) == 3:
-        series_key, language, query_user_id = parts
-        if query_user_id != user_id:
-            await query.answer("Request Yourself", show_alert=True)
+                await query.message.edit_media(
+                    media=InputMediaPhoto(
+                        poster or DEFAULT_POSTER,
+                        caption=caption,
+                        parse_mode=enums.ParseMode.HTML
+                    ),
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            except:
+                await query.message.edit_text(
+                    caption,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=enums.ParseMode.HTML
+                )
             return
-
-        series = await _get_series_name_async(series_key)
-        if not series:
-            await query.answer("Series not found.", show_alert=True)
+        
+        # ===== LANGUAGE SELECTION =====
+        # Format: lang:series_key:language:user_id
+        if data.startswith("lang:"):
+            parts = data.split(":")
+            if len(parts) != 4:
+                return await query.answer("Invalid request")
+            
+            key, lang, req_user = parts[1], parts[2], parts[3]
+            
+            if req_user != user_id:
+                return await query.answer("⚠️ This is not your request!", show_alert=True)
+            
+            series = await fetch_series(key)
+            if not series:
+                return await query.answer("Series not found!", show_alert=True)
+            
+            seasons = await fetch_seasons(key)
+            if not seasons:
+                return await query.answer("No seasons available!", show_alert=True)
+            
+            caption = (
+                f"○ <b>Title:</b> <code>{series.get('title', '').title()}</code>\n"
+                f"○ <b>Released:</b> <code>{series.get('released_on', 'Unknown')}</code>\n"
+                f"○ <b>Genre:</b> <code>{series.get('genre', 'Unknown')}</code>\n"
+                f"○ <b>Rating:</b> <code>{series.get('rating', 'N/A')}</code>\n"
+                f"<blockquote>▪️ <b>Language:</b> <code>{lang.title()}</code></blockquote>\n\n"
+                f"<b>📺 Available Seasons:</b>"
+            )
+            
+            buttons = [
+                InlineKeyboardButton(
+                    s,
+                    callback_data=f"ssn:{key}:{lang}:{s.lower().replace(' ', '')}:{user_id}"
+                )
+                for s in seasons
+            ]
+            
+            keyboard = chunk_buttons(buttons, 3)
+            keyboard.append([
+                InlineKeyboardButton("🔙 Back", callback_data=f"sc:{key}:{user_id}")
+            ])
+            keyboard.append([
+                InlineKeyboardButton("📥 Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")
+            ])
+            
+            await query.message.edit_text(
+                caption,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=enums.ParseMode.HTML
+            )
             return
-
-        seasons = await _get_seasons_async(series['key'])
-        if not seasons:
-            await query.answer("No seasons found.", show_alert=True)
-            return
-
-        reply_text = (
-            f"○ <b>Title:</b> <code>{series['title'].title()}</code>\n"
-            f"○ <b>Released On:</b> <code>{series.get('released_on','Unknown')}</code>\n"
-            f"○ <b>Genre:</b> <code>{series.get('genre','Unknown')}</code>\n"
-            f"○ <b>Rating:</b> <code>{series.get('rating','N/A')}</code>\n"
-            f"<blockquote>▪️<b>Language:</b> <code>{language.title()}</code></blockquote>\n"
-            "Available Seasons:\n"
-        )
-
-        buttons = [InlineKeyboardButton(season, callback_data=f"{series_key}·{language}·{season.lower().replace(' ', '')}·{user_id}") for season in seasons]
-        buttons_chunked = chunk_buttons(buttons)
-        buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"spellcheck·{series_key}·{user_id}")])
-        buttons_chunked.append([InlineKeyboardButton("Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
-        reply_markup = InlineKeyboardMarkup(buttons_chunked)
-
-        try:
-            await query.message.edit_text(text=reply_text, reply_markup=reply_markup)
-        except Exception:
-            try:
-                await query.answer("Could not update message.", show_alert=True)
-            except Exception:
-                pass
-        return
-
-    if len(parts) == 4:
-        series_key, language, season, query_user_id = parts
-        if query_user_id != user_id:
-            await query.answer("Request Yourself", show_alert=True)
-            return
-
-        series = await _get_series_name_async(series_key)
-        if not series:
-            await query.answer("Series not found.", show_alert=True)
-            return
-
-        links = await _get_links_async(f"{series_key.lower().replace(' ', '')}-{language}-{season}")
-        if links:
+        
+        # ===== SEASON SELECTION =====
+        # Format: ssn:series_key:language:season:user_id
+        if data.startswith("ssn:"):
+            parts = data.split(":")
+            if len(parts) != 5:
+                return await query.answer("Invalid request")
+            
+            key, lang, season, req_user = parts[1], parts[2], parts[3], parts[4]
+            
+            if req_user != user_id:
+                return await query.answer("⚠️ This is not your request!", show_alert=True)
+            
+            series = await fetch_series(key)
+            if not series:
+                return await query.answer("Series not found!", show_alert=True)
+            
+            # Fetch links
+            links = await fetch_links(key, lang, season)
+            
+            if not links:
+                await query.message.edit_text(
+                    "❌ <b>No download links available for this season.</b>",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Back", callback_data=f"lang:{key}:{lang}:{user_id}")]
+                    ]),
+                    parse_mode=enums.ParseMode.HTML
+                )
+                return
+            
+            caption = (
+                f"○ <b>Title:</b> <code>{series.get('title', '').title()}</code>\n"
+                f"○ <b>Released:</b> <code>{series.get('released_on', 'Unknown')}</code>\n"
+                f"○ <b>Genre:</b> <code>{series.get('genre', 'Unknown')}</code>\n"
+                f"○ <b>Rating:</b> <code>{series.get('rating', 'N/A')}</code>\n"
+                f"<blockquote>▪️ <b>Language:</b> <code>{lang.title()}</code></blockquote>\n"
+                f"<blockquote>▪️ <b>Season:</b> <code>{season.replace('-', ' ').title()}</code></blockquote>\n\n"
+                f"<b>🎬 Select Quality:</b>"
+            )
+            
             buttons = [
                 InlineKeyboardButton(quality, callback_data=f"gt:{link}")
                 for quality, link in links.items()
             ]
-            buttons_chunked = chunk_buttons(buttons, chunk_size=2)
-            buttons_chunked.append([InlineKeyboardButton("Back", callback_data=f"{series_key}·{language}·{user_id}")])
-            buttons_chunked.append([InlineKeyboardButton("Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
-            reply_markup = InlineKeyboardMarkup(buttons_chunked)
-
-            try:
-                await query.message.edit_text(
-                    text=(
-                        f"○ <b>Title:</b> <code>{series['title'].title()}</code>\n"
-                        f"○ <b>Released On:</b> <code>{series.get('released_on','Unknown')}</code>\n"
-                        f"○ <b>Genre:</b> <code>{series.get('genre','Unknown')}</code>\n"
-                        f"○ <b>Rating:</b> <code>{series.get('rating','N/A')}</code>\n"
-                        f"<blockquote><b>▪️Language:</b> <code>{language.title()}</code></blockquote>\n"
-                        f"<blockquote><b>▪️Season:</b> <code>{season.replace('-', ' ').title()}</code></blockquote>\n"
-                        "Select the quality you need...!"
-                    ),
-                    reply_markup=reply_markup,
-                    disable_web_page_preview=True,
-                    parse_mode=enums.ParseMode.HTML
-                )
-            except Exception:
-                try:
-                    await query.answer("Could not display links.", show_alert=True)
-                except Exception:
-                    pass
-        else:
-            try:
-                await query.message.edit_text(
-                    text="No links found for the selected season and language.",
-                    disable_web_page_preview=True,
-                    parse_mode=enums.ParseMode.HTML
-                )
-            except Exception:
-                pass
-        return
-
-    # unrecognized callback format — ignore safely
-    try:
+            
+            keyboard = chunk_buttons(buttons, 2)
+            keyboard.append([
+                InlineKeyboardButton("🔙 Back", callback_data=f"lang:{key}:{lang}:{user_id}")
+            ])
+            keyboard.append([
+                InlineKeyboardButton("📥 Request Series", url="https://t.me/+WeBqY_ljwpc3ZjE1")
+            ])
+            
+            await query.message.edit_text(
+                caption,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=enums.ParseMode.HTML
+            )
+            return
+        
+        # ===== LEGACY CALLBACK FORMATS (backward compatibility) =====
+        if "·" in data:
+            parts = data.split("·")
+            
+            # spellcheck·key·user
+            if parts[0] == "spellcheck" and len(parts) == 3:
+                query.data = f"sc:{parts[1]}:{parts[2]}"
+                return await callback_handler(client, query)
+            
+            # key·lang·user (language selection)
+            if len(parts) == 3:
+                query.data = f"lang:{parts[0]}:{parts[1]}:{parts[2]}"
+                return await callback_handler(client, query)
+            
+            # key·lang·season·user (season selection)
+            if len(parts) == 4:
+                query.data = f"ssn:{parts[0]}:{parts[1]}:{parts[2]}:{parts[3]}"
+                return await callback_handler(client, query)
+        
+        # Unknown callback
         await query.answer()
-    except Exception:
-        pass
+    
+    except Exception as e:
+        logger.exception(f"Callback error: {e}")
+        await query.answer("An error occurred!", show_alert=True)
