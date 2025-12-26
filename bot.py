@@ -12,7 +12,7 @@ import os
 import sys
 from dotenv import load_dotenv
 from pyromod import listen
-
+from database.manager import init_databases
 load_dotenv("./dynamic.env", override=True, encoding="utf-8")
 
 from pyrogram import idle
@@ -27,6 +27,8 @@ from pyrogram import types
 from aiohttp import web
 from plugins import web_server
 
+POSTGRES_URI="postgres://SP:root@spidy_bots_x1spidy:5432/psspidt?sslmode=disable"
+REDIS_URL="redis://default:root@spidy_bots_x1redis:6379"
 name = "main"
 
 class Bot(Client):
@@ -54,6 +56,8 @@ class Bot(Client):
         temp.B_NAME = me.first_name
         self.username = '@' + me.username
         logging.info(f"{me.first_name} 𝖶𝗂𝗍𝗁 𝖥𝗈𝗋 𝖯𝗒𝗋𝗈𝗀𝗋𝖺𝗆 v{__version__} (Layer {layer}) 𝖲𝗍𝖺𝗋𝗍𝖾𝖽 𝖮𝗇 @{me.username}")
+        await init_databases(POSTGRES_URI, REDIS_URL)
+        logger.info("✅ PostgreSQL and Redis initialized")
         app = web.AppRunner(await web_server())
         await app.setup()
         bind_address = "0.0.0.0"
