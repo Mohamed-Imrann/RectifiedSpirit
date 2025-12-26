@@ -52,7 +52,7 @@ class Bot(Client):
         self.username = '@' + me.username
         logging.info(f"{me.first_name} 𝖶𝗂𝗍𝗁 𝖥𝗈𝗋 𝖯𝗒𝗋𝗈𝗀𝗋𝖺𝗆 v{__version__} (Layer {layer}) 𝖲𝗍𝖺𝗋𝗍𝖾𝖽 𝖮𝗇 @{me.username}")
         await init_databases(POSTGRES_URI, REDIS_URL)
-        logger.info("✅ PostgreSQL and Redis initialized")
+        logging.info("✅ PostgreSQL and Redis initialized")
         app = web.AppRunner(await web_server())
         await app.setup()
         bind_address = "0.0.0.0"
