@@ -509,3 +509,109 @@ async def clear_cache_command(client: Client, message: Message):
             f"❌ <b>Error:</b> <code>{e}</code>",
             parse_mode=enums.ParseMode.HTML
         )
+
+@Client.on_message(filters.command("inspectdb") & filters.user(ADMINS))
+async def inspect_db_command(client: Client, message: Message):
+    """Deep inspect MongoDB to find all collections and their structure."""
+    
+    try:
+        mongo = MongoClient(DATABASE_URI)
+        
+        # Get database name from URI or use default
+        db_name = DATABASE_URI.split('/')[-1].split('?')[0]
+        if not db_name:
+            db_name = 'series_database'
+        
+        report = f"<b>🔍 MongoDB Deep Inspection</b>\n\n"
+        report += f"<b>Database:</b> <code>{db_name}</code>\n\n"
+        
+        # List all databases
+        report += "<b>📁 All Databases:</b>\n"
+        for db in mongo.list_database_names():
+            report += f"  • <code>{db}</code>\n"
+        report += "\n"
+        
+        # Try common database names
+        possible_dbs = [db_name, 'series_database', 'Cluster0', 'test', 'admin']
+        
+        for try_db in possible_dbs:
+            try:
+                db = mongo[try_db]
+                collections = db.list_collection_names()
+                if collections:
+                    report += f"<b>📂 Collections in '{try_db}':</b>\n"
+                    for col in collections:
+                        count = db[col].count_documents({})
+                        sample = db[col].find_one()
+                        fields = list(sample.keys()) if sample else []
+                        # Remove _id from display
+                        if '_id' in fields:
+                            fields.remove('_id')
+                        report += f"  • <code>{col}</code> ({count:,} docs)\n"
+                        report += f"    Fields: <code>{', '.join(fields[:8])}</code>\n"
+                    report += "\n"
+            except:
+                pass
+        
+        mongo.close()
+        
+        # Split if too long
+        if len(report) > 4000:
+            await message.reply(report[:4000] + "...", parse_mode=enums.ParseMode.HTML)
+        else:
+            await message.reply(report, parse_mode=enums.ParseMode.HTML)
+        
+    except Exception as e:
+        await message.reply(
+            f"❌ <b>Error:</b> <code>{e}</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
+
+
+@Client.on_message(filters.command("sampledata") & filters.user(ADMINS))
+async def sample_data_command(client: Client, message: Message):
+    """Show sample documents from each collection."""
+    
+    args = message.text.split(maxsplit=2)
+    
+    try:
+        mongo = MongoClient(DATABASE_URI)
+        db_name = DATABASE_URI.split('/')[-1].split('?')[0] or 'series_database'
+        
+        # Try to find the right database
+        for try_db in [db_name, 'Cluster0', 'test']:
+            db = mongo[try_db]
+            if db.list_collection_names():
+                break
+        
+        if len(args) >= 2:
+            # Show specific collection
+            col_name = args[1]
+            col = db[col_name]
+            sample = col.find_one()
+            
+            if sample:
+                sample.pop('_id', None)
+                import json
+                formatted = json.dumps(sample, indent=2, default=str)[:3500]
+                await message.reply(
+                    f"<b>📄 Sample from '{col_name}':</b>\n\n<code>{formatted}</code>",
+                    parse_mode=enums.ParseMode.HTML
+                )
+            else:
+                await message.reply(f"No documents in '{col_name}'")
+        else:
+            # List all collections
+            cols = db.list_collection_names()
+            await message.reply(
+                f"<b>Usage:</b> <code>/sampledata collection_name</code>\n\n"
+                f"<b>Available collections:</b>\n" + 
+                "\n".join(f"• <code>{c}</code>" for c in cols),
+                parse_mode=enums.ParseMode.HTML
+            )
+        
+        mongo.close()
+        
+    except Exception as e:
+        await message.reply(f"❌ <b>Error:</b> <code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+        
