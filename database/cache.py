@@ -232,7 +232,13 @@ class Cache:
     async def set_seasons(self, key: str, seasons: List, ttl: int = None):
         """Cache seasons list."""
         await self.set(self._seasons_key(key), seasons, ttl or self.TTL_SEASONS)
-    
+        
+    async def ping(self) -> bool:
+        """Ping Redis to check connection."""
+        if self._redis:
+            return await self._redis.ping()
+        return False
+        
     # ==================== STATS ====================
     
     async def get_stats(self) -> Dict:
