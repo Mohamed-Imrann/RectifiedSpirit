@@ -24,7 +24,7 @@ services:
 
   # PostgreSQL Database
   postgres:
-    image: postgres:15-alpine
+    image: postgres:17
     container_name: spidy_postgres
     restart: unless-stopped
     environment:
