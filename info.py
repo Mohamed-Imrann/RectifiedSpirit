@@ -63,7 +63,7 @@ pgPassword = environ.get("POSTGRES_PASSWORD", "SpidySecure123")
 pgDbname = environ.get("POSTGRES_DB", "spidydb")
 
 # Full URI (constructed from above)
-POSTGRES_URI = f"postgresql://{pgUsername}:{pgPassword}@{pgHost}:{pgPort}/{pgDbname}?sslmode=disable"
+POSTGRES_URI = f"postgres://{pgUsername}:{pgPassword}@{pgHost}:{pgPort}/{pgDbname}?sslmode=disable"
 
 # ============ REDIS CONFIG ============
 # For Docker postgres://spidybot:SpidySecure123@spidy_bots_postgres:5432/spidydb?sslmode=disable network (FAST - use this!)
