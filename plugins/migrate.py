@@ -154,166 +154,197 @@ def clean_series_doc(doc: Dict) -> Dict:
     }
 
 
-async def migrate_data(stats: MigrationStats, pg: PostgresDB, cache: Cache):
-    """Perform the actual migration."""
+async def migrate_data(pg: PostgreSQLDB, progress_msg: Message, stats: MigrationStats):
+    """Migrate data from MongoDB to PostgreSQL - FIXED FOR EMBEDDED STRUCTURE"""
     
-    # Connect to MongoDB
     mongo = MongoClient(DATABASE_URI)
-    mongo_db = mongo['series_database']
+    db = mongo['series_database']
     
-    # Collections (adjust names as per your schema)
-    series_col = mongo_db['series']
-    links_col = mongo_db['series_links']
-    posters_col = mongo_db['posters']
+    series_col = db['series']
     
-    # Count documents
-    stats.phase = "Counting documents..."
-    stats.totals['series'] = series_col.count_documents({})
-    stats.totals['links'] = links_col.count_documents({})
-    stats.totals['posters'] = posters_col.count_documents({})
+    def normalize_key(text):
+        if not text:
+            return ""
+        return str(text).lower().replace(" ", "").strip()
     
-    # Clear PostgreSQL
-    stats.phase = "Clearing PostgreSQL..."
-    await pg.truncate_all()
+    def safe_str(val):
+        if val is None:
+            return ""
+        return str(val).strip()
     
-    # Clear Redis cache
-    stats.phase = "Clearing Redis cache..."
-    await cache.clear_all()
+    # Count totals
+    stats.total['series'] = series_col.count_documents({})
     
-    # ==================== MIGRATE SERIES ====================
+    # We'll count links and posters as we find them embedded
+    stats.total['links'] = 0
+    stats.total['posters'] = 0
+    
+    # First pass: count embedded data
+    stats.phase = "Counting embedded data..."
+    await update_progress(progress_msg, stats)
+    
+    for doc in series_col.find({}):
+        # Count poster if exists
+        if doc.get('poster_file_id'):
+            stats.total['posters'] += 1
+        
+        # Count links from embedded structure
+        languages = doc.get('languages', [])
+        if isinstance(languages, list):
+            for lang in languages:
+                if isinstance(lang, dict):
+                    seasons = lang.get('seasons', [])
+                    if isinstance(seasons, list):
+                        for season in seasons:
+                            if isinstance(season, dict):
+                                qualities = season.get('qualities', [])
+                                if isinstance(qualities, list):
+                                    stats.total['links'] += len(qualities)
+    
+    # ========== MIGRATE SERIES ==========
     stats.phase = "Migrating series..."
-    batch = []
-    batch_size = 100
+    await update_progress(progress_msg, stats)
     
     for doc in series_col.find({}):
         try:
-            # Clean and normalize the document
-            cleaned = clean_series_doc(doc)
-            
-            if not cleaned['key']:
-                stats.warnings.append(f"Series without key: {cleaned.get('title', 'unknown')[:30]}")
+            title = safe_str(doc.get('title', ''))
+            if not title:
                 continue
             
-            batch.append(cleaned)
+            series_key = normalize_key(title)
             
-            if len(batch) >= batch_size:
-                await pg.bulk_upsert_series(batch)
-                stats.migrated['series'] += len(batch)
-                batch = []
-                
+            # Extract language names from embedded structure
+            lang_names = []
+            languages = doc.get('languages', [])
+            if isinstance(languages, list):
+                for lang in languages:
+                    if isinstance(lang, dict) and lang.get('name'):
+                        lang_names.append(lang['name'])
+            
+            # Extract season names
+            season_names = []
+            if isinstance(languages, list) and len(languages) > 0:
+                first_lang = languages[0]
+                if isinstance(first_lang, dict):
+                    seasons = first_lang.get('seasons', [])
+                    if isinstance(seasons, list):
+                        for season in seasons:
+                            if isinstance(season, dict) and season.get('name'):
+                                season_names.append(season['name'])
+            
+            await pg.upsert_series(
+                key=series_key,
+                title=title,
+                genre=safe_str(doc.get('genre', '')),
+                rating=float(doc.get('rating', 0) or 0),
+                released_on=safe_str(doc.get('released_on', '')),
+                media_type=safe_str(doc.get('media_type', 'tv series')),
+                languages=lang_names,
+                seasons=season_names,
+                published=bool(doc.get('published', False))
+            )
+            stats.migrated['series'] += 1
+            
         except Exception as e:
-            stats.errors.append(f"Series: {str(e)[:50]}")
-            logger.error(f"Series migration error: {e}", exc_info=True)
+            stats.errors.append(f"Series '{doc.get('title', 'unknown')}': {str(e)[:50]}")
+        
+        if stats.migrated['series'] % 50 == 0:
+            await update_progress(progress_msg, stats)
     
-    # Final batch
-    if batch:
-        try:
-            await pg.bulk_upsert_series(batch)
-            stats.migrated['series'] += len(batch)
-        except Exception as e:
-            stats.errors.append(f"Series final batch: {str(e)[:50]}")
-    
-    # ==================== MIGRATE LINKS ====================
-    stats.phase = "Migrating links..."
-    
-    for doc in links_col.find({}):
-        try:
-            doc.pop('_id', None)
-            
-            # Handle different link storage formats
-            series_key = safe_str(doc.get('series_key', ''))
-            links_data = safe_dict(doc.get('links', {}))
-            
-            if not series_key or not links_data:
-                continue
-            
-            # Parse composite key if needed: serieskey-language-season
-            parts = series_key.split('-')
-            if len(parts) >= 3:
-                season = parts[-1]
-                language = parts[-2]
-                base_key = '-'.join(parts[:-2])
-                
-                # Insert each quality/link pair
-                for quality, link in links_data.items():
-                    try:
-                        await pg.upsert_link(
-                            normalize_key(base_key),
-                            normalize_key(language),
-                            normalize_key(season),
-                            safe_str(quality),
-                            safe_str(link)
-                        )
-                        stats.migrated['links'] += 1
-                    except Exception as e:
-                        stats.errors.append(f"Link insert: {str(e)[:40]}")
-            else:
-                # Try alternative formats
-                # Format could be: {series_key: key, language: lang, season: s, links: {...}}
-                language = safe_str(doc.get('language', ''))
-                season = safe_str(doc.get('season', ''))
-                
-                if language and season:
-                    for quality, link in links_data.items():
-                        try:
-                            await pg.upsert_link(
-                                normalize_key(series_key),
-                                normalize_key(language),
-                                normalize_key(season),
-                                safe_str(quality),
-                                safe_str(link)
-                            )
-                            stats.migrated['links'] += 1
-                        except Exception as e:
-                            stats.errors.append(f"Link insert: {str(e)[:40]}")
-                else:
-                    stats.warnings.append(f"Unknown link format: {series_key[:30]}")
-                
-        except Exception as e:
-            stats.errors.append(f"Links: {str(e)[:50]}")
-    
-    # ==================== MIGRATE POSTERS ====================
+    # ========== MIGRATE POSTERS (EMBEDDED) ==========
     stats.phase = "Migrating posters..."
-    batch = []
+    await update_progress(progress_msg, stats)
     
-    for doc in posters_col.find({}):
+    for doc in series_col.find({}):
         try:
-            doc.pop('_id', None)
+            title = safe_str(doc.get('title', ''))
+            if not title:
+                continue
             
-            series_key = normalize_key(doc.get('series_key', ''))
-            poster_url = safe_str(doc.get('poster_url', '') or doc.get('poster', ''))
+            series_key = normalize_key(title)
+            poster_file_id = doc.get('poster_file_id')
             
-            if series_key and poster_url:
-                batch.append({
-                    'series_key': series_key,
-                    'poster_url': poster_url
-                })
-                
-            if len(batch) >= batch_size:
-                await pg.bulk_upsert_posters(batch)
-                stats.migrated['posters'] += len(batch)
-                batch = []
+            if poster_file_id:
+                await pg.upsert_poster(series_key, safe_str(poster_file_id))
+                stats.migrated['posters'] += 1
                 
         except Exception as e:
-            stats.errors.append(f"Poster: {str(e)[:50]}")
+            stats.errors.append(f"Poster '{doc.get('title', 'unknown')}': {str(e)[:50]}")
+        
+        if stats.migrated['posters'] % 50 == 0:
+            await update_progress(progress_msg, stats)
     
-    # Final batch
-    if batch:
+    # ========== MIGRATE LINKS (EMBEDDED) ==========
+    stats.phase = "Migrating links..."
+    await update_progress(progress_msg, stats)
+    
+    link_count = 0
+    for doc in series_col.find({}):
         try:
-            await pg.bulk_upsert_posters(batch)
-            stats.migrated['posters'] += len(batch)
+            title = safe_str(doc.get('title', ''))
+            if not title:
+                continue
+            
+            series_key = normalize_key(title)
+            
+            languages = doc.get('languages', [])
+            if not isinstance(languages, list):
+                continue
+            
+            for lang in languages:
+                if not isinstance(lang, dict):
+                    continue
+                
+                lang_name = safe_str(lang.get('name', 'Unknown'))
+                lang_key = normalize_key(lang_name)
+                
+                seasons = lang.get('seasons', [])
+                if not isinstance(seasons, list):
+                    continue
+                
+                for season in seasons:
+                    if not isinstance(season, dict):
+                        continue
+                    
+                    season_name = safe_str(season.get('name', 'Season 1'))
+                    season_key = normalize_key(season_name)
+                    
+                    qualities = season.get('qualities', [])
+                    if not isinstance(qualities, list):
+                        continue
+                    
+                    for quality in qualities:
+                        if not isinstance(quality, dict):
+                            continue
+                        
+                        quality_name = safe_str(quality.get('name', ''))
+                        link_key = safe_str(quality.get('link_key', ''))
+                        
+                        if quality_name and link_key:
+                            try:
+                                await pg.upsert_link(
+                                    series_key=series_key,
+                                    language=lang_key,
+                                    season=season_key,
+                                    quality=quality_name,
+                                    link=link_key
+                                )
+                                stats.migrated['links'] += 1
+                                link_count += 1
+                                
+                            except Exception as e:
+                                stats.errors.append(f"Link {series_key}/{lang_key}/{season_key}: {str(e)[:30]}")
+                
+                if link_count % 100 == 0:
+                    await update_progress(progress_msg, stats)
+                    
         except Exception as e:
-            stats.errors.append(f"Poster final batch: {str(e)[:50]}")
+            stats.errors.append(f"Links for '{doc.get('title', 'unknown')}': {str(e)[:50]}")
     
-    # Optimize database
-    stats.phase = "Optimizing database..."
-    await pg.vacuum_analyze()
-    
-    # Close MongoDB
     mongo.close()
+    stats.phase = "Complete!"
+    await update_progress(progress_msg, stats)
     
-    stats.phase = "Complete"
-
 
 @Client.on_message(filters.command("migrate") & filters.user(ADMINS))
 async def migrate_command(client: Client, message: Message):
