@@ -28,8 +28,6 @@ from pyrogram import types
 from aiohttp import web
 from plugins import web_server
 
-POSTGRES_URI="postgres://SP:root@spidy_bots_x1spidy:5432/psspidt?sslmode=disable"
-REDIS_URL="redis://default:root@spidy_bots_x1redis:6379"
 name = "main"
 
 class Bot(Client):
