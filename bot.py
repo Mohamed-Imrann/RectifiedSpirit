@@ -20,6 +20,7 @@ from pyrogram import Client, __version__
 from pyrogram.raw.all import layer
 from database.users_chats_db import db
 from database.join_reqs import JoinReqs
+from database.manager import init_databases, close_databases, check_databases
 from info import *
 from utils import temp
 from typing import Union, Optional, AsyncGenerator
@@ -44,6 +45,13 @@ class Bot(Client):
         )
 
     async def start(self, **kwargs):
+        await init_databases(postgres_uri=POSTGRES_URI, redis_url=REDIS_URL, max_retries=10, retry_delay=3.0)
+        health = await check_databases()
+        logger.info(f"Database health: {health}")
+        if not health["overall"]:
+            logger.error("Database health check failed!")
+            return
+            
         await super().start()
         me = await self.get_me()
         temp.ME = me.id
@@ -51,8 +59,6 @@ class Bot(Client):
         temp.B_NAME = me.first_name
         self.username = '@' + me.username
         logging.info(f"{me.first_name} 𝖶𝗂𝗍𝗁 𝖥𝗈𝗋 𝖯𝗒𝗋𝗈𝗀𝗋𝖺𝗆 v{__version__} (Layer {layer}) 𝖲𝗍𝖺𝗋𝗍𝖾𝖽 𝖮𝗇 @{me.username}")
-        await init_databases(POSTGRES_URI, REDIS_URL)
-        logging.info("✅ PostgreSQL and Redis initialized")
         app = web.AppRunner(await web_server())
         await app.setup()
         bind_address = "0.0.0.0"
