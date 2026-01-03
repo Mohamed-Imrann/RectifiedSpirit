@@ -28,7 +28,7 @@ class PostgresDB:
             self.dsn = dsn
         else:
             # Build DSN from individual parameters
-            self.dsn = f"postgresql://{pgUsername}:{pgPassword}@{pgHost}:{pgPort}/{pgDbname}"
+            self.dsn = f"postgres://{pgUsername}:{pgPassword}@{pgHost}:{pgPort}/{pgDbname}?sslmode=disable"
         self.pool: Optional[asyncpg.Pool] = None
     
     async def connect(self):
