@@ -1,18 +1,34 @@
 # database/pg_db.py
+import os
 import asyncpg
-import json
 import logging
-from typing import List, Dict, Tuple, Optional, Any
+import asyncio
+import json
+from typing import Optional, List, Tuple, Dict, Any
 from contextlib import asynccontextmanager
+from info import pgHost, pgDbname, pgPassword, pgPort, pgUsername, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Redis config for aiocache
+REDIS_CONFIG = {
+    'endpoint': REDIS_HOST,  # Use Redis host, not PostgreSQL host!
+    'port': REDIS_PORT,
+    'password': REDIS_PASSWORD,
+    'namespace': 'spidybot'
+}
 
 
 class PostgresDB:
-    """PostgreSQL database handler with connection pooling and optimized queries."""
+    """PostgreSQL database handler with connection pooling."""
     
-    def __init__(self, dsn: str):
-        self.dsn = dsn
+    def __init__(self, dsn: str = None):
+        if dsn:
+            self.dsn = dsn
+        else:
+            # Build DSN from individual parameters
+            self.dsn = f"postgresql://{pgUsername}:{pgPassword}@{pgHost}:{pgPort}/{pgDbname}"
         self.pool: Optional[asyncpg.Pool] = None
     
     async def connect(self):
@@ -20,35 +36,44 @@ class PostgresDB:
         if self.pool:
             return
         
-        self.pool = await asyncpg.create_pool(
-            self.dsn,
-            min_size=5,
-            max_size=20,
-            command_timeout=60,
-            statement_cache_size=100
-        )
-        await self._init_schema()
-        logger.info("PostgreSQL pool initialized")
+        try:
+            self.pool = await asyncpg.create_pool(
+                self.dsn,
+                min_size=5,
+                max_size=20,
+                command_timeout=60,
+                statement_cache_size=100
+            )
+            await self._init_schema()
+            logger.info("✅ PostgreSQL pool initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ PostgreSQL connection failed: {e}")
+            raise
     
     async def close(self):
         """Close connection pool."""
         if self.pool:
             await self.pool.close()
             self.pool = None
+            logger.info("PostgreSQL pool closed")
     
     @asynccontextmanager
     async def acquire(self):
         """Acquire connection from pool."""
+        if not self.pool:
+            raise RuntimeError("Database pool not initialized. Call connect() first.")
         async with self.pool.acquire() as conn:
             yield conn
     
     async def _init_schema(self):
-        """Create tables and indexes."""
+        """Create tables and indexes for series bot."""
         async with self.acquire() as conn:
             await conn.execute('''
                 -- Enable extensions
                 CREATE EXTENSION IF NOT EXISTS pg_trgm;
                 CREATE EXTENSION IF NOT EXISTS btree_gin;
+                
+                -- ==================== SERIES TABLES ====================
                 
                 -- Series table (main entity)
                 CREATE TABLE IF NOT EXISTS series (
@@ -99,7 +124,99 @@ class PostgresDB:
                 
                 CREATE INDEX IF NOT EXISTS idx_posters_key ON posters(series_key);
                 
-                -- Update trigger for series.updated_at
+                -- ==================== FILES BACKUP TABLE ====================
+                
+                CREATE TABLE IF NOT EXISTS files_backup (
+                    id SERIAL PRIMARY KEY,
+                    filename VARCHAR(500) NOT NULL,
+                    filesize BIGINT DEFAULT 0,
+                    fileid VARCHAR(200) UNIQUE NOT NULL,
+                    caption TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                CREATE INDEX IF NOT EXISTS idx_files_filename_trgm 
+                    ON files_backup USING GIN (LOWER(filename) gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_files_caption_trgm 
+                    ON files_backup USING GIN (LOWER(caption) gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_files_created_at 
+                    ON files_backup (created_at DESC);
+                
+                -- ==================== USERS TABLE ====================
+                
+                CREATE TABLE IF NOT EXISTS users (
+                    id BIGINT PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL,
+                    is_banned BOOLEAN DEFAULT FALSE,
+                    ban_reason TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                CREATE INDEX IF NOT EXISTS idx_users_is_banned ON users (is_banned);
+                
+                -- ==================== GROUPS TABLE ====================
+                
+                CREATE TABLE IF NOT EXISTS groups (
+                    id BIGINT PRIMARY KEY,
+                    title VARCHAR(200) NOT NULL,
+                    is_disabled BOOLEAN DEFAULT FALSE,
+                    reason TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                CREATE INDEX IF NOT EXISTS idx_groups_is_disabled ON groups (is_disabled);
+                
+                -- Group settings
+                CREATE TABLE IF NOT EXISTS group_settings (
+                    group_id BIGINT PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
+                    button_enabled BOOLEAN DEFAULT TRUE,
+                    botpm_enabled BOOLEAN DEFAULT TRUE,
+                    file_secure BOOLEAN DEFAULT FALSE,
+                    spell_check BOOLEAN DEFAULT TRUE,
+                    welcome_enabled BOOLEAN DEFAULT TRUE,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                -- ==================== FSUB TABLES ====================
+                
+                CREATE TABLE IF NOT EXISTS fsub_first (
+                    id BIGINT PRIMARY KEY,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                CREATE TABLE IF NOT EXISTS fsub_second (
+                    id BIGINT PRIMARY KEY,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                -- ==================== FILTERS TABLE ====================
+                
+                CREATE TABLE IF NOT EXISTS filters (
+                    id SERIAL PRIMARY KEY,
+                    text VARCHAR(500) UNIQUE NOT NULL,
+                    reply TEXT,
+                    btn TEXT,
+                    file TEXT,
+                    alert TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                CREATE INDEX IF NOT EXISTS idx_filters_text_trgm 
+                    ON filters USING GIN (LOWER(text) gin_trgm_ops);
+                
+                -- ==================== SUBSCRIPTION SETTINGS ====================
+                
+                CREATE TABLE IF NOT EXISTS subscription_settings (
+                    key VARCHAR(50) PRIMARY KEY,
+                    channel_id BIGINT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                -- ==================== UPDATE TRIGGER ====================
+                
                 CREATE OR REPLACE FUNCTION update_updated_at()
                 RETURNS TRIGGER AS $$
                 BEGIN
@@ -112,8 +229,13 @@ class PostgresDB:
                 CREATE TRIGGER series_updated_at
                     BEFORE UPDATE ON series
                     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+                    
+                DROP TRIGGER IF EXISTS users_updated_at ON users;
+                CREATE TRIGGER users_updated_at
+                    BEFORE UPDATE ON users
+                    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
             ''')
-        logger.info("Schema initialized")
+        logger.info("✅ Schema initialized successfully")
     
     # ==================== SERIES OPERATIONS ====================
     
@@ -168,13 +290,9 @@ class PostgresDB:
         limit: int = 10, 
         offset: int = 0
     ) -> Tuple[List[Dict], int, int]:
-        """
-        Search series with fuzzy matching.
-        Returns: (results, next_offset, total_count)
-        """
+        """Search series with fuzzy matching."""
         q = query.lower().strip()
         async with self.acquire() as conn:
-            # Get total count
             total = await conn.fetchval('''
                 SELECT COUNT(*) FROM series
                 WHERE LOWER(title) LIKE $1 
@@ -182,7 +300,6 @@ class PostgresDB:
                    OR similarity(LOWER(title), $2) > 0.25
             ''', f'%{q}%', q)
             
-            # Get ranked results
             rows = await conn.fetch('''
                 SELECT *,
                     CASE
@@ -205,23 +322,6 @@ class PostgresDB:
             
             return results, next_offset, total or 0
     
-    async def get_suggestions(self, query: str, limit: int = 5) -> List[Dict]:
-        """Get spell-check / autocomplete suggestions."""
-        q = query.lower().strip()
-        async with self.acquire() as conn:
-            rows = await conn.fetch('''
-                SELECT key, title, 
-                       similarity(LOWER(title), $1) AS score,
-                       CASE WHEN LOWER(title) LIKE $2 THEN true ELSE false END AS prefix_match
-                FROM series
-                WHERE similarity(LOWER(title), $1) > 0.2 
-                   OR LOWER(title) LIKE $2
-                   OR LOWER(key) LIKE $2
-                ORDER BY prefix_match DESC, score DESC, LENGTH(title) ASC
-                LIMIT $3
-            ''', q, f'{q}%', limit)
-            return [dict(r) for r in rows]
-    
     async def get_all_series(self, limit: int = 1000, offset: int = 0) -> List[Dict]:
         """Get all series with pagination."""
         async with self.acquire() as conn:
@@ -235,20 +335,6 @@ class PostgresDB:
         """Get total series count."""
         async with self.acquire() as conn:
             return await conn.fetchval('SELECT COUNT(*) FROM series')
-    
-    async def get_seasons(self, key: str) -> List[str]:
-        """Get season names for a series."""
-        series = await self.get_series(key)
-        if series and series.get('seasons'):
-            seasons = series['seasons']
-            if isinstance(seasons, dict):
-                return sorted(seasons.keys())
-        return []
-    
-    async def get_languages(self, key: str) -> List[str]:
-        """Get available languages for a series."""
-        series = await self.get_series(key)
-        return series.get('languages', []) if series else []
     
     # ==================== LINKS OPERATIONS ====================
     
@@ -269,47 +355,14 @@ class PostgresDB:
                 DO UPDATE SET link = EXCLUDED.link
             ''', series_key.lower(), language.lower(), season.lower(), quality, link)
     
-    async def upsert_links_bulk(self, series_key: str, language: str, season: str, links: Dict[str, str]):
-        """Bulk upsert links for a season."""
-        async with self.acquire() as conn:
-            async with conn.transaction():
-                for quality, link in links.items():
-                    await conn.execute('''
-                        INSERT INTO series_links (series_key, language, season, quality, link)
-                        VALUES ($1, $2, $3, $4, $5)
-                        ON CONFLICT (series_key, language, season, quality) 
-                        DO UPDATE SET link = EXCLUDED.link
-                    ''', series_key.lower(), language.lower(), season.lower(), quality, link)
-    
     async def get_links(self, series_key: str, language: str, season: str) -> Dict[str, str]:
-        """Get links for a specific series/language/season combination."""
+        """Get links for a specific series/language/season."""
         async with self.acquire() as conn:
             rows = await conn.fetch('''
                 SELECT quality, link FROM series_links
                 WHERE series_key = $1 AND language = $2 AND season = $3
             ''', series_key.lower(), language.lower(), season.lower())
             return {r['quality']: r['link'] for r in rows}
-    
-    async def get_links_by_composite_key(self, composite_key: str) -> Dict[str, str]:
-        """Get links using composite key format: serieskey-language-season."""
-        parts = composite_key.lower().split('-')
-        if len(parts) >= 3:
-            # Handle keys with hyphens in series name
-            season = parts[-1]
-            language = parts[-2]
-            series_key = '-'.join(parts[:-2])
-            return await self.get_links(series_key, language, season)
-        return {}
-    
-    async def get_all_links_for_series(self, series_key: str) -> List[Dict]:
-        """Get all links for a series."""
-        async with self.acquire() as conn:
-            rows = await conn.fetch('''
-                SELECT language, season, quality, link 
-                FROM series_links WHERE series_key = $1
-                ORDER BY language, season, quality
-            ''', series_key.lower())
-            return [dict(r) for r in rows]
     
     # ==================== POSTERS OPERATIONS ====================
     
@@ -333,56 +386,7 @@ class PostgresDB:
             )
             return row['poster_url'] if row else None
     
-    # ==================== BULK OPERATIONS ====================
-    
-    async def bulk_upsert_series(self, series_list: List[Dict], batch_size: int = 100):
-        """Bulk insert/update series with batching."""
-        async with self.acquire() as conn:
-            for i in range(0, len(series_list), batch_size):
-                batch = series_list[i:i + batch_size]
-                async with conn.transaction():
-                    for s in batch:
-                        await conn.execute('''
-                            INSERT INTO series (key, title, released_on, genre, rating, languages, seasons)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7)
-                            ON CONFLICT (key) DO UPDATE SET
-                                title = EXCLUDED.title,
-                                released_on = EXCLUDED.released_on,
-                                genre = EXCLUDED.genre,
-                                rating = EXCLUDED.rating,
-                                languages = EXCLUDED.languages,
-                                seasons = EXCLUDED.seasons
-                        ''',
-                            s.get('key', '').lower().replace(' ', ''),
-                            s.get('title', ''),
-                            s.get('released_on', ''),
-                            s.get('genre', ''),
-                            s.get('rating', ''),
-                            s.get('languages', []),
-                            json.dumps(s.get('seasons', {}))
-                        )
-    
-    async def bulk_upsert_posters(self, posters: List[Dict], batch_size: int = 100):
-        """Bulk insert/update posters."""
-        async with self.acquire() as conn:
-            for i in range(0, len(posters), batch_size):
-                batch = posters[i:i + batch_size]
-                async with conn.transaction():
-                    for p in batch:
-                        await conn.execute('''
-                            INSERT INTO posters (series_key, poster_url)
-                            VALUES ($1, $2)
-                            ON CONFLICT (series_key) DO UPDATE SET poster_url = EXCLUDED.poster_url
-                        ''', p.get('series_key', '').lower(), p.get('poster_url', ''))
-    
-    # ==================== ADMIN OPERATIONS ====================
-    
-    async def truncate_all(self):
-        """Clear all tables."""
-        async with self.acquire() as conn:
-            await conn.execute('''
-                TRUNCATE series, series_links, posters RESTART IDENTITY CASCADE
-            ''')
+    # ==================== STATS ====================
     
     async def get_stats(self) -> Dict[str, int]:
         """Get table statistics."""
@@ -390,7 +394,10 @@ class PostgresDB:
             return {
                 'series': await conn.fetchval('SELECT COUNT(*) FROM series'),
                 'links': await conn.fetchval('SELECT COUNT(*) FROM series_links'),
-                'posters': await conn.fetchval('SELECT COUNT(*) FROM posters')
+                'posters': await conn.fetchval('SELECT COUNT(*) FROM posters'),
+                'files': await conn.fetchval('SELECT COUNT(*) FROM files_backup'),
+                'users': await conn.fetchval('SELECT COUNT(*) FROM users'),
+                'groups': await conn.fetchval('SELECT COUNT(*) FROM groups')
             }
     
     async def vacuum_analyze(self):
@@ -407,11 +414,27 @@ class PostgresDB:
         if not row:
             return {}
         result = dict(row)
-        # Parse JSONB fields
         if 'seasons' in result and isinstance(result['seasons'], str):
             result['seasons'] = json.loads(result['seasons'])
         if 'metadata' in result and isinstance(result['metadata'], str):
             result['metadata'] = json.loads(result['metadata'])
-        # Remove internal fields
         result.pop('relevance', None)
         return result
+
+
+# ==================== GLOBAL INSTANCE ====================
+
+# Create global instance
+pgDb = PostgresDB()
+
+
+async def init_database():
+    """Initialize the database connection."""
+    await pgDb.connect()
+    logger.info("✅ Database initialized")
+
+
+async def close_database():
+    """Close database connection."""
+    await pgDb.close()
+    logger.info("Database connection closed")
