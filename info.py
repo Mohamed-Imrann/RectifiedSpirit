@@ -63,10 +63,10 @@ pgPassword = environ.get("POSTGRES_PASSWORD", "SpidySecure123")
 pgDbname = environ.get("POSTGRES_DB", "spidydb")
 
 # Full URI (constructed from above)
-POSTGRES_URI = f"postgresql://{pgUsername}:{pgPassword}@{pgHost}:{pgPort}/{pgDbname}"
+POSTGRES_URI = f"postgresql://{pgUsername}:{pgPassword}@{pgHost}:{pgPort}/{pgDbname}?sslmode=disable"
 
 # ============ REDIS CONFIG ============
-# For Docker internal network (FAST - use this!)
+# For Docker postgres://spidybot:SpidySecure123@spidy_bots_postgres:5432/spidydb?sslmode=disable network (FAST - use this!)
 REDIS_HOST = environ.get("REDIS_HOST", "spidy_bots_redis")  # Docker service name
 REDIS_PORT = int(environ.get("REDIS_PORT", 6379))
 REDIS_PASSWORD = environ.get("REDIS_PASSWORD", "RedisSecure123")
