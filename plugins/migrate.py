@@ -154,7 +154,7 @@ def clean_series_doc(doc: Dict) -> Dict:
     }
 
 
-async def migrate_data(pg: PostgreSQLDB, progress_msg: Message, stats: MigrationStats):
+async def migrate_data(pg: PostgresDB, progress_msg: Message, stats: MigrationStats):
     """Migrate data from MongoDB to PostgreSQL - FIXED FOR EMBEDDED STRUCTURE"""
     
     mongo = MongoClient(DATABASE_URI)
