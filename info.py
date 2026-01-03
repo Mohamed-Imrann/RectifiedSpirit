@@ -56,8 +56,23 @@ AUTH_CHANNEL = int(auth_channel) if auth_channel and id_pattern.search(auth_chan
 REQ_CHANNEL = environ.get("REQ_CHANNEL", -1002962062109)
 JOIN_REQS_DB = environ.get("JOIN_REQS_DB", DATABASE_URI)
 LIMIT = 2000
-POSTGRES_URI="postgres://SP:root@spidy_bots_x1spidy:5432/psspidt?sslmode=disable"
-REDIS_URL="redis://default:root@spidy_bots_x1redis:6379"
+pgHost = environ.get("POSTGRES_HOST", "postgres")  # Docker service name
+pgPort = int(environ.get("POSTGRES_PORT", 5432))
+pgUsername = environ.get("POSTGRES_USER", "spidybot")
+pgPassword = environ.get("POSTGRES_PASSWORD", "SpidySecure123")
+pgDbname = environ.get("POSTGRES_DB", "spidydb")
+
+# Full URI (constructed from above)
+POSTGRES_URI = f"postgresql://{pgUsername}:{pgPassword}@{pgHost}:{pgPort}/{pgDbname}"
+
+# ============ REDIS CONFIG ============
+# For Docker internal network (FAST - use this!)
+REDIS_HOST = environ.get("REDIS_HOST", "redis")  # Docker service name
+REDIS_PORT = int(environ.get("REDIS_PORT", 6379))
+REDIS_PASSWORD = environ.get("REDIS_PASSWORD", "RedisSecure123")
+
+# Full URI
+REDIS_URL = f"redis://default:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}"
 CHANNELS = "-1002400599577"
 BOT_USERNAME = "Spidy_Series_bot"
 # Others
