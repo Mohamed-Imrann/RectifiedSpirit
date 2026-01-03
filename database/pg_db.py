@@ -25,10 +25,10 @@ class PostgresDB:
     
     def __init__(self, dsn: str = None):
         if dsn:
-            self.dsn = "postgres://spidybot:SpidySecure123@spidy_bots_postgres:5432/spidydb?sslmode=disable"
+            self.dsn = dsn
         else:
             # Build DSN from individual parameters
-            self.dsn = "postgres://spidybot:SpidySecure123@spidy_bots_postgres:5432/spidydb?sslmode=disable"
+            self.dsn = f"postgres://{pgUsername}:{pgPassword}@{pgHost}:{pgPort}/{pgDbname}?sslmode=disable"
         self.pool: Optional[asyncpg.Pool] = None
     
     async def connect(self):
