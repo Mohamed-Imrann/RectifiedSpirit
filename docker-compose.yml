@@ -1,0 +1,71 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  # Your bot service
+  bot:
+    build: .
+    container_name: spidy_bot
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=spidybot
+      - POSTGRES_PASSWORD=SpidySecure123
+      - POSTGRES_DB=spidydb
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=RedisSecure123
+    networks:
+      - spidy_network
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: spidy_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: spidybot
+      POSTGRES_PASSWORD: SpidySecure123
+      POSTGRES_DB: spidydb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"  # Remove this line if you don't need external access
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spidybot -d spidydb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - spidy_network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: spidy_redis
+    restart: unless-stopped
+    command: redis-server --requirepass RedisSecure123 --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"  # Remove this line if you don't need external access
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "RedisSecure123", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - spidy_network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  spidy_network:
+    driver: bridge
