@@ -44,11 +44,6 @@ class Bot(Client):
 
     async def start(self, **kwargs):
         await init_databases(postgres_uri=POSTGRES_URI, redis_url=REDIS_URL, max_retries=10, retry_delay=3.0)
-        health = await check_databases()
-        logging.info(f"Database health: {health}")
-        if not health["overall"]:
-            logging.error("Database health check failed!")
-            return
         await super().start()
         me = await self.get_me()
         temp.ME = me.id
