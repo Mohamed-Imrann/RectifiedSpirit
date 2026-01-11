@@ -12,7 +12,9 @@ import os
 import sys
 from dotenv import load_dotenv
 from pyromod import listen
-
+import asyncio
+import logging
+import subprocess
 load_dotenv("./dynamic.env", override=True, encoding="utf-8")
 
 from pyrogram import idle
@@ -28,11 +30,38 @@ from aiohttp import web
 from plugins import web_server
 from database.crazy_db import get_admin_assignments
 from pyrogram import utils as pyroutils
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.date import DateTrigger
+from datetime import datetime, timedelta
+from aiocache import caches
+from database.postgres import pgDb
 
 pyroutils.MIN_CHAT_ID = -999999999999
 pyroutils.MIN_CHANNEL_ID = -100999999999999
 
 name = "main"
+
+async def test_redis_connection():
+    try:
+        cache = caches.get('default')
+        await cache.set("health_check", "ok", ttl=60)
+        value = await cache.get("health_check")
+        if value == "ok":
+            logging.info("✅ Redis connection test passed.")
+        else:
+            logging.warning("⚠️ Redis connection test failed: unexpected value.")
+    except Exception as e:
+        logging.error(f"❌ Redis connection failed: {e}")
+        raise
+
+async def auto_restart():
+    logging.info("Executing auto_restart function...")
+    try:
+        os.execl(sys.executable, sys.executable, *sys.argv)
+    except Exception as e:
+        logging.error(f"Error during auto_restart: {e}")
+                                           
 
 class Bot(Client):
   def __init__(self):
@@ -41,10 +70,13 @@ class Bot(Client):
           api_id=API_ID,
           api_hash=API_HASH,
           bot_token=BOT_TOKEN, 
-          plugins={"root": "plugins"},
-          workers=1000,
-          sleep_threshold=2,
+          plugins={"root": "plugins"}
       )
+      self.scheduler = AsyncIOScheduler()
+      self.id = None
+      self.name = None
+      self.username = None
+      self.mention = None
 
   async def start(self, **kwargs):
       if REQ_CHANNEL_ONE is None or REQ_CHANNEL_TWO is None:
@@ -112,7 +144,17 @@ class Bot(Client):
               await test.delete()
           except Exception as e:
               logging.warning(f"Failed to send restart message to {id}: {e}")
-      logging.info('Done Things')
+      
+      self.scheduler.start()
+      logging.info("Main bot scheduler started successfully.")
+
+      self.scheduler.add_job(
+          auto_restart,
+          IntervalTrigger(hours=24),
+          name="Auto Restart"
+      )
+      logging.info("Auto restart job scheduled every week")
+
       
   async def stop(self, *args):
       await super().stop()
@@ -156,3 +198,37 @@ class Bot(Client):
           for message in messages:
               yield message
               current += 1
+
+async def pgDBinit():
+    await pgDb.connect()
+
+
+async def startup():
+    try:
+        await pgDBinit()
+        await test_redis_connection()
+        logging.info("Starting bot system...")
+        await main()
+    except KeyboardInterrupt:
+        logging.info("Bot stopped by user")
+    except Exception as e:
+        logging.error(f"Error in main: {e}")
+        os.execl(sys.executable, sys.executable, "bot.py")
+
+async def main():
+    try:
+        main_bot = Bot()
+        await main_bot.start()
+        logging.info("Main bot started successfully")
+        await asyncio.Event().wait()
+    except Exception as e:
+        logging.error(f"Critical error in main function: {e}")
+        raise
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(startup())
+    except Exception as e:
+        logging.error(f"Critical error during startup: {e}")
+        sys.exit(1)
+      
