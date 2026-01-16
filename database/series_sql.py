@@ -1,45 +1,38 @@
 # database/series_sql.py
-import os
 import aiosqlite
-from typing import List, Optional, Tuple
+from pathlib import Path
 
-DB_PATH = os.getenv("DB_PATH", "series.db")
+DB_PATH = Path("database/series.db")
 
-
-async def _column_exists(db: aiosqlite.Connection, table: str, col: str) -> bool:
-    cur = await db.execute(f"PRAGMA table_info({table})")
-    rows = await cur.fetchall()
-    return any(r[1] == col for r in rows)
-
-
-# ----------------- DB INIT -----------------
 
 async def init_db():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
+        await db.execute("PRAGMA journal_mode=WAL;")
+        await db.execute("PRAGMA synchronous=NORMAL;")
+        await db.execute("PRAGMA temp_store=MEMORY;")
+        await db.execute("PRAGMA foreign_keys=ON;")
 
         await db.execute("""
         CREATE TABLE IF NOT EXISTS series (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            poster TEXT
-        );
+            title TEXT NOT NULL UNIQUE,
+            poster_file_id TEXT,
+            published INTEGER NOT NULL DEFAULT 0
+        )
         """)
-
-        # ✅ add published column if missing (migration)
-        if not await _column_exists(db, "series", "published"):
-            await db.execute("ALTER TABLE series ADD COLUMN published INTEGER NOT NULL DEFAULT 0;")
 
         await db.execute("""
         CREATE TABLE IF NOT EXISTS groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             series_id INTEGER NOT NULL,
-            language TEXT NOT NULL,
+            lang TEXT NOT NULL,
             season TEXT NOT NULL,
             quality TEXT NOT NULL,
-            UNIQUE(series_id, language, season, quality),
+            UNIQUE(series_id, lang, season, quality),
             FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE
-        );
+        )
         """)
 
         await db.execute("""
@@ -49,89 +42,61 @@ async def init_db():
             file_id TEXT NOT NULL,
             caption TEXT,
             msg_type TEXT,
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
             FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE
-        );
+        )
         """)
 
-        # Speed indexes
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_series_title ON series(title);")
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_series_pub ON series(published);")
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_groups_sid_lang ON groups(series_id, language);")
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_groups_sid_lang_season ON groups(series_id, language, season);")
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_files_group ON files(group_id);")
-
+        # indexes (speed)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_series_title ON series(title)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_groups_series ON groups(series_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_files_group ON files(group_id)")
         await db.commit()
 
 
-# ----------------- SERIES -----------------
-
+# ---------- series ----------
 async def upsert_series(title: str) -> int:
-    title = (title or "").strip()
-    if not title:
-        raise ValueError("Empty title")
-
+    title = title.strip()
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-
-        cur = await db.execute(
-            "SELECT id FROM series WHERE lower(title)=lower(?)",
-            (title,)
-        )
-        row = await cur.fetchone()
-        if row:
-            return int(row[0])
-
-        cur = await db.execute(
-            "INSERT INTO series (title, published) VALUES (?, 0)",
-            (title,)
-        )
+        await db.execute("INSERT OR IGNORE INTO series(title) VALUES(?)", (title,))
         await db.commit()
-        return int(cur.lastrowid)
+
+        cur = await db.execute("SELECT id FROM series WHERE title=?", (title,))
+        row = await cur.fetchone()
+        return int(row[0])
+
+
+async def get_series_by_id(series_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id, title, poster_file_id, published FROM series WHERE id=?",
+            (series_id,),
+        )
+        return await cur.fetchone()
+
+
+async def find_series(query: str):
+    q = (query or "").strip()
+    if not q:
+        return None
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id, title, poster_file_id FROM series WHERE title LIKE ? ORDER BY id DESC LIMIT 1",
+            (f"%{q}%",),
+        )
+        return await cur.fetchone()
 
 
 async def set_series_poster(series_id: int, poster_file_id: str):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
         await db.execute(
-            "UPDATE series SET poster=? WHERE id=?",
-            (poster_file_id, series_id)
+            "UPDATE series SET poster_file_id=? WHERE id=?",
+            (poster_file_id, series_id),
         )
         await db.commit()
 
 
-async def get_series_by_id(series_id: int) -> Optional[Tuple[int, str, Optional[str], int]]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT id, title, poster, published FROM series WHERE id=?", (series_id,))
-        row = await cur.fetchone()
-        return (int(row[0]), row[1], row[2], int(row[3])) if row else None
-
-
-async def find_series(query: str, published_only: bool = True) -> Optional[Tuple[int, str, Optional[str]]]:
-    q = (query or "").strip()
-    if not q:
-        return None
-
-    async with aiosqlite.connect(DB_PATH) as db:
-        if published_only:
-            cur = await db.execute(
-                "SELECT id, title, poster FROM series "
-                "WHERE published=1 AND lower(title) LIKE lower(?) "
-                "ORDER BY id DESC LIMIT 1",
-                (f"%{q}%",)
-            )
-        else:
-            cur = await db.execute(
-                "SELECT id, title, poster FROM series "
-                "WHERE lower(title) LIKE lower(?) "
-                "ORDER BY id DESC LIMIT 1",
-                (f"%{q}%",)
-            )
-        row = await cur.fetchone()
-        return (int(row[0]), row[1], row[2]) if row else None
-
-
 async def toggle_publish(series_id: int) -> int:
-    """returns new published value (0/1)"""
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT published FROM series WHERE id=?", (series_id,))
         row = await cur.fetchone()
@@ -143,127 +108,113 @@ async def toggle_publish(series_id: int) -> int:
         return new_val
 
 
-# ----------------- LISTING -----------------
+# ---------- groups ----------
+async def ensure_group(series_id: int, lang: str, season: str, quality: str) -> int:
+    lang = (lang or "").strip()
+    season = (season or "").strip()
+    quality = (quality or "").strip()
 
-async def list_languages(series_id: int) -> List[str]:
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT DISTINCT language FROM groups WHERE series_id=? ORDER BY language COLLATE NOCASE",
-            (series_id,)
-        )
-        rows = await cur.fetchall()
-        return [r[0] for r in rows]
-
-
-async def list_seasons(series_id: int, language: str) -> List[str]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT DISTINCT season FROM groups WHERE series_id=? AND language=? ORDER BY season COLLATE NOCASE",
-            (series_id, language)
-        )
-        rows = await cur.fetchall()
-        return [r[0] for r in rows]
-
-
-async def list_qualities(series_id: int, language: str, season: str) -> List[str]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT DISTINCT quality FROM groups WHERE series_id=? AND language=? AND season=? ORDER BY quality COLLATE NOCASE",
-            (series_id, language, season)
-        )
-        rows = await cur.fetchall()
-        return [r[0] for r in rows]
-
-
-# ----------------- GROUP / FILES -----------------
-
-async def ensure_group(series_id: int, language: str, season: str, quality: str) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-
-        cur = await db.execute(
-            "SELECT id FROM groups WHERE series_id=? AND language=? AND season=? AND quality=?",
-            (series_id, language, season, quality)
-        )
-        row = await cur.fetchone()
-        if row:
-            return int(row[0])
-
-        cur = await db.execute(
-            "INSERT INTO groups(series_id, language, season, quality) VALUES(?,?,?,?)",
-            (series_id, language, season, quality)
+        await db.execute(
+            "INSERT OR IGNORE INTO groups(series_id, lang, season, quality) VALUES(?,?,?,?)",
+            (series_id, lang, season, quality),
         )
         await db.commit()
-        return int(cur.lastrowid)
 
-
-async def get_group_id_value(series_id: int, language: str, season: str, quality: str) -> Optional[int]:
-    async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            "SELECT id FROM groups WHERE series_id=? AND language=? AND season=? AND quality=?",
-            (series_id, language, season, quality)
+            "SELECT id FROM groups WHERE series_id=? AND lang=? AND season=? AND quality=?",
+            (series_id, lang, season, quality),
         )
         row = await cur.fetchone()
-        return int(row[0]) if row else None
+        return int(row[0])
 
 
+async def get_group_id_value(series_id: int, lang: str, season: str, quality: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id FROM groups WHERE series_id=? AND lang=? AND season=? AND quality=?",
+            (series_id, lang, season, quality),
+        )
+        return await cur.fetchone()
+
+
+async def list_languages(series_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT DISTINCT lang FROM groups WHERE series_id=? ORDER BY lang COLLATE NOCASE",
+            (series_id,),
+        )
+        rows = await cur.fetchall()
+        return [r[0] for r in rows]
+
+
+async def list_seasons(series_id: int, lang: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT DISTINCT season FROM groups WHERE series_id=? AND lang=? ORDER BY season COLLATE NOCASE",
+            (series_id, lang),
+        )
+        rows = await cur.fetchall()
+        return [r[0] for r in rows]
+
+
+async def list_qualities(series_id: int, lang: str, season: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT DISTINCT quality FROM groups WHERE series_id=? AND lang=? AND season=? ORDER BY quality COLLATE NOCASE",
+            (series_id, lang, season),
+        )
+        rows = await cur.fetchall()
+        return [r[0] for r in rows]
+
+
+async def delete_language(series_id: int, lang: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM groups WHERE series_id=? AND lang=?", (series_id, lang))
+        await db.commit()
+
+
+async def delete_season(series_id: int, lang: str, season: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM groups WHERE series_id=? AND lang=? AND season=?",
+            (series_id, lang, season),
+        )
+        await db.commit()
+
+
+async def delete_quality(series_id: int, lang: str, season: str, quality: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM groups WHERE series_id=? AND lang=? AND season=? AND quality=?",
+            (series_id, lang, season, quality),
+        )
+        await db.commit()
+
+
+# ---------- files ----------
 async def add_file(group_id: int, file_id: str, caption: str = "", msg_type: str = ""):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
         await db.execute(
             "INSERT INTO files(group_id, file_id, caption, msg_type) VALUES(?,?,?,?)",
-            (group_id, file_id, caption or "", msg_type or "")
+            (group_id, file_id, caption or "", msg_type or ""),
         )
         await db.commit()
 
 
-async def get_files(group_id: int) -> List[Tuple[str, str, str]]:
+async def get_files(group_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             "SELECT file_id, caption, msg_type FROM files WHERE group_id=? ORDER BY id ASC",
-            (group_id,)
+            (group_id,),
         )
-        rows = await cur.fetchall()
-        return [(r[0], r[1], r[2]) for r in rows]
+        return await cur.fetchall()
 
 
 async def count_files_in_group(group_id: int) -> int:
+    if not group_id:
+        return 0
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT COUNT(*) FROM files WHERE group_id=?", (group_id,))
+        cur = await db.execute("SELECT COUNT(1) FROM files WHERE group_id=?", (group_id,))
         row = await cur.fetchone()
         return int(row[0] or 0)
-
-
-# ----------------- DELETE GROUPS -----------------
-
-async def delete_language(series_id: int, language: str) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-        cur = await db.execute(
-            "DELETE FROM groups WHERE series_id=? AND language=?",
-            (series_id, language)
-        )
-        await db.commit()
-        return cur.rowcount
-
-
-async def delete_season(series_id: int, language: str, season: str) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-        cur = await db.execute(
-            "DELETE FROM groups WHERE series_id=? AND language=? AND season=?",
-            (series_id, language, season)
-        )
-        await db.commit()
-        return cur.rowcount
-
-
-async def delete_quality(series_id: int, language: str, season: str, quality: str) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-        cur = await db.execute(
-            "DELETE FROM groups WHERE series_id=? AND language=? AND season=? AND quality=?",
-            (series_id, language, season, quality)
-        )
-        await db.commit()
-        return cur.rowcount
