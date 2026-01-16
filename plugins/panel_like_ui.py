@@ -1,3 +1,4 @@
+# plugins/panel_like_ui.py
 import asyncio
 from urllib.parse import quote, unquote
 
@@ -27,6 +28,7 @@ SAVE_DELAY = 1.2
 
 def q(s: str) -> str:
     return quote(s, safe="")
+
 
 def uq(s: str) -> str:
     return unquote(s)
@@ -104,32 +106,41 @@ async def kb_qualities(series_id: int, lang: str, season: str, qualities: list[s
     return InlineKeyboardMarkup(rows)
 
 
+# =======================
+# /newseries  (ADMIN PANEL)
+# =======================
 @Client.on_message(filters.command("newseries") & filters.user(ADMINS))
-async def newseriesui(client, message):
-    ask = await client.ask(message.chat.id, "📌 Series name anuppu:", timeout=120)
+async def newseries_panel(client, message):
+    ask = await client.ask(message.chat.id, "📌 Series name anuppu:", timeout=180)
     title = (ask.text or "").strip()
     if not title:
         return await message.reply_text("❌ Empty title")
 
     sid = await upsert_series(title)
-    row = await get_series_by_id(sid)
-    poster = row[2] if row else None
-
     caption = f"✅ **Series:** `{title}`\n\nSelect:"
-    if poster:
-        await message.reply_photo(poster, caption=caption, reply_markup=kb_series_home(sid))
-    else:
-        await message.reply_text(caption, reply_markup=kb_series_home(sid))
+
+    await message.reply_text(caption, reply_markup=kb_series_home(sid))
 
 
+# =======================
+# HOME (Back fix inside)
+# =======================
 @Client.on_callback_query(filters.regex(r"^adm:home:(\d+)$"))
 async def adm_home(_, cq):
     sid = int(cq.matches[0].group(1))
+
     row = await get_series_by_id(sid)
     if not row:
-        return await cq.answer("Not found", show_alert=True)
-    _, title, poster = row
+        # ✅ Back safe fallback (no "not found")
+        langs = await list_languages(sid)
+        text = "Select any **Language** group to add seasons. Or click **+** to add new."
+        if cq.message.photo:
+            await cq.message.edit_caption(text, reply_markup=kb_langs(sid, langs))
+        else:
+            await cq.message.edit_text(text, reply_markup=kb_langs(sid, langs))
+        return await cq.answer()
 
+    _, title, _poster = row
     caption = f"✅ **Series:** `{title}`\n\nSelect:"
     if cq.message.photo:
         await cq.message.edit_caption(caption, reply_markup=kb_series_home(sid))
@@ -138,6 +149,9 @@ async def adm_home(_, cq):
     await cq.answer()
 
 
+# =======================
+# LANGUAGES
+# =======================
 @Client.on_callback_query(filters.regex(r"^adm:langs:(\d+)$"))
 async def adm_langs(_, cq):
     sid = int(cq.matches[0].group(1))
@@ -154,11 +168,12 @@ async def adm_langs(_, cq):
 @Client.on_callback_query(filters.regex(r"^adm:addlang:(\d+)$"))
 async def adm_addlang(client, cq):
     sid = int(cq.matches[0].group(1))
-    ask = await client.ask(cq.message.chat.id, "🌐 Language name anuppu (ex: Multi Audio / Tamil):", timeout=120)
+    ask = await client.ask(cq.message.chat.id, "🌐 Language name anuppu (ex: Multi Audio / Tamil):", timeout=180)
     lang = (ask.text or "").strip()
     if not lang:
         return await cq.answer("Empty", show_alert=True)
 
+    # create minimal group so language exists
     await ensure_group(sid, lang, "season 1", "720p")
 
     langs = await list_languages(sid)
@@ -184,12 +199,15 @@ async def adm_lang(_, cq):
     await cq.answer()
 
 
+# =======================
+# SEASONS
+# =======================
 @Client.on_callback_query(filters.regex(r"^adm:addseason:(\d+):(.+)$"))
 async def adm_addseason(client, cq):
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
 
-    ask = await client.ask(cq.message.chat.id, "📦 Season name anuppu:", timeout=120)
+    ask = await client.ask(cq.message.chat.id, "📦 Season name anuppu:", timeout=180)
     season = (ask.text or "").strip()
     if not season:
         return await cq.answer("Empty", show_alert=True)
@@ -222,13 +240,16 @@ async def adm_season(_, cq):
     await cq.answer()
 
 
+# =======================
+# QUALITIES
+# =======================
 @Client.on_callback_query(filters.regex(r"^adm:addquality:(\d+):(.+):(.+)$"))
 async def adm_addquality(client, cq):
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
 
-    ask = await client.ask(cq.message.chat.id, "🎞 Quality anuppu (ex: 720p / 1080p):", timeout=120)
+    ask = await client.ask(cq.message.chat.id, "🎞 Quality anuppu (ex: 720p / 1080p):", timeout=180)
     quality = (ask.text or "").strip()
     if not quality:
         return await cq.answer("Empty", show_alert=True)
@@ -246,6 +267,9 @@ async def adm_addquality(client, cq):
     await cq.answer("Added")
 
 
+# =======================
+# UPLOAD (Quality click)
+# =======================
 @Client.on_callback_query(filters.regex(r"^adm:upload:(\d+):(.+):(.+):(.+)$"))
 async def adm_upload(client, cq):
     sid = int(cq.matches[0].group(1))
@@ -255,7 +279,7 @@ async def adm_upload(client, cq):
 
     group_id = await ensure_group(sid, lang, season, quality)
 
-    msg = await cq.message.reply_text(
+    info = await cq.message.reply_text(
         f"📥 **Upload Mode**\n\n"
         f"Language: `{lang}`\nSeason: `{season}`\nQuality: `{quality}`\n\n"
         f"Files anuppunga… finish panna `/done`"
@@ -269,9 +293,11 @@ async def adm_upload(client, cq):
             break
         if not m.media:
             continue
+
         media = get_file_id(m)
         if not media:
             continue
+
         queue.append((media.file_id, m.caption or "", getattr(media, "message_type", "")))
 
     saved = 0
@@ -280,9 +306,12 @@ async def adm_upload(client, cq):
         saved += 1
         await asyncio.sleep(SAVE_DELAY)
 
-    await msg.edit_text(f"✅ Done! saved `{saved}` files.")
+    try:
+        await info.edit_text(f"✅ Done! saved `{saved}` files.")
+    except Exception:
+        pass
 
-    # ✅ refresh counts automatically
+    # ✅ refresh counts after upload
     qualities = await list_qualities(sid, lang, season)
     markup = await kb_qualities(sid, lang, season, qualities)
     text = f"Language: `{lang}`\nSeason: `{season}`\nSelect any **Quality** to upload."
@@ -293,6 +322,9 @@ async def adm_upload(client, cq):
     await cq.answer("Saved")
 
 
+# =======================
+# DELETE (confirm)
+# =======================
 @Client.on_callback_query(filters.regex(r"^adm:dellang:(\d+):(.+)$"))
 async def adm_dellang_confirm(_, cq):
     sid = int(cq.matches[0].group(1))
@@ -314,10 +346,10 @@ async def adm_dellang_yes(_, cq):
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
 
-    deleted = await delete_language(sid, lang)
+    await delete_language(sid, lang)
 
     langs = await list_languages(sid)
-    text = f"🗑 Deleted Language `{lang}` ✅\nGroups removed: `{deleted}`\n\nSelect any Language:"
+    text = f"🗑 Deleted Language `{lang}` ✅\n\nSelect any Language:"
     if cq.message.photo:
         await cq.message.edit_caption(text, reply_markup=kb_langs(sid, langs))
     else:
@@ -348,10 +380,10 @@ async def adm_delseason_yes(_, cq):
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
 
-    deleted = await delete_season(sid, lang, season)
+    await delete_season(sid, lang, season)
 
     seasons = await list_seasons(sid, lang)
-    text = f"🗑 Deleted Season `{season}` ✅\nGroups removed: `{deleted}`\n\nLanguage: `{lang}`"
+    text = f"🗑 Deleted Season `{season}` ✅\n\nLanguage: `{lang}`"
     if cq.message.photo:
         await cq.message.edit_caption(text, reply_markup=kb_seasons(sid, lang, seasons))
     else:
@@ -384,11 +416,11 @@ async def adm_delquality_yes(_, cq):
     season = uq(cq.matches[0].group(3))
     quality = uq(cq.matches[0].group(4))
 
-    deleted = await delete_quality(sid, lang, season, quality)
+    await delete_quality(sid, lang, season, quality)
 
     qualities = await list_qualities(sid, lang, season)
     markup = await kb_qualities(sid, lang, season, qualities)
-    text = f"🗑 Deleted Quality `{quality}` ✅\nGroups removed: `{deleted}`\n\n`{lang}` / `{season}`"
+    text = f"🗑 Deleted Quality `{quality}` ✅\n\n`{lang}` / `{season}`"
     if cq.message.photo:
         await cq.message.edit_caption(text, reply_markup=markup)
     else:
