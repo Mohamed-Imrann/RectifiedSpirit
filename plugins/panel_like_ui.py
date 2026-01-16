@@ -30,7 +30,7 @@ SAVE_DELAY = 1.2
 
 # ✅ Put your private channel id here (bot must be admin)
 # Example: -1001234567890
-UPLOAD_CHANNEL = -1001234567890
+UPLOAD_CHANNEL = -1003319100929
 # ==========================
 
 
