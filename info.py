@@ -1,21 +1,20 @@
-import os
-from dotenv import load_dotenv
+# info.py
+API_ID = 123456
+API_HASH = "your_api_hash"
 
-load_dotenv()
+BOT_TOKEN = "your_bot_token"
 
-API_ID = int(os.getenv("API_ID", "0"))
-API_HASH = os.getenv("API_HASH", "")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-SESSION = os.getenv("SESSION", "series_bot")
+# ✅ User account session string (Pyrogram StringSession) - not bot token
+USER_SESSION = "your_user_session_string"
 
-# admins: "123,456"
-ADMINS = [int(x.strip()) for x in os.getenv("ADMINS", "").split(",") if x.strip().isdigit()]
+# Admin user ids
+ADMINS = [3144888498]
 
-# web health server port (Easypanel)
-PORT = int(os.getenv("PORT", "8080"))
+# Web port
+PORT = 8080
 
-# auto delete seconds (5 minutes default)
-AUTO_DELETE_SECONDS = int(os.getenv("AUTO_DELETE_SECONDS", "300"))
+# Your upload/source channel (must be YOUR channel)
+SOURCE_CHANNEL_ID = -1003319100929
 
-if not API_ID or not API_HASH or not BOT_TOKEN:
-    raise RuntimeError("Missing API_ID / API_HASH / BOT_TOKEN in environment (.env)")
+# Save delay per file (seconds)
+SAVE_DELAY = 1.2
