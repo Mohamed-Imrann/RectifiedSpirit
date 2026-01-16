@@ -25,7 +25,13 @@ from database.series_sql import (
     set_series_poster,
 )
 
+# ========= CONFIG =========
 SAVE_DELAY = 1.2
+
+# ✅ Put your private channel id here (bot must be admin)
+# Example: -1001234567890
+UPLOAD_CHANNEL = -1001234567890
+# ==========================
 
 
 def q(s: str) -> str:
@@ -39,7 +45,7 @@ def uq(s: str) -> str:
 async def safe_set_panel(cq, text: str, reply_markup=None):
     """
     Safe edit for text/photo messages.
-    If edit fails (message changed, can't edit caption, etc), fallback to sending new.
+    If edit fails, fallback to sending new message.
     """
     try:
         if cq.message.photo:
@@ -48,7 +54,6 @@ async def safe_set_panel(cq, text: str, reply_markup=None):
             await cq.message.edit_text(text, reply_markup=reply_markup)
         return
     except Exception:
-        # fallback
         try:
             await cq.message.reply_text(text, reply_markup=reply_markup)
         except Exception:
@@ -150,21 +155,19 @@ async def newseries_panel(client, message):
 
 
 # =======================
-# HOME (Back - no loading stuck)
+# HOME
 # =======================
 @Client.on_callback_query(filters.regex(r"^adm:home:(\d+)$"))
 async def adm_home(client, cq):
-    await cq.answer()  # ✅ always answer first (stop loading)
-
+    await cq.answer()
     sid = int(cq.matches[0].group(1))
+
     row = await get_series_by_id(sid)
     if not row:
         return await cq.answer("Not found", show_alert=True)
 
     _, title, _poster, published = row
     caption = f"✅ **Series:** `{title}`\n\nSelect option:"
-
-    # safest: edit if possible else send new
     await safe_set_panel(cq, caption, kb_series_home(sid, published))
 
 
@@ -174,8 +177,8 @@ async def adm_home(client, cq):
 @Client.on_callback_query(filters.regex(r"^adm:publish:(\d+)$"))
 async def adm_publish(_, cq):
     await cq.answer()
-
     sid = int(cq.matches[0].group(1))
+
     new_val = await toggle_publish(sid)
 
     row = await get_series_by_id(sid)
@@ -196,8 +199,8 @@ async def adm_publish(_, cq):
 @Client.on_callback_query(filters.regex(r"^adm:poster:(\d+)$"))
 async def adm_poster(client, cq):
     await cq.answer("Send poster photo")
-
     sid = int(cq.matches[0].group(1))
+
     msg = await cq.message.reply_text("🖼 Poster photo anuppu (send photo).")
     pm = await client.listen(cq.message.chat.id)
 
@@ -230,10 +233,9 @@ async def adm_poster(client, cq):
 @Client.on_callback_query(filters.regex(r"^adm:langs:(\d+)$"))
 async def adm_langs(_, cq):
     await cq.answer()
-
     sid = int(cq.matches[0].group(1))
-    langs = await list_languages(sid)
 
+    langs = await list_languages(sid)
     text = "Select any Language group to add seasons. Or click + to add new."
     await safe_set_panel(cq, text, kb_langs(sid, langs))
 
@@ -241,14 +243,14 @@ async def adm_langs(_, cq):
 @Client.on_callback_query(filters.regex(r"^adm:addlang:(\d+)$"))
 async def adm_addlang(client, cq):
     await cq.answer()
-
     sid = int(cq.matches[0].group(1))
+
     ask = await client.ask(cq.message.chat.id, "🌐 Language name anuppu (ex: Multi Audio / Tamil):", timeout=180)
     lang = (ask.text or "").strip()
     if not lang:
         return await cq.answer("Empty", show_alert=True)
 
-    # create seed group so language exists
+    # seed group so language exists
     await ensure_group(sid, lang, "season 1", "720p")
 
     langs = await list_languages(sid)
@@ -260,7 +262,6 @@ async def adm_addlang(client, cq):
 @Client.on_callback_query(filters.regex(r"^adm:lang:(\d+):(.+)$"))
 async def adm_lang(_, cq):
     await cq.answer()
-
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
 
@@ -275,7 +276,6 @@ async def adm_lang(_, cq):
 @Client.on_callback_query(filters.regex(r"^adm:addseason:(\d+):(.+)$"))
 async def adm_addseason(client, cq):
     await cq.answer()
-
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
 
@@ -295,7 +295,6 @@ async def adm_addseason(client, cq):
 @Client.on_callback_query(filters.regex(r"^adm:season:(\d+):(.+):(.+)$"))
 async def adm_season(_, cq):
     await cq.answer()
-
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
@@ -313,7 +312,6 @@ async def adm_season(_, cq):
 @Client.on_callback_query(filters.regex(r"^adm:addquality:(\d+):(.+):(.+)$"))
 async def adm_addquality(client, cq):
     await cq.answer()
-
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
@@ -334,11 +332,14 @@ async def adm_addquality(client, cq):
 
 
 # =======================
-# UPLOAD (Quality click) + PROGRESS
+# UPLOAD (Channel Assisted)
 # =======================
 @Client.on_callback_query(filters.regex(r"^adm:upload:(\d+):(.+):(.+):(.+)$"))
 async def adm_upload(client, cq):
     await cq.answer("Upload mode")
+
+    if not isinstance(UPLOAD_CHANNEL, int) or str(UPLOAD_CHANNEL) == "-1001234567890":
+        return await cq.answer("UPLOAD_CHANNEL set pannunga (config)!", show_alert=True)
 
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
@@ -347,53 +348,66 @@ async def adm_upload(client, cq):
 
     group_id = await ensure_group(sid, lang, season, quality)
 
-    info = await cq.message.reply_text(
-        f"📥 **Upload Mode**\n\n"
+    # 1) Start session msg in upload channel
+    start_msg = await client.send_message(
+        UPLOAD_CHANNEL,
+        f"📦 **UPLOAD SESSION STARTED**\n\n"
         f"Language: `{lang}`\nSeason: `{season}`\nQuality: `{quality}`\n\n"
-        f"Files send pannunga… finish panna `/done`"
+        f"✅ Files anuppunga.\n"
+        f"✅ **Last file message-ku reply panni** `/done` send pannunga."
     )
 
-    progress = await cq.message.reply_text("⏳ Waiting for files…")
+    await cq.message.reply_text(
+        f"✅ Upload Channel ready.\n\n"
+        f"Channel-la files anuppunga.\n"
+        f"Last file msg-ku reply panni `/done` anuppunga.\n\n"
+        f"Start Msg ID: `{start_msg.id}`"
+    )
 
-    queue = []
+    # 2) Wait for /done in channel (must be reply to last file)
+    done_msg = None
     while True:
-        m = await client.listen(cq.message.chat.id)
-
-        if (m.text or "").strip().lower() == "/done":
+        m = await client.listen(UPLOAD_CHANNEL)
+        if (m.text or "").strip().lower() == "/done" and m.reply_to_message:
+            done_msg = m
             break
 
-        if not m.media:
-            continue
+    last_file_msg_id = done_msg.reply_to_message.id
+    start_id = start_msg.id
 
-        media = get_file_id(m)
+    progress = await client.send_message(
+        UPLOAD_CHANNEL,
+        f"⏳ Collecting files from `{start_id + 1}` to `{last_file_msg_id}`…"
+    )
+
+    # 3) Collect files from history range
+    file_rows = []
+    async for msg in client.get_chat_history(UPLOAD_CHANNEL, offset_id=last_file_msg_id + 1):
+        if msg.id <= start_id:
+            break
+        if not msg.media:
+            continue
+        media = get_file_id(msg)
         if not media:
             continue
+        file_rows.append((media.file_id, msg.caption or "", getattr(media, "message_type", "")))
 
-        queue.append((media.file_id, m.caption or "", getattr(media, "message_type", "")))
+    file_rows.reverse()
 
+    if not file_rows:
         try:
-            await progress.edit_text(f"✅ Files received: `{len(queue)}`\nSend more… or `/done`")
-        except Exception:
-            pass
-
-    if not queue:
-        try:
-            await progress.edit_text("❌ No files received.")
-        except Exception:
-            pass
-        try:
-            await info.delete()
+            await progress.edit_text("❌ No media found in that range.")
         except Exception:
             pass
         return
 
+    # 4) Save with delay + progress
+    total = len(file_rows)
     saved = 0
-    total = len(queue)
 
-    for file_id, caption, msg_type in queue:
+    for file_id, caption, msg_type in file_rows:
         await add_file(group_id, file_id, caption, msg_type)
         saved += 1
-
         try:
             await progress.edit_text(
                 f"💾 Saving... `{saved}/{total}`\n"
@@ -404,26 +418,19 @@ async def adm_upload(client, cq):
 
         await asyncio.sleep(SAVE_DELAY)
 
-    await cq.message.reply_text(
-        f"✅ **{quality} files added:** `{saved}`\n"
-        f"`{lang}` / `{season}`"
-    )
+    try:
+        await progress.edit_text(
+            f"✅ **{quality} files added:** `{saved}`\n"
+            f"`{lang}` / `{season}`"
+        )
+    except Exception:
+        pass
 
-    # refresh quality buttons with updated counts
+    # refresh quality buttons with updated counts (admin panel)
     qualities = await list_qualities(sid, lang, season)
     markup = await kb_qualities(sid, lang, season, qualities)
-
     text = f"Language: `{lang}`\nSeason: `{season}`\nSelect any Quality to upload."
     await safe_set_panel(cq, text, markup)
-
-    try:
-        await info.delete()
-    except Exception:
-        pass
-    try:
-        await progress.delete()
-    except Exception:
-        pass
 
 
 # =======================
@@ -432,21 +439,18 @@ async def adm_upload(client, cq):
 @Client.on_callback_query(filters.regex(r"^adm:dellang:(\d+):(.+)$"))
 async def adm_dellang_confirm(_, cq):
     await cq.answer()
-
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
 
     text = f"⚠️ Delete Language Group?\n\nLanguage: `{lang}`\n\nThis deletes ALL inside."
     back = f"adm:lang:{sid}:{q(lang)}"
     yes = f"adm:yes_dellang:{sid}:{q(lang)}"
-
     await safe_set_panel(cq, text, kb_confirm(back, yes))
 
 
 @Client.on_callback_query(filters.regex(r"^adm:yes_dellang:(\d+):(.+)$"))
 async def adm_dellang_yes(_, cq):
     await cq.answer()
-
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
 
@@ -461,7 +465,6 @@ async def adm_dellang_yes(_, cq):
 @Client.on_callback_query(filters.regex(r"^adm:delseason:(\d+):(.+):(.+)$"))
 async def adm_delseason_confirm(_, cq):
     await cq.answer()
-
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
@@ -469,14 +472,12 @@ async def adm_delseason_confirm(_, cq):
     text = f"⚠️ Delete Season Group?\n\n`{lang}` / `{season}`\n\nThis deletes ALL inside."
     back = f"adm:season:{sid}:{q(lang)}:{q(season)}"
     yes = f"adm:yes_delseason:{sid}:{q(lang)}:{q(season)}"
-
     await safe_set_panel(cq, text, kb_confirm(back, yes))
 
 
 @Client.on_callback_query(filters.regex(r"^adm:yes_delseason:(\d+):(.+):(.+)$"))
 async def adm_delseason_yes(_, cq):
     await cq.answer()
-
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
@@ -492,7 +493,6 @@ async def adm_delseason_yes(_, cq):
 @Client.on_callback_query(filters.regex(r"^adm:delquality:(\d+):(.+):(.+):(.+)$"))
 async def adm_delquality_confirm(_, cq):
     await cq.answer()
-
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
@@ -501,14 +501,12 @@ async def adm_delquality_confirm(_, cq):
     text = f"⚠️ Delete Quality?\n\n`{lang}` / `{season}` / `{quality}`\n\nAll files inside will be deleted."
     back = f"adm:season:{sid}:{q(lang)}:{q(season)}"
     yes = f"adm:yes_delquality:{sid}:{q(lang)}:{q(season)}:{q(quality)}"
-
     await safe_set_panel(cq, text, kb_confirm(back, yes))
 
 
 @Client.on_callback_query(filters.regex(r"^adm:yes_delquality:(\d+):(.+):(.+):(.+)$"))
 async def adm_delquality_yes(_, cq):
     await cq.answer()
-
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
