@@ -1,4 +1,3 @@
-# plugins/panel_like_ui.py
 import asyncio
 from urllib.parse import quote, unquote
 
@@ -160,7 +159,6 @@ async def adm_addlang(client, cq):
     if not lang:
         return await cq.answer("Empty", show_alert=True)
 
-    # create placeholder so language exists
     await ensure_group(sid, lang, "season 1", "720p")
 
     langs = await list_languages(sid)
@@ -248,7 +246,6 @@ async def adm_addquality(client, cq):
     await cq.answer("Added")
 
 
-# ---------- Upload ----------
 @Client.on_callback_query(filters.regex(r"^adm:upload:(\d+):(.+):(.+):(.+)$"))
 async def adm_upload(client, cq):
     sid = int(cq.matches[0].group(1))
@@ -285,7 +282,7 @@ async def adm_upload(client, cq):
 
     await msg.edit_text(f"✅ Done! saved `{saved}` files.")
 
-    # ✅ REAL-TIME REFRESH: go back to Quality menu and update counts
+    # ✅ refresh counts automatically
     qualities = await list_qualities(sid, lang, season)
     markup = await kb_qualities(sid, lang, season, qualities)
     text = f"Language: `{lang}`\nSeason: `{season}`\nSelect any **Quality** to upload."
@@ -293,11 +290,9 @@ async def adm_upload(client, cq):
         await cq.message.edit_caption(text, reply_markup=markup)
     else:
         await cq.message.edit_text(text, reply_markup=markup)
-
     await cq.answer("Saved")
 
 
-# ---------- Delete Language ----------
 @Client.on_callback_query(filters.regex(r"^adm:dellang:(\d+):(.+)$"))
 async def adm_dellang_confirm(_, cq):
     sid = int(cq.matches[0].group(1))
@@ -330,7 +325,6 @@ async def adm_dellang_yes(_, cq):
     await cq.answer("Deleted")
 
 
-# ---------- Delete Season ----------
 @Client.on_callback_query(filters.regex(r"^adm:delseason:(\d+):(.+):(.+)$"))
 async def adm_delseason_confirm(_, cq):
     sid = int(cq.matches[0].group(1))
@@ -365,7 +359,6 @@ async def adm_delseason_yes(_, cq):
     await cq.answer("Deleted")
 
 
-# ---------- Delete Quality ----------
 @Client.on_callback_query(filters.regex(r"^adm:delquality:(\d+):(.+):(.+):(.+)$"))
 async def adm_delquality_confirm(_, cq):
     sid = int(cq.matches[0].group(1))
