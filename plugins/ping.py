@@ -1,32 +1,39 @@
 import time
-from pyrogram import Client, filters
-import psutil
 import asyncio
+import psutil
+from pyrogram import Client, filters
+from pyrogram.types import Message
 
-start_time = time.time()
+from utils import auto_delete
 
-async def get_bot_uptime():
-    # Calculate the uptime in seconds
-    uptime_seconds = int(time.time() - start_time)
-    uptime_minutes = uptime_seconds // 60
-    uptime_hours = uptime_minutes // 60
-    uptime_days = uptime_hours // 24
-    uptime_weeks = uptime_days // 7
-    ###############################
-    uptime_string = f"{uptime_days % 7}Days:{uptime_hours % 24}Hours:{uptime_minutes % 60}Minutes:{uptime_seconds % 60}Seconds"
-    return uptime_string
+START_TIME = time.time()
 
-@Client.on_message(filters.command("ping")) 
-async def ping(_, message):
-    start_t = time.time()
+def uptime_str():
+    s = int(time.time() - START_TIME)
+    m = s // 60
+    h = m // 60
+    d = h // 24
+    return f"{d}d {h%24}h {m%60}m {s%60}s"
+
+@Client.on_message(filters.command("ping"))
+async def ping(client: Client, message: Message):
+    t1 = time.time()
     rm = await message.reply_text("👀")
-    end_t = time.time()
-    time_taken_s = (end_t - start_t) * 1000
-    uptime = await get_bot_uptime()
-    cpu_usage = psutil.cpu_percent()
-    ram_usage = psutil.virtual_memory().percent
-    await rm.edit(f"🏓 𝖯𝗂𝗇𝗀: <code>{time_taken_s:.3f} ms</code>\n\n⏰ 𝖴𝗉𝗍𝗂𝗆𝖾: <code>{uptime}</code>\n🤖 𝖢𝖯𝖴 𝖴𝗌𝖺𝗀𝖾: <code>{cpu_usage} %</code>\n📥 𝖱𝖺𝗆 𝖴𝗌𝖺𝗀𝖾: <code>{ram_usage} %</code>")
+    t2 = time.time()
+    ms = (t2 - t1) * 1000
+
+    cpu = psutil.cpu_percent()
+    ram = psutil.virtual_memory().percent
+
+    await rm.edit_text(
+        f"🏓 Ping: `{ms:.2f} ms`\n"
+        f"⏰ Uptime: `{uptime_str()}`\n"
+        f"🤖 CPU: `{cpu}%`\n"
+        f"📥 RAM: `{ram}%`"
+    )
+    asyncio.create_task(auto_delete(rm))
 
 @Client.on_message(filters.command("alive"))
-async def check_alive(_, message):
-    await message.reply_text("𝖡𝗎𝖽𝖽𝗒 𝖨𝖺𝗆 𝖠𝗅𝗂𝗏𝖾 :) 𝖧𝗂𝗍 /start", quote=True)
+async def alive(client: Client, message: Message):
+    m = await message.reply_text("✅ Buddy I am Alive :) Hit /ping")
+    asyncio.create_task(auto_delete(m))
