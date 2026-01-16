@@ -104,7 +104,7 @@ async def kb_qualities(series_id: int, lang: str, season: str, qualities: list[s
     return InlineKeyboardMarkup(rows)
 
 
-@Client.on_message(filters.command("newseriesui") & filters.user(ADMINS))
+@Client.on_message(filters.command("newseries") & filters.user(ADMINS))
 async def newseriesui(client, message):
     ask = await client.ask(message.chat.id, "📌 Series name anuppu:", timeout=120)
     title = (ask.text or "").strip()
