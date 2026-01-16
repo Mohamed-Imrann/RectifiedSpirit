@@ -19,6 +19,8 @@ from database.series_sql import (
     delete_language,
     delete_season,
     delete_quality,
+    get_group_id_value,
+    count_files_in_group,
 )
 
 SAVE_DELAY = 1.2
@@ -74,20 +76,32 @@ def kb_seasons(series_id: int, lang: str, seasons: list[str]):
     return InlineKeyboardMarkup(rows)
 
 
-def kb_qualities(series_id: int, lang: str, season: str, qualities: list[str]):
+async def kb_qualities(series_id: int, lang: str, season: str, qualities: list[str]):
     rows = []
+
     if qualities:
         for qu in qualities:
+            gid = await get_group_id_value(series_id, lang, season, qu)
+            cnt = await count_files_in_group(gid) if gid else 0
+
             rows.append([
-                InlineKeyboardButton(qu, callback_data=f"adm:upload:{series_id}:{q(lang)}:{q(season)}:{q(qu)}"),
-                InlineKeyboardButton("🗑", callback_data=f"adm:delquality:{series_id}:{q(lang)}:{q(season)}:{q(qu)}")
+                InlineKeyboardButton(
+                    f"{qu} ({cnt})",
+                    callback_data=f"adm:upload:{series_id}:{q(lang)}:{q(season)}:{q(qu)}"
+                ),
+                InlineKeyboardButton(
+                    "🗑",
+                    callback_data=f"adm:delquality:{series_id}:{q(lang)}:{q(season)}:{q(qu)}"
+                )
             ])
+
         rows.append([InlineKeyboardButton("+ New Row", callback_data=f"adm:addquality:{series_id}:{q(lang)}:{q(season)}")])
     else:
         rows.append([InlineKeyboardButton("+ Add First Item", callback_data=f"adm:addquality:{series_id}:{q(lang)}:{q(season)}")])
 
     rows.append([InlineKeyboardButton("🗑 Delete Season Group", callback_data=f"adm:delseason:{series_id}:{q(lang)}:{q(season)}")])
     rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"adm:lang:{series_id}:{q(lang)}")])
+
     return InlineKeyboardMarkup(rows)
 
 
@@ -200,11 +214,13 @@ async def adm_season(_, cq):
     season = uq(cq.matches[0].group(3))
 
     qualities = await list_qualities(sid, lang, season)
+    markup = await kb_qualities(sid, lang, season, qualities)
+
     text = f"Language: `{lang}`\nSeason: `{season}`\nSelect any **Quality** to upload."
     if cq.message.photo:
-        await cq.message.edit_caption(text, reply_markup=kb_qualities(sid, lang, season, qualities))
+        await cq.message.edit_caption(text, reply_markup=markup)
     else:
-        await cq.message.edit_text(text, reply_markup=kb_qualities(sid, lang, season, qualities))
+        await cq.message.edit_text(text, reply_markup=markup)
     await cq.answer()
 
 
@@ -222,11 +238,13 @@ async def adm_addquality(client, cq):
     await ensure_group(sid, lang, season, quality)
 
     qualities = await list_qualities(sid, lang, season)
-    text = f"✅ Quality Added. `{lang}` / `{season}`"
+    markup = await kb_qualities(sid, lang, season, qualities)
+
+    text = f"✅ Quality Added. `{lang}` / `{season}`\nSelect any Quality:"
     if cq.message.photo:
-        await cq.message.edit_caption(text, reply_markup=kb_qualities(sid, lang, season, qualities))
+        await cq.message.edit_caption(text, reply_markup=markup)
     else:
-        await cq.message.edit_text(text, reply_markup=kb_qualities(sid, lang, season, qualities))
+        await cq.message.edit_text(text, reply_markup=markup)
     await cq.answer("Added")
 
 
@@ -266,6 +284,16 @@ async def adm_upload(client, cq):
         await asyncio.sleep(SAVE_DELAY)
 
     await msg.edit_text(f"✅ Done! saved `{saved}` files.")
+
+    # ✅ REAL-TIME REFRESH: go back to Quality menu and update counts
+    qualities = await list_qualities(sid, lang, season)
+    markup = await kb_qualities(sid, lang, season, qualities)
+    text = f"Language: `{lang}`\nSeason: `{season}`\nSelect any **Quality** to upload."
+    if cq.message.photo:
+        await cq.message.edit_caption(text, reply_markup=markup)
+    else:
+        await cq.message.edit_text(text, reply_markup=markup)
+
     await cq.answer("Saved")
 
 
@@ -366,9 +394,10 @@ async def adm_delquality_yes(_, cq):
     deleted = await delete_quality(sid, lang, season, quality)
 
     qualities = await list_qualities(sid, lang, season)
+    markup = await kb_qualities(sid, lang, season, qualities)
     text = f"🗑 Deleted Quality `{quality}` ✅\nGroups removed: `{deleted}`\n\n`{lang}` / `{season}`"
     if cq.message.photo:
-        await cq.message.edit_caption(text, reply_markup=kb_qualities(sid, lang, season, qualities))
+        await cq.message.edit_caption(text, reply_markup=markup)
     else:
-        await cq.message.edit_text(text, reply_markup=kb_qualities(sid, lang, season, qualities))
+        await cq.message.edit_text(text, reply_markup=markup)
     await cq.answer("Deleted")
