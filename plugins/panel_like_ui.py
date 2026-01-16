@@ -1,5 +1,6 @@
 # plugins/panel_like_ui.py
 import asyncio
+import re
 from urllib.parse import quote, unquote
 
 from pyrogram import Client, filters
@@ -25,13 +26,11 @@ from database.series_sql import (
     set_series_poster,
 )
 
-# ========= CONFIG =========
 SAVE_DELAY = 1.2
 
-# ✅ Put your private channel id here (bot must be admin)
-# Example: -1001234567890
-UPLOAD_CHANNEL = -1003319100929
-# ==========================
+# ---- upload capture buffer (per admin user) ----
+CAPTURE = {}   # uid -> list of (msg_id, file_id, caption, msg_type)
+CAP_MAX = 2000 # max buffered messages per admin
 
 
 def q(s: str) -> str:
@@ -42,22 +41,20 @@ def uq(s: str) -> str:
     return unquote(s)
 
 
-async def safe_set_panel(cq, text: str, reply_markup=None):
+def extract_msg_id(link: str):
     """
-    Safe edit for text/photo messages.
-    If edit fails, fallback to sending new message.
+    Accepts:
+      https://t.me/c/123456789/55
+      https://t.me/username/55
+    Returns message id (last number) or None.
     """
+    m = re.search(r"/(\d+)\s*$", (link or "").strip())
+    if not m:
+        return None
     try:
-        if cq.message.photo:
-            await cq.message.edit_caption(text, reply_markup=reply_markup)
-        else:
-            await cq.message.edit_text(text, reply_markup=reply_markup)
-        return
+        return int(m.group(1))
     except Exception:
-        try:
-            await cq.message.reply_text(text, reply_markup=reply_markup)
-        except Exception:
-            pass
+        return None
 
 
 def kb_confirm(back_cb: str, yes_cb: str):
@@ -82,7 +79,7 @@ def kb_langs(series_id: int, langs: list[str]):
     if langs:
         for name in langs:
             rows.append([InlineKeyboardButton(name, callback_data=f"adm:lang:{series_id}:{q(name)}")])
-        rows.append([InlineKeyboardButton("+ Add Language", callback_data=f"adm:addlang:{series_id}")])
+        rows.append([InlineKeyboardButton("+ New Row", callback_data=f"adm:addlang:{series_id}")])
     else:
         rows.append([InlineKeyboardButton("+ Add First Item", callback_data=f"adm:addlang:{series_id}")])
 
@@ -96,7 +93,7 @@ def kb_seasons(series_id: int, lang: str, seasons: list[str]):
         for s in seasons:
             rows.append([
                 InlineKeyboardButton(s, callback_data=f"adm:season:{series_id}:{q(lang)}:{q(s)}"),
-                InlineKeyboardButton("+", callback_data=f"adm:addseason:{series_id}:{q(lang)}"),
+                InlineKeyboardButton("+", callback_data=f"adm:addseason:{series_id}:{q(lang)}")
             ])
         rows.append([InlineKeyboardButton("+ New Row", callback_data=f"adm:addseason:{series_id}:{q(lang)}")])
     else:
@@ -137,6 +134,23 @@ async def kb_qualities(series_id: int, lang: str, season: str, qualities: list[s
 
 
 # =======================
+# Capture forwarded media in admin PM (buffer)
+# =======================
+@Client.on_message(filters.user(ADMINS) & filters.private & filters.media)
+async def capture_admin_media(client, message):
+    uid = message.from_user.id
+    media = get_file_id(message)
+    if not media:
+        return
+
+    CAPTURE.setdefault(uid, [])
+    CAPTURE[uid].append((message.id, media.file_id, message.caption or "", getattr(media, "message_type", "")))
+
+    if len(CAPTURE[uid]) > CAP_MAX:
+        CAPTURE[uid] = CAPTURE[uid][-CAP_MAX:]
+
+
+# =======================
 # /newseries (ADMIN PANEL)
 # =======================
 @Client.on_message(filters.command("newseries") & filters.user(ADMINS))
@@ -155,20 +169,27 @@ async def newseries_panel(client, message):
 
 
 # =======================
-# HOME
+# HOME (Back fix)
 # =======================
 @Client.on_callback_query(filters.regex(r"^adm:home:(\d+)$"))
 async def adm_home(client, cq):
-    await cq.answer()
     sid = int(cq.matches[0].group(1))
-
     row = await get_series_by_id(sid)
+
     if not row:
-        return await cq.answer("Not found", show_alert=True)
+        await cq.answer("Not found", show_alert=True)
+        return
 
     _, title, _poster, published = row
+    await cq.answer()
+
     caption = f"✅ **Series:** `{title}`\n\nSelect option:"
-    await safe_set_panel(cq, caption, kb_series_home(sid, published))
+    await cq.message.reply_text(caption, reply_markup=kb_series_home(sid, published))
+
+    try:
+        await cq.message.delete()
+    except Exception:
+        pass
 
 
 # =======================
@@ -176,9 +197,7 @@ async def adm_home(client, cq):
 # =======================
 @Client.on_callback_query(filters.regex(r"^adm:publish:(\d+)$"))
 async def adm_publish(_, cq):
-    await cq.answer()
     sid = int(cq.matches[0].group(1))
-
     new_val = await toggle_publish(sid)
 
     row = await get_series_by_id(sid)
@@ -187,9 +206,17 @@ async def adm_publish(_, cq):
 
     _, title, _poster, published = row
     status = "✅ Published" if new_val == 1 else "❌ Unpublished"
-
     caption = f"✅ **Series:** `{title}`\n\nStatus: **{status}**\n\nSelect option:"
-    await safe_set_panel(cq, caption, kb_series_home(sid, published))
+
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(caption, reply_markup=kb_series_home(sid, published))
+        else:
+            await cq.message.edit_text(caption, reply_markup=kb_series_home(sid, published))
+    except Exception:
+        # fallback
+        await cq.message.reply_text(caption, reply_markup=kb_series_home(sid, published))
+
     await cq.answer(status, show_alert=True)
 
 
@@ -198,8 +225,8 @@ async def adm_publish(_, cq):
 # =======================
 @Client.on_callback_query(filters.regex(r"^adm:poster:(\d+)$"))
 async def adm_poster(client, cq):
-    await cq.answer("Send poster photo")
     sid = int(cq.matches[0].group(1))
+    await cq.answer("Send poster photo")
 
     msg = await cq.message.reply_text("🖼 Poster photo anuppu (send photo).")
     pm = await client.listen(cq.message.chat.id)
@@ -224,7 +251,13 @@ async def adm_poster(client, cq):
         pass
 
     cap = f"✅ **Series:** `{title}`\n\nSelect option:"
-    await safe_set_panel(cq, cap, kb_series_home(sid, published))
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(cap, reply_markup=kb_series_home(sid, published))
+        else:
+            await cq.message.edit_text(cap, reply_markup=kb_series_home(sid, published))
+    except Exception:
+        await cq.message.reply_text(cap, reply_markup=kb_series_home(sid, published))
 
 
 # =======================
@@ -232,42 +265,66 @@ async def adm_poster(client, cq):
 # =======================
 @Client.on_callback_query(filters.regex(r"^adm:langs:(\d+)$"))
 async def adm_langs(_, cq):
-    await cq.answer()
     sid = int(cq.matches[0].group(1))
-
     langs = await list_languages(sid)
+
     text = "Select any Language group to add seasons. Or click + to add new."
-    await safe_set_panel(cq, text, kb_langs(sid, langs))
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(text, reply_markup=kb_langs(sid, langs))
+        else:
+            await cq.message.edit_text(text, reply_markup=kb_langs(sid, langs))
+    except Exception:
+        await cq.message.reply_text(text, reply_markup=kb_langs(sid, langs))
+
+    await cq.answer()
 
 
 @Client.on_callback_query(filters.regex(r"^adm:addlang:(\d+)$"))
 async def adm_addlang(client, cq):
-    await cq.answer()
     sid = int(cq.matches[0].group(1))
 
-    ask = await client.ask(cq.message.chat.id, "🌐 Language name anuppu (ex: Multi Audio / Tamil):", timeout=180)
+    ask = await client.ask(
+        cq.message.chat.id,
+        "🌐 Language name anuppu (ex: Multi Audio / Tamil):",
+        timeout=180
+    )
     lang = (ask.text or "").strip()
     if not lang:
         return await cq.answer("Empty", show_alert=True)
 
-    # seed group so language exists
+    # create seed group so language exists
     await ensure_group(sid, lang, "season 1", "720p")
 
     langs = await list_languages(sid)
-    text = f"✅ Added language: `{lang}`"
-    await safe_set_panel(cq, text, kb_langs(sid, langs))
+    text = "✅ Language Added. Select any Language:"
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(text, reply_markup=kb_langs(sid, langs))
+        else:
+            await cq.message.edit_text(text, reply_markup=kb_langs(sid, langs))
+    except Exception:
+        await cq.message.reply_text(text, reply_markup=kb_langs(sid, langs))
+
     await cq.answer("Added")
 
 
 @Client.on_callback_query(filters.regex(r"^adm:lang:(\d+):(.+)$"))
 async def adm_lang(_, cq):
-    await cq.answer()
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
 
     seasons = await list_seasons(sid, lang)
     text = f"Language: `{lang}`\nSelect any Seasons group."
-    await safe_set_panel(cq, text, kb_seasons(sid, lang, seasons))
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(text, reply_markup=kb_seasons(sid, lang, seasons))
+        else:
+            await cq.message.edit_text(text, reply_markup=kb_seasons(sid, lang, seasons))
+    except Exception:
+        await cq.message.reply_text(text, reply_markup=kb_seasons(sid, lang, seasons))
+
+    await cq.answer()
 
 
 # =======================
@@ -275,7 +332,6 @@ async def adm_lang(_, cq):
 # =======================
 @Client.on_callback_query(filters.regex(r"^adm:addseason:(\d+):(.+)$"))
 async def adm_addseason(client, cq):
-    await cq.answer()
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
 
@@ -287,14 +343,20 @@ async def adm_addseason(client, cq):
     await ensure_group(sid, lang, season, "720p")
 
     seasons = await list_seasons(sid, lang)
-    text = f"✅ Season Added: `{season}`\nLanguage: `{lang}`"
-    await safe_set_panel(cq, text, kb_seasons(sid, lang, seasons))
+    text = f"✅ Season Added. Language: `{lang}`"
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(text, reply_markup=kb_seasons(sid, lang, seasons))
+        else:
+            await cq.message.edit_text(text, reply_markup=kb_seasons(sid, lang, seasons))
+    except Exception:
+        await cq.message.reply_text(text, reply_markup=kb_seasons(sid, lang, seasons))
+
     await cq.answer("Added")
 
 
 @Client.on_callback_query(filters.regex(r"^adm:season:(\d+):(.+):(.+)$"))
 async def adm_season(_, cq):
-    await cq.answer()
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
@@ -303,7 +365,15 @@ async def adm_season(_, cq):
     markup = await kb_qualities(sid, lang, season, qualities)
 
     text = f"Language: `{lang}`\nSeason: `{season}`\nSelect any Quality to upload."
-    await safe_set_panel(cq, text, markup)
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(text, reply_markup=markup)
+        else:
+            await cq.message.edit_text(text, reply_markup=markup)
+    except Exception:
+        await cq.message.reply_text(text, reply_markup=markup)
+
+    await cq.answer()
 
 
 # =======================
@@ -311,7 +381,6 @@ async def adm_season(_, cq):
 # =======================
 @Client.on_callback_query(filters.regex(r"^adm:addquality:(\d+):(.+):(.+)$"))
 async def adm_addquality(client, cq):
-    await cq.answer()
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
@@ -326,21 +395,26 @@ async def adm_addquality(client, cq):
     qualities = await list_qualities(sid, lang, season)
     markup = await kb_qualities(sid, lang, season, qualities)
 
-    text = f"✅ Quality Added: `{quality}`\n`{lang}` / `{season}`"
-    await safe_set_panel(cq, text, markup)
+    text = f"✅ Quality Added. `{lang}` / `{season}`\nSelect any Quality:"
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(text, reply_markup=markup)
+        else:
+            await cq.message.edit_text(text, reply_markup=markup)
+    except Exception:
+        await cq.message.reply_text(text, reply_markup=markup)
+
     await cq.answer("Added")
 
 
 # =======================
-# UPLOAD (Channel Assisted)
+# UPLOAD (Quality click) - First link + Last link method
 # =======================
 @Client.on_callback_query(filters.regex(r"^adm:upload:(\d+):(.+):(.+):(.+)$"))
 async def adm_upload(client, cq):
     await cq.answer("Upload mode")
 
-    if not isinstance(UPLOAD_CHANNEL, int) or str(UPLOAD_CHANNEL) == "-1001234567890":
-        return await cq.answer("UPLOAD_CHANNEL set pannunga (config)!", show_alert=True)
-
+    uid = cq.from_user.id
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
@@ -348,89 +422,61 @@ async def adm_upload(client, cq):
 
     group_id = await ensure_group(sid, lang, season, quality)
 
-    # 1) Start session msg in upload channel
-    start_msg = await client.send_message(
-        UPLOAD_CHANNEL,
-        f"📦 **UPLOAD SESSION STARTED**\n\n"
-        f"Language: `{lang}`\nSeason: `{season}`\nQuality: `{quality}`\n\n"
-        f"✅ Files anuppunga.\n"
-        f"✅ **Last file message-ku reply panni** `/done` send pannunga."
-    )
-
     await cq.message.reply_text(
-        f"✅ Upload Channel ready.\n\n"
-        f"Channel-la files anuppunga.\n"
-        f"Last file msg-ku reply panni `/done` anuppunga.\n\n"
-        f"Start Msg ID: `{start_msg.id}`"
+        f"📥 **{quality} Upload**\n\n"
+        f"✅ Ippo files-a bot PM-ku forward pannunga.\n"
+        f"✅ Appuram bot ask pannum: **first link** and **last link**.\n\n"
+        f"Link example:\n"
+        f"`https://t.me/c/xxxx/55`"
     )
 
-    # 2) Wait for /done in channel (must be reply to last file)
-    done_msg = None
-    while True:
-        m = await client.listen(UPLOAD_CHANNEL)
-        if (m.text or "").strip().lower() == "/done" and m.reply_to_message:
-            done_msg = m
-            break
+    a1 = await client.ask(cq.message.chat.id, f"🔗 {quality} **first file message link** paste pannunga:", timeout=300)
+    first_id = extract_msg_id(a1.text)
+    if not first_id:
+        return await cq.message.reply_text("❌ First link wrong. Retry pannunga.")
 
-    last_file_msg_id = done_msg.reply_to_message.id
-    start_id = start_msg.id
+    a2 = await client.ask(cq.message.chat.id, f"🔗 {quality} **last file message link** paste pannunga:", timeout=300)
+    last_id = extract_msg_id(a2.text)
+    if not last_id or last_id < first_id:
+        return await cq.message.reply_text("❌ Last link wrong / smaller than first. Retry pannunga.")
 
-    progress = await client.send_message(
-        UPLOAD_CHANNEL,
-        f"⏳ Collecting files from `{start_id + 1}` to `{last_file_msg_id}`…"
-    )
+    buf = CAPTURE.get(uid, [])
+    if not buf:
+        return await cq.message.reply_text("❌ No files captured yet. Forward files first, then try again.")
 
-    # 3) Collect files from history range
-    file_rows = []
-    async for msg in client.get_chat_history(UPLOAD_CHANNEL, offset_id=last_file_msg_id + 1):
-        if msg.id <= start_id:
-            break
-        if not msg.media:
-            continue
-        media = get_file_id(msg)
-        if not media:
-            continue
-        file_rows.append((media.file_id, msg.caption or "", getattr(media, "message_type", "")))
+    items = [x for x in buf if first_id <= x[0] <= last_id]
+    if not items:
+        return await cq.message.reply_text("❌ That range-la files capture aagala. Bot online irundha forward pannunga.")
 
-    file_rows.reverse()
+    items.sort(key=lambda x: x[0])
 
-    if not file_rows:
-        try:
-            await progress.edit_text("❌ No media found in that range.")
-        except Exception:
-            pass
-        return
-
-    # 4) Save with delay + progress
-    total = len(file_rows)
+    progress = await cq.message.reply_text(f"⏳ Saving `{len(items)}` files… (delay {SAVE_DELAY}s)")
     saved = 0
+    total = len(items)
 
-    for file_id, caption, msg_type in file_rows:
+    for _, file_id, caption, msg_type in items:
         await add_file(group_id, file_id, caption, msg_type)
         saved += 1
         try:
-            await progress.edit_text(
-                f"💾 Saving... `{saved}/{total}`\n"
-                f"⏳ Delay: `{SAVE_DELAY}s` each"
-            )
+            await progress.edit_text(f"💾 Saving... `{saved}/{total}` (delay {SAVE_DELAY}s)")
         except Exception:
             pass
-
         await asyncio.sleep(SAVE_DELAY)
 
-    try:
-        await progress.edit_text(
-            f"✅ **{quality} files added:** `{saved}`\n"
-            f"`{lang}` / `{season}`"
-        )
-    except Exception:
-        pass
+    await progress.edit_text(f"✅ **{quality} files added:** `{saved}`\n`{lang}` / `{season}`")
 
-    # refresh quality buttons with updated counts (admin panel)
+    # refresh quality buttons with updated counts
     qualities = await list_qualities(sid, lang, season)
     markup = await kb_qualities(sid, lang, season, qualities)
+
     text = f"Language: `{lang}`\nSeason: `{season}`\nSelect any Quality to upload."
-    await safe_set_panel(cq, text, markup)
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(text, reply_markup=markup)
+        else:
+            await cq.message.edit_text(text, reply_markup=markup)
+    except Exception:
+        await cq.message.reply_text(text, reply_markup=markup)
 
 
 # =======================
@@ -438,19 +484,26 @@ async def adm_upload(client, cq):
 # =======================
 @Client.on_callback_query(filters.regex(r"^adm:dellang:(\d+):(.+)$"))
 async def adm_dellang_confirm(_, cq):
-    await cq.answer()
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
 
     text = f"⚠️ Delete Language Group?\n\nLanguage: `{lang}`\n\nThis deletes ALL inside."
     back = f"adm:lang:{sid}:{q(lang)}"
     yes = f"adm:yes_dellang:{sid}:{q(lang)}"
-    await safe_set_panel(cq, text, kb_confirm(back, yes))
+
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(text, reply_markup=kb_confirm(back, yes))
+        else:
+            await cq.message.edit_text(text, reply_markup=kb_confirm(back, yes))
+    except Exception:
+        await cq.message.reply_text(text, reply_markup=kb_confirm(back, yes))
+
+    await cq.answer()
 
 
 @Client.on_callback_query(filters.regex(r"^adm:yes_dellang:(\d+):(.+)$"))
 async def adm_dellang_yes(_, cq):
-    await cq.answer()
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
 
@@ -458,13 +511,19 @@ async def adm_dellang_yes(_, cq):
 
     langs = await list_languages(sid)
     text = f"🗑 Deleted Language `{lang}` ✅\n\nSelect any Language:"
-    await safe_set_panel(cq, text, kb_langs(sid, langs))
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(text, reply_markup=kb_langs(sid, langs))
+        else:
+            await cq.message.edit_text(text, reply_markup=kb_langs(sid, langs))
+    except Exception:
+        await cq.message.reply_text(text, reply_markup=kb_langs(sid, langs))
+
     await cq.answer("Deleted")
 
 
 @Client.on_callback_query(filters.regex(r"^adm:delseason:(\d+):(.+):(.+)$"))
 async def adm_delseason_confirm(_, cq):
-    await cq.answer()
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
@@ -472,12 +531,20 @@ async def adm_delseason_confirm(_, cq):
     text = f"⚠️ Delete Season Group?\n\n`{lang}` / `{season}`\n\nThis deletes ALL inside."
     back = f"adm:season:{sid}:{q(lang)}:{q(season)}"
     yes = f"adm:yes_delseason:{sid}:{q(lang)}:{q(season)}"
-    await safe_set_panel(cq, text, kb_confirm(back, yes))
+
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(text, reply_markup=kb_confirm(back, yes))
+        else:
+            await cq.message.edit_text(text, reply_markup=kb_confirm(back, yes))
+    except Exception:
+        await cq.message.reply_text(text, reply_markup=kb_confirm(back, yes))
+
+    await cq.answer()
 
 
 @Client.on_callback_query(filters.regex(r"^adm:yes_delseason:(\d+):(.+):(.+)$"))
 async def adm_delseason_yes(_, cq):
-    await cq.answer()
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
@@ -486,13 +553,19 @@ async def adm_delseason_yes(_, cq):
 
     seasons = await list_seasons(sid, lang)
     text = f"🗑 Deleted Season `{season}` ✅\n\nLanguage: `{lang}`"
-    await safe_set_panel(cq, text, kb_seasons(sid, lang, seasons))
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(text, reply_markup=kb_seasons(sid, lang, seasons))
+        else:
+            await cq.message.edit_text(text, reply_markup=kb_seasons(sid, lang, seasons))
+    except Exception:
+        await cq.message.reply_text(text, reply_markup=kb_seasons(sid, lang, seasons))
+
     await cq.answer("Deleted")
 
 
 @Client.on_callback_query(filters.regex(r"^adm:delquality:(\d+):(.+):(.+):(.+)$"))
 async def adm_delquality_confirm(_, cq):
-    await cq.answer()
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
@@ -501,12 +574,20 @@ async def adm_delquality_confirm(_, cq):
     text = f"⚠️ Delete Quality?\n\n`{lang}` / `{season}` / `{quality}`\n\nAll files inside will be deleted."
     back = f"adm:season:{sid}:{q(lang)}:{q(season)}"
     yes = f"adm:yes_delquality:{sid}:{q(lang)}:{q(season)}:{q(quality)}"
-    await safe_set_panel(cq, text, kb_confirm(back, yes))
+
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(text, reply_markup=kb_confirm(back, yes))
+        else:
+            await cq.message.edit_text(text, reply_markup=kb_confirm(back, yes))
+    except Exception:
+        await cq.message.reply_text(text, reply_markup=kb_confirm(back, yes))
+
+    await cq.answer()
 
 
 @Client.on_callback_query(filters.regex(r"^adm:yes_delquality:(\d+):(.+):(.+):(.+)$"))
 async def adm_delquality_yes(_, cq):
-    await cq.answer()
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
@@ -516,6 +597,14 @@ async def adm_delquality_yes(_, cq):
 
     qualities = await list_qualities(sid, lang, season)
     markup = await kb_qualities(sid, lang, season, qualities)
+
     text = f"🗑 Deleted Quality `{quality}` ✅\n\n`{lang}` / `{season}`"
-    await safe_set_panel(cq, text, markup)
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(text, reply_markup=markup)
+        else:
+            await cq.message.edit_text(text, reply_markup=markup)
+    except Exception:
+        await cq.message.reply_text(text, reply_markup=markup)
+
     await cq.answer("Deleted")
