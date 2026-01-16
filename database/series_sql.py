@@ -2,9 +2,14 @@ import aiosqlite
 
 DB_PATH = "database/series.db"
 
+
+# ================== INIT / MIGRATION ==================
+
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA journal_mode=WAL;")
+
+        # ---- series table ----
         await db.execute("""
         CREATE TABLE IF NOT EXISTS series(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -13,6 +18,8 @@ async def init_db():
             poster_file_id TEXT
         );
         """)
+
+        # ---- groups table (language / season / quality) ----
         await db.execute("""
         CREATE TABLE IF NOT EXISTS groups(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -20,10 +27,13 @@ async def init_db():
             language TEXT NOT NULL,
             season TEXT NOT NULL,
             quality TEXT NOT NULL,
+            poster_file_id TEXT,
             UNIQUE(series_id, language, season, quality),
             FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE
         );
         """)
+
+        # ---- files table ----
         await db.execute("""
         CREATE TABLE IF NOT EXISTS files(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,58 +44,108 @@ async def init_db():
             FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE
         );
         """)
+
+        # ---- indexes (speed) ----
         await db.execute("CREATE INDEX IF NOT EXISTS idx_series_title_lc ON series(title_lc);")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_groups_series ON groups(series_id);")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_groups_lang_season ON groups(series_id, language, season);")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_files_group ON files(group_id);")
+
+        # ---- migration: add poster_file_id to old DB safely ----
+        try:
+            await db.execute("ALTER TABLE groups ADD COLUMN poster_file_id TEXT;")
+        except Exception:
+            pass
+
         await db.commit()
 
-# ---------- series ----------
+
+# ================== SERIES ==================
+
 async def upsert_series(title: str) -> int:
     title = title.strip()
-    title_lc = title.lower().strip()
+    title_lc = title.lower()
+
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT OR IGNORE INTO series(title, title_lc) VALUES (?,?)",
             (title, title_lc)
         )
         await db.commit()
-        cur = await db.execute("SELECT id FROM series WHERE title_lc=?", (title_lc,))
+
+        cur = await db.execute(
+            "SELECT id FROM series WHERE title_lc=?",
+            (title_lc,)
+        )
         row = await cur.fetchone()
         return row[0]
+
 
 async def find_series(query: str):
     q = query.lower().strip()
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT id, title, poster_file_id FROM series WHERE title_lc=?", (q,))
+        cur = await db.execute(
+            "SELECT id, title, poster_file_id FROM series WHERE title_lc=?",
+            (q,)
+        )
         return await cur.fetchone()
 
-async def set_series_poster(series_id: int, poster_file_id: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE series SET poster_file_id=? WHERE id=?", (poster_file_id, series_id))
-        await db.commit()
 
 async def get_series_by_id(series_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT id, title, poster_file_id FROM series WHERE id=?", (series_id,))
+        cur = await db.execute(
+            "SELECT id, title, poster_file_id FROM series WHERE id=?",
+            (series_id,)
+        )
         return await cur.fetchone()
 
-# ---------- groups ----------
+
+async def set_series_poster(series_id: int, poster_file_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE series SET poster_file_id=? WHERE id=?",
+            (poster_file_id, series_id)
+        )
+        await db.commit()
+
+
+# ================== GROUPS (LANG / SEASON / QUALITY) ==================
+
 async def ensure_group(series_id: int, language: str, season: str, quality: str) -> int:
     language = language.strip()
     season = season.strip()
     quality = quality.strip()
+
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT OR IGNORE INTO groups(series_id,language,season,quality) VALUES (?,?,?,?)",
+            """
+            INSERT OR IGNORE INTO groups
+            (series_id, language, season, quality)
+            VALUES (?,?,?,?)
+            """,
             (series_id, language, season, quality)
         )
         await db.commit()
+
         cur = await db.execute(
-            "SELECT id FROM groups WHERE series_id=? AND language=? AND season=? AND quality=?",
+            """
+            SELECT id FROM groups
+            WHERE series_id=? AND language=? AND season=? AND quality=?
+            """,
             (series_id, language, season, quality)
         )
         row = await cur.fetchone()
         return row[0]
+
+
+async def set_group_poster(group_id: int, poster_file_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE groups SET poster_file_id=? WHERE id=?",
+            (poster_file_id, group_id)
+        )
+        await db.commit()
+
 
 async def list_languages(series_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -95,43 +155,69 @@ async def list_languages(series_id: int):
         )
         return [r[0] for r in await cur.fetchall()]
 
+
 async def list_seasons(series_id: int, language: str):
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            "SELECT DISTINCT season FROM groups WHERE series_id=? AND language=? ORDER BY season",
+            """
+            SELECT DISTINCT season FROM groups
+            WHERE series_id=? AND language=?
+            ORDER BY season
+            """,
             (series_id, language)
         )
         return [r[0] for r in await cur.fetchall()]
 
+
 async def list_qualities(series_id: int, language: str, season: str):
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            "SELECT DISTINCT quality FROM groups WHERE series_id=? AND language=? AND season=? ORDER BY quality",
+            """
+            SELECT DISTINCT quality FROM groups
+            WHERE series_id=? AND language=? AND season=?
+            ORDER BY quality
+            """,
             (series_id, language, season)
         )
         return [r[0] for r in await cur.fetchall()]
 
+
 async def get_group_id(series_id: int, language: str, season: str, quality: str):
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            "SELECT id FROM groups WHERE series_id=? AND language=? AND season=? AND quality=?",
+            """
+            SELECT id FROM groups
+            WHERE series_id=? AND language=? AND season=? AND quality=?
+            """,
             (series_id, language, season, quality)
         )
         return await cur.fetchone()
 
-# ---------- files ----------
+
+# ================== FILES ==================
+
 async def add_file(group_id: int, file_id: str, caption: str, message_type: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO files(group_id,file_id,caption,message_type) VALUES (?,?,?,?)",
+            """
+            INSERT INTO files
+            (group_id, file_id, caption, message_type)
+            VALUES (?,?,?,?)
+            """,
             (group_id, file_id, caption or "", message_type or "")
         )
         await db.commit()
 
+
 async def get_files(group_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            "SELECT file_id, caption, message_type FROM files WHERE group_id=? ORDER BY id ASC",
+            """
+            SELECT file_id, caption, message_type
+            FROM files
+            WHERE group_id=?
+            ORDER BY id ASC
+            """,
             (group_id,)
         )
         return await cur.fetchall()
