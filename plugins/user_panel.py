@@ -9,7 +9,7 @@ from database.series_sql import (
     list_languages,
     list_seasons,
     list_qualities,
-    get_group_id,
+    get_group_id_value,
     get_files,
 )
 
