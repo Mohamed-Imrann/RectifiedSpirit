@@ -135,28 +135,31 @@ async def newseries_panel(client, message):
 # HOME (Back fix)
 # =======================
 @Client.on_callback_query(filters.regex(r"^adm:home:(\d+)$"))
-async def adm_home(_, cq):
+async def adm_home(client, cq):
     sid = int(cq.matches[0].group(1))
-    row = await get_series_by_id(sid)
 
+    row = await get_series_by_id(sid)
     if not row:
-        # fallback
-        langs = await list_languages(sid)
-        text = "Select any Language group to add seasons. Or click + to add new."
-        if cq.message.photo:
-            await cq.message.edit_caption(text, reply_markup=kb_langs(sid, langs))
-        else:
-            await cq.message.edit_text(text, reply_markup=kb_langs(sid, langs))
-        return await cq.answer()
+        await cq.answer("Not found", show_alert=True)
+        return
 
     _, title, _poster, published = row
-    caption = f"✅ **Series:** `{title}`\n\nSelect option:"
-    if cq.message.photo:
-        await cq.message.edit_caption(caption, reply_markup=kb_series_home(sid, published))
-    else:
-        await cq.message.edit_text(caption, reply_markup=kb_series_home(sid, published))
+
+    # ✅ Always respond fast (avoid endless loading)
     await cq.answer()
 
+    # ✅ Send NEW message instead of edit (no crash)
+    caption = f"✅ **Series:** `{title}`\n\nSelect option:"
+    await cq.message.reply_text(
+        caption,
+        reply_markup=kb_series_home(sid, published)
+    )
+
+    # Optional: delete old panel message
+    try:
+        await cq.message.delete()
+    except Exception:
+        pass
 
 # =======================
 # PUBLISH TOGGLE
