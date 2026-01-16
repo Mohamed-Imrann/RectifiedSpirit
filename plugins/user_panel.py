@@ -1,3 +1,4 @@
+# plugins/user_panel.py
 from urllib.parse import quote, unquote
 
 from pyrogram import Client, filters
@@ -13,8 +14,6 @@ from database.series_sql import (
     get_files,
 )
 
-# -------- helpers --------
-
 def q(s: str) -> str:
     return quote(s, safe="")
 
@@ -26,18 +25,16 @@ def home_kb(series_id: int):
         [InlineKeyboardButton("🌐 Languages", callback_data=f"usr:langs:{series_id}")]
     ])
 
-
-# -------- USER SEARCH --------
-# NOTE: ignore admin commands too
+# -------- USER SEARCH (only published) --------
 @Client.on_message(filters.text & filters.incoming & ~filters.command(["newseries", "newseriesui"]))
 async def user_search(client: Client, message):
     query = (message.text or "").strip()
     if not query:
         return
 
-    row = await find_series(query)
+    row = await find_series(query, published_only=True)
     if not row:
-        return  # silent if not found
+        return  # silent if not found / not published
 
     series_id, title, poster = row
     text = f"🎬 **{title}**\n\nSelect option:"
@@ -54,23 +51,18 @@ async def user_search(client: Client, message):
             reply_markup=home_kb(series_id)
         )
 
-
 # -------- LANGUAGES --------
-
 @Client.on_callback_query(filters.regex(r"^usr:langs:(\d+)$"))
 async def usr_langs(_, cq):
     sid = int(cq.matches[0].group(1))
     langs = await list_languages(sid)
-
     if not langs:
         return await cq.answer("No languages", show_alert=True)
 
     rows = [[InlineKeyboardButton(l, callback_data=f"usr:lang:{sid}:{q(l)}")] for l in langs]
     rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"usr:home:{sid}")])
-
     await cq.message.edit_reply_markup(InlineKeyboardMarkup(rows))
     await cq.answer()
-
 
 @Client.on_callback_query(filters.regex(r"^usr:home:(\d+)$"))
 async def usr_home(_, cq):
@@ -79,20 +71,15 @@ async def usr_home(_, cq):
     if not row:
         return await cq.answer("Not found", show_alert=True)
 
-    _, title, poster = row
+    _, title, poster, _published = row
     text = f"🎬 **{title}**\n\nSelect option:"
-    if poster and cq.message.photo:
-        await cq.message.edit_caption(text, reply_markup=home_kb(sid))
-    elif cq.message.photo:
-        # message is photo but no poster now
+    if poster:
         await cq.message.edit_caption(text, reply_markup=home_kb(sid))
     else:
         await cq.message.edit_text(text, reply_markup=home_kb(sid))
     await cq.answer()
 
-
 # -------- SEASONS --------
-
 @Client.on_callback_query(filters.regex(r"^usr:lang:(\d+):(.+)$"))
 async def usr_seasons(_, cq):
     sid = int(cq.matches[0].group(1))
@@ -107,13 +94,10 @@ async def usr_seasons(_, cq):
         for s in seasons
     ]
     rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"usr:langs:{sid}")])
-
     await cq.message.edit_reply_markup(InlineKeyboardMarkup(rows))
     await cq.answer()
 
-
-# -------- QUALITIES --------
-
+# -------- QUALITIES (no counts for user) --------
 @Client.on_callback_query(filters.regex(r"^usr:season:(\d+):(.+):(.+)$"))
 async def usr_qualities(_, cq):
     sid = int(cq.matches[0].group(1))
@@ -129,13 +113,10 @@ async def usr_qualities(_, cq):
         for qu in qualities
     ]
     rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"usr:lang:{sid}:{q(lang)}")])
-
     await cq.message.edit_reply_markup(InlineKeyboardMarkup(rows))
     await cq.answer()
 
-
 # -------- SEND FILES --------
-
 @Client.on_callback_query(filters.regex(r"^usr:send:(\d+):(.+):(.+):(.+)$"))
 async def usr_send(client: Client, cq):
     sid = int(cq.matches[0].group(1))
@@ -151,10 +132,6 @@ async def usr_send(client: Client, cq):
     if not files:
         return await cq.answer("No files", show_alert=True)
 
-    await cq.answer("Sending files…")
-
+    await cq.answer("Sending…")
     for file_id, caption, _ in files:
-        await cq.message.reply_cached_media(
-            file_id,
-            caption=caption or ""
-        )
+        await cq.message.reply_cached_media(file_id, caption=caption or "")
