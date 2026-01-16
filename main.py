@@ -1,27 +1,48 @@
-# main.py
-from pyrogram import Client
-from info import API_ID, API_HASH, BOT_TOKEN, USER_SESSION
+import asyncio
+import logging
 
-bot = Client(
-    "bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    plugins={"root": "plugins"}
-)
+from pyrogram import Client, idle
+from pyromod import listen
 
-user = Client(
-    "user",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    session_string=USER_SESSION,
-)
+from info import API_ID, API_HASH, BOT_TOKEN
+from database.series_sql import init_db
+
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("pyrogram").setLevel(logging.ERROR)
+
 
 async def main():
-    await user.start()          # 🔥 USER FIRST
-    bot.user_client = user      # 🔥 ATTACH USER TO BOT
+    await init_db()
+
+    # BOT
+    bot = Client(
+        "bot",
+        api_id=API_ID,
+        api_hash=API_HASH,
+        bot_token=BOT_TOKEN,
+        plugins={"root": "plugins"},
+    )
+
+    # USER (session file based)
+    user = Client(
+        "user",
+        api_id=API_ID,
+        api_hash=API_HASH,
+    )
+
+    await user.start()          # ✅ no error now
+    bot.user_client = user     # 🔥 attach user to bot
     await bot.start()
+
+    me = await bot.get_me()
+    logging.info(f"✅ Bot started @{me.username}")
+    logging.info("✅ User session loaded from user.session")
+
     await idle()
 
+    await bot.stop()
+    await user.stop()
+
+
 if __name__ == "__main__":
-    bot.run(main())
+    asyncio.run(main())
