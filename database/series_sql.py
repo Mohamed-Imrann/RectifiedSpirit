@@ -93,13 +93,14 @@ async def ensure_group(series_id: int, language: str, season: str, quality: str)
         return int(row[0])
 
 
-async def get_group_id(series_id: int, language: str, season: str, quality: str):
+async def get_group_id_value(series_id: int, language: str, season: str, quality: str):
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             "SELECT id FROM groups WHERE series_id=? AND language=? AND season=? AND quality=?",
             (series_id, language, season, quality)
         )
-        return await cur.fetchone()
+        row = await cur.fetchone()
+        return int(row[0]) if row else None
 
 
 async def list_languages(series_id: int) -> list[str]:
@@ -150,6 +151,13 @@ async def get_files(group_id: int):
             (group_id,)
         )
         return await cur.fetchall()
+
+
+async def count_files_in_group(group_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT COUNT(*) FROM files WHERE group_id=?", (group_id,))
+        row = await cur.fetchone()
+        return int(row[0] or 0)
 
 
 # ================== DELETE (GROUP LEVEL) ==================
