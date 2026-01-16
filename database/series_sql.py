@@ -6,6 +6,12 @@ from typing import List, Optional, Tuple
 DB_PATH = os.getenv("DB_PATH", "series.db")
 
 
+async def _column_exists(db: aiosqlite.Connection, table: str, col: str) -> bool:
+    cur = await db.execute(f"PRAGMA table_info({table})")
+    rows = await cur.fetchall()
+    return any(r[1] == col for r in rows)
+
+
 # ----------------- DB INIT -----------------
 
 async def init_db():
@@ -19,6 +25,10 @@ async def init_db():
             poster TEXT
         );
         """)
+
+        # ✅ add published column if missing (migration)
+        if not await _column_exists(db, "series", "published"):
+            await db.execute("ALTER TABLE series ADD COLUMN published INTEGER NOT NULL DEFAULT 0;")
 
         await db.execute("""
         CREATE TABLE IF NOT EXISTS groups (
@@ -45,6 +55,7 @@ async def init_db():
 
         # Speed indexes
         await db.execute("CREATE INDEX IF NOT EXISTS idx_series_title ON series(title);")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_series_pub ON series(published);")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_groups_sid_lang ON groups(series_id, language);")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_groups_sid_lang_season ON groups(series_id, language, season);")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_files_group ON files(group_id);")
@@ -71,7 +82,7 @@ async def upsert_series(title: str) -> int:
             return int(row[0])
 
         cur = await db.execute(
-            "INSERT INTO series (title) VALUES (?)",
+            "INSERT INTO series (title, published) VALUES (?, 0)",
             (title,)
         )
         await db.commit()
@@ -88,25 +99,48 @@ async def set_series_poster(series_id: int, poster_file_id: str):
         await db.commit()
 
 
-async def get_series_by_id(series_id: int) -> Optional[Tuple[int, str, Optional[str]]]:
+async def get_series_by_id(series_id: int) -> Optional[Tuple[int, str, Optional[str], int]]:
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT id, title, poster FROM series WHERE id=?", (series_id,))
+        cur = await db.execute("SELECT id, title, poster, published FROM series WHERE id=?", (series_id,))
         row = await cur.fetchone()
-        return (int(row[0]), row[1], row[2]) if row else None
+        return (int(row[0]), row[1], row[2], int(row[3])) if row else None
 
 
-async def find_series(query: str) -> Optional[Tuple[int, str, Optional[str]]]:
+async def find_series(query: str, published_only: bool = True) -> Optional[Tuple[int, str, Optional[str]]]:
     q = (query or "").strip()
     if not q:
         return None
 
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT id, title, poster FROM series WHERE lower(title) LIKE lower(?) ORDER BY id DESC LIMIT 1",
-            (f"%{q}%",)
-        )
+        if published_only:
+            cur = await db.execute(
+                "SELECT id, title, poster FROM series "
+                "WHERE published=1 AND lower(title) LIKE lower(?) "
+                "ORDER BY id DESC LIMIT 1",
+                (f"%{q}%",)
+            )
+        else:
+            cur = await db.execute(
+                "SELECT id, title, poster FROM series "
+                "WHERE lower(title) LIKE lower(?) "
+                "ORDER BY id DESC LIMIT 1",
+                (f"%{q}%",)
+            )
         row = await cur.fetchone()
         return (int(row[0]), row[1], row[2]) if row else None
+
+
+async def toggle_publish(series_id: int) -> int:
+    """returns new published value (0/1)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT published FROM series WHERE id=?", (series_id,))
+        row = await cur.fetchone()
+        if not row:
+            return 0
+        new_val = 0 if int(row[0]) == 1 else 1
+        await db.execute("UPDATE series SET published=? WHERE id=?", (new_val, series_id))
+        await db.commit()
+        return new_val
 
 
 # ----------------- LISTING -----------------
