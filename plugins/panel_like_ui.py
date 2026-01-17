@@ -1,6 +1,8 @@
 import asyncio
 import re
 from urllib.parse import quote, unquote
+from info import IMGBB_API_KEY, TMDB_API_KEY
+from utils_poster import tmdb_get_poster, upload_imgbb
 
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
