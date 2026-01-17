@@ -15,7 +15,7 @@ ADMINS = [7144888498]
 PORT = 8080
 
 # Your upload/source channel (must be YOUR channel)
-SOURCE_CHANNEL_ID = -1002400599577
+SOURCE_CHANNEL_ID = -1003298700606
 
 # Save delay per file (seconds)
 SAVE_DELAY = 1.2
