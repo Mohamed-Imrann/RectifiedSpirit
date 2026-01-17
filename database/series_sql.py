@@ -263,3 +263,6 @@ async def count_files_in_group(group_id: int) -> int:
         )
         row = await cur.fetchone()
         return int(row[0] or 0)
+
+# backward compatibility fix
+get_group_id_value = get_group_id_value
