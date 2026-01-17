@@ -1,7 +1,7 @@
-# plugins/panel_like_ui.py
 import asyncio
 from urllib.parse import quote, unquote
 
+import aiosqlite
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -9,25 +9,22 @@ from info import ADMINS, SAVE_DELAY, IMGBB_API_KEY, TMDB_API_KEY
 from utils import get_file_id
 from utils_poster import tmdb_get_poster, upload_imgbb
 
+# ---- DB funcs (your current series_sql.py) ----
 from database.series_sql import (
+    DB_PATH,
     upsert_series,
     get_series_by_id,
+    set_series_poster,
+    ensure_group,
     list_languages,
     list_seasons,
     list_qualities,
-    ensure_group,
+    get_group_id,
     add_file,
-    delete_language,
-    delete_season,
-    delete_quality,
-    get_group_id_value,
-    count_files_in_group,
-    toggle_publish,
-    set_series_poster,
 )
 
 # =========================
-# 🔐 Ask lock (avoid loading loop)
+# 🔐 Ask Lock (prevents infinite loading)
 # =========================
 ACTIVE_ASK = set()
 
@@ -39,7 +36,7 @@ def uq(s: str) -> str:
 
 async def safe_edit(cq, text: str, kb=None):
     """
-    Avoid 'loading forever' by always answering and handling caption/text safely.
+    Edits caption/text safely; fallback to new message if edit fails.
     """
     try:
         if cq.message.photo:
@@ -47,35 +44,53 @@ async def safe_edit(cq, text: str, kb=None):
         else:
             await cq.message.edit_text(text, reply_markup=kb)
     except Exception:
-        # fallback: send new msg
         try:
             await cq.message.reply_text(text, reply_markup=kb)
         except Exception:
             pass
 
-def _row_unpack_series(row):
-    """
-    get_series_by_id can return 3 or 4+ cols depending on your DB.
-    Expected: (id, title, poster, published)
-    We'll be defensive.
-    """
-    if not row:
-        return None, None, None, 0
-    sid = row[0]
-    title = row[1] if len(row) > 1 else ""
-    poster = row[2] if len(row) > 2 else None
-    published = row[3] if len(row) > 3 else 0
-    return sid, title, poster, published
+async def count_files(group_id: int) -> int:
+    if not group_id:
+        return 0
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT COUNT(1) FROM files WHERE group_id=?", (group_id,))
+        row = await cur.fetchone()
+        return int(row[0] or 0)
+
+# =========================
+# DELETE FALLBACKS (since your series_sql.py doesn't have these)
+# =========================
+async def delete_language(series_id: int, language: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        # delete all groups under language -> cascades files
+        await db.execute(
+            "DELETE FROM groups WHERE series_id=? AND language=?",
+            (series_id, language)
+        )
+        await db.commit()
+
+async def delete_season(series_id: int, language: str, season: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM groups WHERE series_id=? AND language=? AND season=?",
+            (series_id, language, season)
+        )
+        await db.commit()
+
+async def delete_quality(series_id: int, language: str, season: str, quality: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM groups WHERE series_id=? AND language=? AND season=? AND quality=?",
+            (series_id, language, season, quality)
+        )
+        await db.commit()
 
 # =========================
 # Keyboards
 # =========================
-def kb_series_home(series_id: int, published: int):
-    status = "✅ Published" if published == 1 else "❌ Unpublished"
-    icon = "📦" if published == 1 else "📤"
+def kb_series_home(series_id: int):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🌐 Languages", callback_data=f"adm:langs:{series_id}")],
-        [InlineKeyboardButton(f"{icon} {status}", callback_data=f"adm:publish:{series_id}")],
         [InlineKeyboardButton("🖼 Poster", callback_data=f"adm:poster:{series_id}")],
     ])
 
@@ -88,43 +103,36 @@ def kb_poster_menu(series_id: int):
 
 def kb_langs(series_id: int, langs: list[str]):
     rows = []
-    if langs:
-        for name in langs:
-            rows.append([InlineKeyboardButton(name, callback_data=f"adm:lang:{series_id}:{q(name)}")])
+    for lang in langs:
+        rows.append([InlineKeyboardButton(lang, callback_data=f"adm:lang:{series_id}:{q(lang)}")])
+
     rows.append([InlineKeyboardButton("➕ Add Language", callback_data=f"adm:addlang:{series_id}")])
     rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"adm:home:{series_id}")])
     return InlineKeyboardMarkup(rows)
 
 def kb_seasons(series_id: int, lang: str, seasons: list[str]):
     rows = []
-    if seasons:
-        for s in seasons:
-            rows.append([InlineKeyboardButton(s, callback_data=f"adm:season:{series_id}:{q(lang)}:{q(s)}")])
+    for s in seasons:
+        rows.append([InlineKeyboardButton(s, callback_data=f"adm:season:{series_id}:{q(lang)}:{q(s)}")])
+
     rows.append([InlineKeyboardButton("➕ Add Season", callback_data=f"adm:addseason:{series_id}:{q(lang)}")])
-    rows.append([InlineKeyboardButton("🗑 Delete Language Group", callback_data=f"adm:dellang:{series_id}:{q(lang)}")])
+    rows.append([InlineKeyboardButton("🗑 Delete Language", callback_data=f"adm:dellang:{series_id}:{q(lang)}")])
     rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"adm:langs:{series_id}")])
     return InlineKeyboardMarkup(rows)
 
 async def kb_qualities(series_id: int, lang: str, season: str, qualities: list[str]):
     rows = []
-    if qualities:
-        for qu in qualities:
-            gid_row = await get_group_id_value(series_id, lang, season, qu)
-            gid = gid_row[0] if gid_row else None
-            cnt = await count_files_in_group(gid) if gid else 0
+    for qu in qualities:
+        gid_row = await get_group_id(series_id, lang, season, qu)
+        gid = gid_row[0] if gid_row else None
+        cnt = await count_files(gid) if gid else 0
+        rows.append([
+            InlineKeyboardButton(f"{qu} ({cnt})", callback_data=f"adm:upload:{series_id}:{q(lang)}:{q(season)}:{q(qu)}"),
+            InlineKeyboardButton("🗑", callback_data=f"adm:delquality:{series_id}:{q(lang)}:{q(season)}:{q(qu)}"),
+        ])
 
-            rows.append([
-                InlineKeyboardButton(
-                    f"{qu} ({cnt})",  # ✅ counts shown (admin only)
-                    callback_data=f"adm:upload:{series_id}:{q(lang)}:{q(season)}:{q(qu)}"
-                ),
-                InlineKeyboardButton(
-                    "🗑",
-                    callback_data=f"adm:delquality:{series_id}:{q(lang)}:{q(season)}:{q(qu)}"
-                )
-            ])
     rows.append([InlineKeyboardButton("➕ Add Quality", callback_data=f"adm:addquality:{series_id}:{q(lang)}:{q(season)}")])
-    rows.append([InlineKeyboardButton("🗑 Delete Season Group", callback_data=f"adm:delseason:{series_id}:{q(lang)}:{q(season)}")])
+    rows.append([InlineKeyboardButton("🗑 Delete Season", callback_data=f"adm:delseason:{series_id}:{q(lang)}:{q(season)}")])
     rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"adm:lang:{series_id}:{q(lang)}")])
     return InlineKeyboardMarkup(rows)
 
@@ -153,12 +161,17 @@ async def newseries_panel(client, message):
 
         sid = await upsert_series(title)
         row = await get_series_by_id(sid)
-        sid, title, _poster, published = _row_unpack_series(row)
+        if not row:
+            return await message.reply_text("❌ DB error")
 
-        await message.reply_text(
-            f"✅ **Series:** `{title}`\n\nSelect option:",
-            reply_markup=kb_series_home(sid, published)
-        )
+        _, title, poster = row
+        text = f"✅ **Series:** `{title}`\n\nSelect option:"
+
+        if poster:
+            await message.reply_photo(poster, caption=text, reply_markup=kb_series_home(sid))
+        else:
+            await message.reply_text(text, reply_markup=kb_series_home(sid))
+
     except asyncio.TimeoutError:
         await message.reply_text("⌛ Timeout. /newseries again")
     finally:
@@ -173,27 +186,19 @@ async def adm_home(_, cq):
     sid = int(cq.matches[0].group(1))
     row = await get_series_by_id(sid)
     if not row:
-        return await cq.message.reply_text("❌ Not found")
+        return await cq.answer("Not found", show_alert=True)
 
-    sid, title, _poster, published = _row_unpack_series(row)
-    await safe_edit(cq, f"✅ **Series:** `{title}`\n\nSelect option:", kb_series_home(sid, published))
+    _, title, poster = row
+    text = f"✅ **Series:** `{title}`\n\nSelect option:"
 
-# =========================
-# PUBLISH TOGGLE
-# =========================
-@Client.on_callback_query(filters.regex(r"^adm:publish:(\d+)$"))
-async def adm_publish(_, cq):
-    await cq.answer()
-    sid = int(cq.matches[0].group(1))
-    new_val = await toggle_publish(sid)
-
-    row = await get_series_by_id(sid)
-    if not row:
-        return await cq.message.reply_text("❌ Not found")
-
-    sid, title, _poster, published = _row_unpack_series(row)
-    status = "✅ Published" if new_val == 1 else "❌ Unpublished"
-    await safe_edit(cq, f"✅ **Series:** `{title}`\n\nStatus: **{status}**\n\nSelect option:", kb_series_home(sid, published))
+    # Important: switch between caption/text safely
+    if cq.message.photo:
+        try:
+            await cq.message.edit_caption(text, reply_markup=kb_series_home(sid))
+        except Exception:
+            await cq.message.reply_text(text, reply_markup=kb_series_home(sid))
+    else:
+        await safe_edit(cq, text, kb_series_home(sid))
 
 # =========================
 # POSTER MENU OPEN
@@ -208,71 +213,78 @@ async def adm_poster_menu(_, cq):
 # POSTER AUTO (TMDB)
 # =========================
 @Client.on_callback_query(filters.regex(r"^adm:poster_auto:(\d+)$"))
-async def adm_poster_auto(_, cq):
-    await cq.answer("Fetching…")
+async def adm_poster_auto(client, cq):
     sid = int(cq.matches[0].group(1))
+    await cq.answer("Fetching…")
 
     row = await get_series_by_id(sid)
     if not row:
         return await cq.answer("Not found", show_alert=True)
 
-    sid, title, _poster, published = _row_unpack_series(row)
+    _, title, _poster = row
 
     poster_url = await tmdb_get_poster(title, TMDB_API_KEY)
     if not poster_url:
         return await cq.answer("TMDB poster not found", show_alert=True)
 
+    # Save URL in DB (TEXT column supports url)
     await set_series_poster(sid, poster_url)
 
-    await safe_edit(
-        cq,
-        f"✅ **Series:** `{title}`\n\n🖼 Poster auto set ✅\n\nSelect option:",
-        kb_series_home(sid, published)
-    )
+    # show updated home
+    row2 = await get_series_by_id(sid)
+    _, title2, poster2 = row2
+    text = f"✅ **Series:** `{title2}`\n\n🖼 Poster auto set ✅\n\nSelect option:"
+
+    # if current msg is photo/caption msg, editing may fail -> safe_edit handles
+    if poster2:
+        # easiest: reply new with poster
+        await cq.message.reply_photo(poster2, caption=text, reply_markup=kb_series_home(sid))
+    else:
+        await safe_edit(cq, text, kb_series_home(sid))
 
 # =========================
-# POSTER MANUAL (Send photo -> IMGBB)
+# POSTER MANUAL (photo -> IMGBB url OR Telegram file_id fallback)
 # =========================
 @Client.on_callback_query(filters.regex(r"^adm:poster_manual:(\d+)$"))
 async def adm_poster_manual(client, cq):
-    await cq.answer("Send photo")
     sid = int(cq.matches[0].group(1))
-
-    row = await get_series_by_id(sid)
-    if not row:
-        return await cq.answer("Not found", show_alert=True)
-
-    sid, title, _poster, published = _row_unpack_series(row)
+    await cq.answer("Send photo")
 
     tip = await cq.message.reply_text("📸 Poster photo anuppu (send photo).")
-    try:
-        pm = await client.listen(cq.message.chat.id)
-    except Exception:
-        return await tip.edit_text("❌ Listen failed. Retry.")
+    pm = await client.listen(cq.message.chat.id)
 
     if not pm.photo:
         return await tip.edit_text("❌ Photo illa. Retry pannunga.")
 
-    # download -> bytes -> imgbb
-    path = await client.download_media(pm.photo)
-    try:
-        with open(path, "rb") as f:
-            photo_bytes = f.read()
-    except Exception:
-        return await tip.edit_text("❌ Download read failed.")
+    # If IMGBB key exists -> upload -> store URL (better)
+    # else store Telegram file_id directly
+    saved_value = None
 
-    imgbb_url = await upload_imgbb(photo_bytes, IMGBB_API_KEY)
-    if not imgbb_url:
-        return await tip.edit_text("❌ IMGBB upload failed.")
+    if IMGBB_API_KEY:
+        path = await client.download_media(pm.photo)
+        try:
+            with open(path, "rb") as f:
+                b = f.read()
+            url = await upload_imgbb(b, IMGBB_API_KEY)
+            if url:
+                saved_value = url
+        except Exception:
+            saved_value = None
 
-    await set_series_poster(sid, imgbb_url)
+    if not saved_value:
+        saved_value = pm.photo.file_id
+
+    await set_series_poster(sid, saved_value)
     await tip.edit_text("✅ Poster updated ✅")
 
-    await safe_edit(
-        cq,
-        f"✅ **Series:** `{title}`\n\n🖼 Poster manual set ✅\n\nSelect option:",
-        kb_series_home(sid, published)
-    )
+    row = await get_series_by_id(sid)
+    _, title, poster = row
+    text = f"✅ **Series:** `{title}`\n\nSelect option:"
+
+    if poster:
+        await cq.message.reply_photo(poster, caption=text, reply_markup=kb_series_home(sid))
+    else:
+        await safe_edit(cq, text, kb_series_home(sid))
 
 # =========================
 # LANGUAGES
@@ -300,7 +312,7 @@ async def adm_addlang(client, cq):
         if not lang:
             return await cq.message.reply_text("❌ Empty")
 
-        # seed entry
+        # Create language by seeding one group
         await ensure_group(sid, lang, "Season 1", "720p")
 
         langs = await list_languages(sid)
@@ -390,7 +402,7 @@ async def adm_addquality(client, cq):
         ACTIVE_ASK.discard(uid)
 
 # =========================
-# UPLOAD (quality click) - /done method with progress
+# UPLOAD (Quality click) - /done method + progress + delay
 # =========================
 @Client.on_callback_query(filters.regex(r"^adm:upload:(\d+):(.+):(.+):(.+)$"))
 async def adm_upload(client, cq):
@@ -455,7 +467,7 @@ async def adm_upload(client, cq):
         f"✅ **{quality} files added:** `{saved}`\n`{lang}` / `{season}`"
     )
 
-    # refresh quality buttons with updated counts
+    # refresh quality list with updated counts
     qualities = await list_qualities(sid, lang, season)
     markup = await kb_qualities(sid, lang, season, qualities)
     await safe_edit(cq, f"Language: `{lang}`\nSeason: `{season}`\nSelect Quality:", markup)
@@ -470,7 +482,7 @@ async def adm_upload(client, cq):
         pass
 
 # =========================
-# DELETE FLOWS
+# DELETE CONFIRMS
 # =========================
 @Client.on_callback_query(filters.regex(r"^adm:dellang:(\d+):(.+)$"))
 async def adm_dellang_confirm(_, cq):
@@ -478,7 +490,7 @@ async def adm_dellang_confirm(_, cq):
     sid = int(cq.matches[0].group(1))
     lang = uq(cq.matches[0].group(2))
 
-    text = f"⚠️ Delete Language Group?\n\nLanguage: `{lang}`\n\nThis deletes ALL inside."
+    text = f"⚠️ Delete Language?\n\nLanguage: `{lang}`\n\n(All seasons/qualities/files inside will be deleted)"
     back = f"adm:lang:{sid}:{q(lang)}"
     yes = f"adm:yes_dellang:{sid}:{q(lang)}"
     await safe_edit(cq, text, kb_confirm(back, yes))
@@ -490,7 +502,6 @@ async def adm_dellang_yes(_, cq):
     lang = uq(cq.matches[0].group(2))
 
     await delete_language(sid, lang)
-
     langs = await list_languages(sid)
     await safe_edit(cq, f"🗑 Deleted Language `{lang}` ✅", kb_langs(sid, langs))
 
@@ -501,7 +512,7 @@ async def adm_delseason_confirm(_, cq):
     lang = uq(cq.matches[0].group(2))
     season = uq(cq.matches[0].group(3))
 
-    text = f"⚠️ Delete Season Group?\n\n`{lang}` / `{season}`\n\nThis deletes ALL inside."
+    text = f"⚠️ Delete Season?\n\n`{lang}` / `{season}`\n\n(All qualities/files inside will be deleted)"
     back = f"adm:season:{sid}:{q(lang)}:{q(season)}"
     yes = f"adm:yes_delseason:{sid}:{q(lang)}:{q(season)}"
     await safe_edit(cq, text, kb_confirm(back, yes))
@@ -514,7 +525,6 @@ async def adm_delseason_yes(_, cq):
     season = uq(cq.matches[0].group(3))
 
     await delete_season(sid, lang, season)
-
     seasons = await list_seasons(sid, lang)
     await safe_edit(cq, f"🗑 Deleted Season `{season}` ✅", kb_seasons(sid, lang, seasons))
 
@@ -526,7 +536,7 @@ async def adm_delquality_confirm(_, cq):
     season = uq(cq.matches[0].group(3))
     quality = uq(cq.matches[0].group(4))
 
-    text = f"⚠️ Delete Quality?\n\n`{lang}` / `{season}` / `{quality}`\n\nAll files inside will be deleted."
+    text = f"⚠️ Delete Quality?\n\n`{lang}` / `{season}` / `{quality}`\n\n(All files inside will be deleted)"
     back = f"adm:season:{sid}:{q(lang)}:{q(season)}"
     yes = f"adm:yes_delquality:{sid}:{q(lang)}:{q(season)}:{q(quality)}"
     await safe_edit(cq, text, kb_confirm(back, yes))
