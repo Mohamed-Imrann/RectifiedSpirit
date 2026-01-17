@@ -182,3 +182,11 @@ async def count_files_in_group(group_id):
         )
         row = await cur.fetchone()
         return row[0]
+
+# =========================
+# BACKWARD COMPAT (OLD REPO FIX)
+# =========================
+
+# old code compatibility
+find_series_by_name = find_series
+get_group_id = get_group_id_value
