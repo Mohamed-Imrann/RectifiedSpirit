@@ -14,17 +14,10 @@ DEFAULT_AUTO_DELETE_SECONDS = int(os.getenv("AUTO_DELETE_SECONDS", "0"))
 # AUTO DELETE
 # =========================
 async def auto_delete(msg, sec: int | None = None):
-    """
-    Safe auto delete (no circular import).
-    If sec is None -> uses env AUTO_DELETE_SECONDS
-    If sec <= 0 -> does nothing
-    """
     if sec is None:
         sec = DEFAULT_AUTO_DELETE_SECONDS
-
     if not sec or sec <= 0:
         return
-
     await asyncio.sleep(sec)
     try:
         await msg.delete()
@@ -60,9 +53,6 @@ def get_file_id(msg: Message):
 # =========================
 # TMDB AUTO FETCH (Poster + Meta)
 # =========================
-# Requires:
-#  - info.py : TMDB_API_KEY = "<TMDB v4 Bearer Token>"
-#  - database/series_sql.py : set_series_poster(), (optional) set_series_meta()
 try:
     from info import TMDB_API_KEY
 except Exception:
@@ -73,7 +63,6 @@ TMDB_IMG = "https://image.tmdb.org/t/p/w500"
 
 
 def _tmdb_headers():
-    # TMDB v4 auth uses Bearer token
     return {
         "Authorization": f"Bearer {TMDB_API_KEY}",
         "accept": "application/json",
@@ -98,9 +87,6 @@ async def _download_bytes(url: str) -> bytes:
 
 
 async def tmdb_search_best(title: str) -> Optional[Tuple[str, dict]]:
-    """
-    Returns ("tv"/"movie", first_result_dict) or None
-    """
     q = (title or "").strip()
     if not q or not TMDB_API_KEY:
         return None
@@ -124,11 +110,7 @@ async def tmdb_details(kind: str, tmdb_id: int) -> dict:
 
 async def auto_fetch_and_set_poster_and_meta(client, series_id: int, title: str, chat_id: int) -> bool:
     """
-    1) Search TMDB by title (tv first, then movie)
-    2) Fetch details, extract poster + meta
-    3) Upload poster to Telegram (to get file_id), store to DB
-    4) Store meta to DB (optional function)
-    Returns True if TMDB result found; False if not found/no key.
+    Finds TMDB item -> saves meta (optional) -> uploads poster to telegram to get file_id -> saves poster_file_id
     """
     if not TMDB_API_KEY:
         return False
@@ -147,7 +129,6 @@ async def auto_fetch_and_set_poster_and_meta(client, series_id: int, title: str,
     poster_path = det.get("poster_path") or item.get("poster_path")
     overview = (det.get("overview") or "").strip()
 
-    # year
     date_key = "first_air_date" if kind == "tv" else "release_date"
     year = ""
     if det.get(date_key):
@@ -175,7 +156,6 @@ async def auto_fetch_and_set_poster_and_meta(client, series_id: int, title: str,
             bio = BytesIO(data)
             bio.name = "poster.jpg"
 
-            # upload hidden then delete (only to get file_id)
             tmp = await client.send_photo(chat_id, photo=bio)
             file_id = tmp.photo.file_id if tmp.photo else None
             if file_id:
