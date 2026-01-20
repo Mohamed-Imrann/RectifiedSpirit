@@ -188,5 +188,3 @@ async def count_files_in_group(group_id):
 # =========================
 
 # old code compatibility
-find_series_by_name = find_series
-get_group_id = get_group_id_value
