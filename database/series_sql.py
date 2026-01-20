@@ -59,14 +59,13 @@ async def init_db():
         """)
 
         # ---- MIGRATION: TMDB meta columns (add if missing) ----
-        # (safe for old db)
         await _add_column_if_missing(db, "series", "tmdb_id", "INTEGER")
         await _add_column_if_missing(db, "series", "year", "TEXT")
         await _add_column_if_missing(db, "series", "rating", "REAL")
         await _add_column_if_missing(db, "series", "genres", "TEXT")
         await _add_column_if_missing(db, "series", "overview", "TEXT")
 
-        # indexes (speed)
+        # indexes
         await db.execute("CREATE INDEX IF NOT EXISTS idx_series_title ON series(title)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_groups_series ON groups(series_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_files_group ON files(group_id)")
@@ -80,7 +79,6 @@ async def upsert_series(title: str) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("INSERT OR IGNORE INTO series(title) VALUES(?)", (title,))
         await db.commit()
-
         cur = await db.execute("SELECT id FROM series WHERE title=?", (title,))
         row = await cur.fetchone()
         return int(row[0])
@@ -253,7 +251,6 @@ async def count_files_in_group(group_id: int) -> int:
 
 # -------------------------
 # Backward compatibility aliases
-# (IMPORTANT: define aliases AFTER functions)
 # -------------------------
 find_series_by_name = find_series
 get_group_id = get_group_id_value
