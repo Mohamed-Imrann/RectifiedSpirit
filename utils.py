@@ -62,7 +62,7 @@ def get_file_id(msg: Message):
 # =========================
 # Requires:
 #  - info.py : TMDB_API_KEY = "<TMDB v4 Bearer Token>"
-#  - database/series_sql.py : set_series_poster(), set_series_meta()
+#  - database/series_sql.py : set_series_poster(), (optional) set_series_meta()
 try:
     from info import TMDB_API_KEY
 except Exception:
@@ -127,7 +127,7 @@ async def auto_fetch_and_set_poster_and_meta(client, series_id: int, title: str,
     1) Search TMDB by title (tv first, then movie)
     2) Fetch details, extract poster + meta
     3) Upload poster to Telegram (to get file_id), store to DB
-    4) Store meta to DB
+    4) Store meta to DB (optional function)
     Returns True if TMDB result found; False if not found/no key.
     """
     if not TMDB_API_KEY:
@@ -159,12 +159,11 @@ async def auto_fetch_and_set_poster_and_meta(client, series_id: int, title: str,
     if det.get("genres"):
         genres = ", ".join([g.get("name", "") for g in det["genres"] if g.get("name")]).strip()
 
-    # save meta
+    # save meta (optional)
     try:
         from database.series_sql import set_series_meta
         await set_series_meta(series_id, tmdb_id, year, rating, genres, overview)
     except Exception:
-        # meta saving optional; do not fail poster
         pass
 
     # poster -> telegram file_id
