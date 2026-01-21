@@ -14,17 +14,10 @@ DEFAULT_AUTO_DELETE_SECONDS = int(os.getenv("AUTO_DELETE_SECONDS", "0"))
 # AUTO DELETE
 # =========================
 async def auto_delete(msg, sec: int | None = None):
-    """
-    Safe auto delete (no circular import).
-    If sec is None -> uses env AUTO_DELETE_SECONDS
-    If sec <= 0 -> does nothing
-    """
     if sec is None:
         sec = DEFAULT_AUTO_DELETE_SECONDS
-
     if not sec or sec <= 0:
         return
-
     await asyncio.sleep(sec)
     try:
         await msg.delete()
@@ -88,9 +81,12 @@ async def _http_get_json(url: str, params: dict | None = None) -> dict:
 
 
 async def _download_bytes(url: str) -> bytes:
-    async with aiohttp.ClientSession() as s:
-        async with s.get(url, timeout=25) as r:
-            return await r.read()
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, timeout=25) as r:
+                return await r.read()
+    except Exception:
+        return b""
 
 
 async def tmdb_search_best(title: str) -> Optional[Tuple[str, dict]]:
@@ -124,7 +120,6 @@ async def auto_fetch_and_set_poster_and_meta(client, series_id: int, title: str,
     2) Fetch details, extract poster + meta
     3) Upload poster to Telegram (to get file_id), store to DB
     4) Store meta to DB
-    Returns True if TMDB result found; False if not found/no key.
     """
     if not TMDB_API_KEY:
         return False
@@ -167,17 +162,19 @@ async def auto_fetch_and_set_poster_and_meta(client, series_id: int, title: str,
             from database.series_sql import set_series_poster
             img_url = f"{TMDB_IMG}{poster_path}"
             data = await _download_bytes(img_url)
-            bio = BytesIO(data)
-            bio.name = "poster.jpg"
+            if data:
+                bio = BytesIO(data)
+                bio.name = "poster.jpg"
 
-            tmp = await client.send_photo(chat_id, photo=bio)
-            file_id = tmp.photo.file_id if tmp.photo else None
-            if file_id:
-                await set_series_poster(series_id, file_id)
-            try:
-                await tmp.delete()
-            except Exception:
-                pass
+                # upload hidden then delete (only to get file_id)
+                tmp = await client.send_photo(chat_id, photo=bio)
+                file_id = tmp.photo.file_id if tmp.photo else None
+                if file_id:
+                    await set_series_poster(series_id, file_id)
+                try:
+                    await tmp.delete()
+                except Exception:
+                    pass
         except Exception:
             pass
 
