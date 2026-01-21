@@ -60,9 +60,6 @@ def get_file_id(msg: Message):
 # =========================
 # TMDB AUTO FETCH (Poster + Meta)
 # =========================
-# Requires:
-#  - info.py : TMDB_API_KEY = "<TMDB v4 Bearer Token>"
-#  - database/series_sql.py : set_series_poster(), set_series_meta()
 try:
     from info import TMDB_API_KEY
 except Exception:
@@ -73,7 +70,6 @@ TMDB_IMG = "https://image.tmdb.org/t/p/w500"
 
 
 def _tmdb_headers():
-    # TMDB v4 auth uses Bearer token
     return {
         "Authorization": f"Bearer {TMDB_API_KEY}",
         "accept": "application/json",
@@ -83,12 +79,12 @@ def _tmdb_headers():
 async def _http_get_json(url: str, params: dict | None = None) -> dict:
     if not TMDB_API_KEY:
         return {}
-    async with aiohttp.ClientSession(headers=_tmdb_headers()) as s:
-        async with s.get(url, params=params, timeout=25) as r:
-            try:
+    try:
+        async with aiohttp.ClientSession(headers=_tmdb_headers()) as s:
+            async with s.get(url, params=params, timeout=25) as r:
                 return await r.json()
-            except Exception:
-                return {}
+    except Exception:
+        return {}
 
 
 async def _download_bytes(url: str) -> bytes:
@@ -147,7 +143,6 @@ async def auto_fetch_and_set_poster_and_meta(client, series_id: int, title: str,
     poster_path = det.get("poster_path") or item.get("poster_path")
     overview = (det.get("overview") or "").strip()
 
-    # year
     date_key = "first_air_date" if kind == "tv" else "release_date"
     year = ""
     if det.get(date_key):
@@ -159,7 +154,7 @@ async def auto_fetch_and_set_poster_and_meta(client, series_id: int, title: str,
     if det.get("genres"):
         genres = ", ".join([g.get("name", "") for g in det["genres"] if g.get("name")]).strip()
 
-    # save meta
+    # save meta (optional)
     try:
         from database.series_sql import set_series_meta
         await set_series_meta(series_id, tmdb_id, year, rating, genres, overview)
@@ -175,7 +170,6 @@ async def auto_fetch_and_set_poster_and_meta(client, series_id: int, title: str,
             bio = BytesIO(data)
             bio.name = "poster.jpg"
 
-            # upload hidden then delete (only to get file_id)
             tmp = await client.send_photo(chat_id, photo=bio)
             file_id = tmp.photo.file_id if tmp.photo else None
             if file_id:
