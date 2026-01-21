@@ -1,18 +1,16 @@
-# utils.py
 import asyncio
 import os
 from io import BytesIO
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 import aiohttp
 from pyrogram.types import Message
 
-# default: auto delete OFF
-DEFAULT_AUTO_DELETE_SECONDS = int(os.getenv("AUTO_DELETE_SECONDS", "0"))
-
 # =========================
 # AUTO DELETE
 # =========================
+DEFAULT_AUTO_DELETE_SECONDS = int(os.getenv("AUTO_DELETE_SECONDS", "0"))
+
 async def auto_delete(msg, sec: int | None = None):
     if sec is None:
         sec = DEFAULT_AUTO_DELETE_SECONDS
@@ -29,9 +27,6 @@ async def auto_delete(msg, sec: int | None = None):
 # FILE ID EXTRACT
 # =========================
 def get_file_id(msg: Message):
-    """
-    Returns media object with .file_id and sets .message_type
-    """
     if msg.media:
         for message_type in (
             "photo",
@@ -51,6 +46,42 @@ def get_file_id(msg: Message):
 
 
 # =========================
+# CUSTOM ASK/LISTEN (NO PYROMOD)
+# =========================
+# key: (chat_id, user_id)
+_PENDING: Dict[tuple, asyncio.Future] = {}
+
+def _key(chat_id: int, user_id: int) -> tuple:
+    return (int(chat_id), int(user_id))
+
+def resolve_pending(chat_id: int, user_id: int, message: Message) -> bool:
+    """
+    Called from plugins/_listener.py
+    """
+    k = _key(chat_id, user_id)
+    fut = _PENDING.pop(k, None)
+    if fut and not fut.done():
+        fut.set_result(message)
+        return True
+    return False
+
+async def wait_user_message(chat_id: int, user_id: int, timeout: int = 180) -> Message:
+    """
+    Waits next incoming message from user_id in chat_id (same loop safe).
+    """
+    k = _key(chat_id, user_id)
+
+    # cancel existing waiter if any
+    old = _PENDING.pop(k, None)
+    if old and not old.done():
+        old.cancel()
+
+    fut = asyncio.get_running_loop().create_future()
+    _PENDING[k] = fut
+    return await asyncio.wait_for(fut, timeout=timeout)
+
+
+# =========================
 # TMDB AUTO FETCH (Poster + Meta)
 # =========================
 try:
@@ -61,38 +92,28 @@ except Exception:
 TMDB_BASE = "https://api.themoviedb.org/3"
 TMDB_IMG = "https://image.tmdb.org/t/p/w500"
 
-
 def _tmdb_headers():
     return {
         "Authorization": f"Bearer {TMDB_API_KEY}",
         "accept": "application/json",
     }
 
-
 async def _http_get_json(url: str, params: dict | None = None) -> dict:
     if not TMDB_API_KEY:
         return {}
-    try:
-        async with aiohttp.ClientSession(headers=_tmdb_headers()) as s:
-            async with s.get(url, params=params, timeout=25) as r:
+    async with aiohttp.ClientSession(headers=_tmdb_headers()) as s:
+        async with s.get(url, params=params, timeout=25) as r:
+            try:
                 return await r.json()
-    except Exception:
-        return {}
-
+            except Exception:
+                return {}
 
 async def _download_bytes(url: str) -> bytes:
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=25) as r:
-                return await r.read()
-    except Exception:
-        return b""
-
+    async with aiohttp.ClientSession() as s:
+        async with s.get(url, timeout=25) as r:
+            return await r.read()
 
 async def tmdb_search_best(title: str) -> Optional[Tuple[str, dict]]:
-    """
-    Returns ("tv"/"movie", first_result_dict) or None
-    """
     q = (title or "").strip()
     if not q or not TMDB_API_KEY:
         return None
@@ -107,20 +128,12 @@ async def tmdb_search_best(title: str) -> Optional[Tuple[str, dict]]:
 
     return None
 
-
 async def tmdb_details(kind: str, tmdb_id: int) -> dict:
     if not TMDB_API_KEY:
         return {}
     return await _http_get_json(f"{TMDB_BASE}/{kind}/{tmdb_id}", {"language": "en-US"})
 
-
 async def auto_fetch_and_set_poster_and_meta(client, series_id: int, title: str, chat_id: int) -> bool:
-    """
-    1) Search TMDB by title (tv first, then movie)
-    2) Fetch details, extract poster + meta
-    3) Upload poster to Telegram (to get file_id), store to DB
-    4) Store meta to DB
-    """
     if not TMDB_API_KEY:
         return False
 
@@ -149,32 +162,30 @@ async def auto_fetch_and_set_poster_and_meta(client, series_id: int, title: str,
     if det.get("genres"):
         genres = ", ".join([g.get("name", "") for g in det["genres"] if g.get("name")]).strip()
 
-    # save meta (optional)
+    # meta save (optional)
     try:
         from database.series_sql import set_series_meta
         await set_series_meta(series_id, tmdb_id, year, rating, genres, overview)
     except Exception:
         pass
 
-    # poster -> telegram file_id
+    # poster upload -> file_id
     if poster_path:
         try:
             from database.series_sql import set_series_poster
             img_url = f"{TMDB_IMG}{poster_path}"
             data = await _download_bytes(img_url)
-            if data:
-                bio = BytesIO(data)
-                bio.name = "poster.jpg"
+            bio = BytesIO(data)
+            bio.name = "poster.jpg"
 
-                # upload hidden then delete (only to get file_id)
-                tmp = await client.send_photo(chat_id, photo=bio)
-                file_id = tmp.photo.file_id if tmp.photo else None
-                if file_id:
-                    await set_series_poster(series_id, file_id)
-                try:
-                    await tmp.delete()
-                except Exception:
-                    pass
+            tmp = await client.send_photo(chat_id, photo=bio)
+            file_id = tmp.photo.file_id if tmp.photo else None
+            if file_id:
+                await set_series_poster(series_id, file_id)
+            try:
+                await tmp.delete()
+            except Exception:
+                pass
         except Exception:
             pass
 
