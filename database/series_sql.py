@@ -213,12 +213,4 @@ async def list_seasons(series_id: int, lang: str):
 
 
 async def list_qualities(series_id: int, lang: str, season: str):
-    async with aiosqlite.connect(DB_PATH, timeout=30) as db:
-        cur = await db.execute(
-            "SELECT DISTINCT quality FROM groups WHERE series_id=? AND lang=? AND season=? ORDER BY quality COLLATE NOCASE",
-            (series_id, lang, season),
-        )
-        rows = await cur.fetchall()
-        qualities = [r[0] for r in rows]
-        logger.debug(f"Qualities for sid={series_id}, lang={lang}, season={season}: {qualities}")
-        return qualities
+    async with a
