@@ -190,34 +190,68 @@ async def send_or_update_series_panel(message, row):
 # =======================
 @Client.on_message(filters.command("newseries") & filters.user(ADMINS))
 async def newseries_panel(client: Client, message):
-    ask = await client.ask(message.chat.id, "📌 Series name anuppu:", timeout=180)
+    try:
+        ask = await client.ask(message.chat.id, "📌 Series name anuppu:", timeout=180)
+    except Exception as e:
+        return await message.reply_text(f"❌ Ask failed: `{e}`")
+
     title = (ask.text or "").strip()
     if not title:
         return await message.reply_text("❌ Empty title")
 
-    sid = await upsert_series(title)
-
-    # TMDB fetch status msg
-    fetching = await message.reply_text("🔎 TMDB fetching…")
-
+    # 1) Insert series first (always)
     try:
-        # store poster+meta to DB (if found)
-        await auto_fetch_and_set_poster_and_meta(client, sid, title, message.chat.id)
-    except Exception:
-        pass
+        sid = await upsert_series(title)
+    except Exception as e:
+        return await message.reply_text(f"❌ DB error (upsert): `{e}`")
 
-    try:
-        await fetching.delete()
-    except Exception:
-        pass
-
+    # 2) Send immediate panel first (so user never feels 'no response')
     row = await get_series_by_id(sid)
-    if not row:
-        return await message.reply_text("❌ Series not found after save (DB issue)")
+    published = int(row[3]) if row else 0
 
-    # IMPORTANT: row now has 9 cols -> use helper
-    await send_or_update_series_panel(message, row)
+    cap = f"✅ **Series:** `{title}`\n\nSelect option:"
+    panel_msg = await message.reply_text(cap, reply_markup=kb_series_home(sid, published))
 
+    # 3) TMDB fetch in background-style (but still awaited safely)
+    #    Even if TMDB fails, panel already shown.
+    try:
+        from utils import auto_fetch_and_set_poster_and_meta
+
+        # small status msg (optional)
+        status = await message.reply_text("🎬 TMDB fetching…")
+
+        ok = await auto_fetch_and_set_poster_and_meta(
+            client=client,
+            series_id=sid,
+            title=title,
+            chat_id=message.chat.id
+        )
+
+        try:
+            await status.delete()
+        except Exception:
+            pass
+
+        # 4) If poster fetched, refresh panel as PHOTO message
+        if ok:
+            row2 = await get_series_by_id(sid)
+            if row2:
+                _sid, _title, poster_file_id, _pub, *_ = row2
+                if poster_file_id:
+                    # delete old text panel and resend as photo panel
+                    try:
+                        await panel_msg.delete()
+                    except Exception:
+                        pass
+                    await message.reply_photo(
+                        poster_file_id,
+                        caption=cap,
+                        reply_markup=kb_series_home(sid, published)
+                    )
+
+    except Exception as e:
+        # TMDB fail shouldn't break UI
+        await message.reply_text(f"⚠️ TMDB fetch skipped: `{e}`")
 
 # =======================
 # HOME
