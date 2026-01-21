@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from pyrogram import Client, idle
+from plugins import ping, user_panel, userbot_sync, panel_like_ui
 from info import API_ID, API_HASH, BOT_TOKEN
 from database.series_sql import init_db
 
