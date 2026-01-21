@@ -208,4 +208,4 @@ async def list_seasons(series_id: int, lang: str):
         )
         rows = await cur.fetchall()
         seasons = [r[0] for r in rows]
-        logger.debug(f"Seasons for sid={series_id}, lang={lang}: {
+        logger.debug(f"Seasons for sid
