@@ -2,7 +2,6 @@ import asyncio
 import logging
 
 from pyrogram import Client, idle
-from pyromod import listen  # IMPORTANT: patch ask/listen before clients
 
 from info import API_ID, API_HASH, BOT_TOKEN
 from database.series_sql import init_db
@@ -32,19 +31,15 @@ async def main():
         workdir=".",
     )
 
-    # Start both in SAME running loop
     await user.start()
-    user.loop = asyncio.get_running_loop()
     logging.info("✅ User session started")
 
-    bot.user_client = user
+    bot.user_client = user  # plugins can use this
 
     await bot.start()
-    bot.loop = asyncio.get_running_loop()
     me = await bot.get_me()
     logging.info(f"✅ Bot started as @{me.username}")
 
-    # keep running
     await idle()
 
     await bot.stop()
@@ -53,5 +48,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    # ✅ DO THIS (not get_event_loop)
     asyncio.run(main())
