@@ -13,7 +13,7 @@ logging.getLogger("pyrogram").setLevel(logging.ERROR)
 async def main():
     await init_db()
 
-    # USER
+    # USER client
     user = Client(
         "user",
         api_id=API_ID,
@@ -21,7 +21,7 @@ async def main():
         workdir=".",
     )
 
-    # BOT
+    # BOT client
     bot = Client(
         "bot",
         api_id=API_ID,
@@ -31,19 +31,19 @@ async def main():
         workdir=".",
     )
 
-    await user.start()
-    logging.info("✅ User session started")
+    # Use context managers for clean startup/shutdown
+    async with user, bot:
+        logging.info("✅ User session started")
 
-    bot.user_client = user  # plugins can use this
+        # Attach user client to bot for plugin access
+        bot.user_client = user
 
-    await bot.start()
-    me = await bot.get_me()
-    logging.info(f"✅ Bot started as @{me.username}")
+        me = await bot.get_me()
+        logging.info(f"✅ Bot started as @{me.username}")
 
-    await idle()
+        # Keep running until stopped
+        await idle()
 
-    await bot.stop()
-    await user.stop()
     logging.info("🛑 Stopped bot & user")
 
 
