@@ -1,16 +1,17 @@
 import asyncio
 import logging
-
 from pyrogram import Client, idle
-
 from info import API_ID, API_HASH, BOT_TOKEN
 from database.series_sql import init_db
 
-logging.basicConfig(level=logging.INFO)
-logging.getLogger("pyrogram").setLevel(logging.ERROR)
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger(__name__)
 
-
-async def main():
+async def start_clients():
     await init_db()
 
     # USER client
@@ -31,21 +32,24 @@ async def main():
         workdir=".",
     )
 
-    # Use context managers for clean startup/shutdown
     async with user, bot:
-        logging.info("✅ User session started")
-
-        # Attach user client to bot for plugin access
-        bot.user_client = user
+        logger.info("✅ User session started")
+        bot.user_client = user  # Attach user client to bot
 
         me = await bot.get_me()
-        logging.info(f"✅ Bot started as @{me.username}")
+        logger.info(f"✅ Bot started as @{me.username}")
 
-        # Keep running until stopped
         await idle()
+        logger.info("🛑 Bot and user stopped")
 
-    logging.info("🛑 Stopped bot & user")
-
+async def main():
+    while True:
+        try:
+            await start_clients()
+        except Exception as e:
+            logger.error(f"❌ Bot crashed: {e}")
+            logger.info("🔁 Restarting in 5 seconds…")
+            await asyncio.sleep(5)
 
 if __name__ == "__main__":
     asyncio.run(main())
