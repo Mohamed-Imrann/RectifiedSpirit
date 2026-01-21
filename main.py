@@ -19,7 +19,7 @@ async def main():
         "user",
         api_id=API_ID,
         api_hash=API_HASH,
-        workdir=".",   # ensure session file in same folder
+        workdir=".",
     )
 
     # BOT
@@ -29,30 +29,40 @@ async def main():
         api_hash=API_HASH,
         bot_token=BOT_TOKEN,
         plugins={"root": "plugins"},
-        workdir=".",   # bot.session also here
+        workdir=".",
     )
 
-    # Start USER first
-    await user.start()
-    logging.info("✅ User session started")
+    try:
+        # Start USER first
+        await user.start()
+        logging.info("✅ User session started")
 
-    # attach user client to bot (plugins can access via client.user_client)
-    bot.user_client = user
+        # attach user client to bot (plugins can access via client.user_client)
+        bot.user_client = user
 
-    # Start BOT
-    await bot.start()
-    me = await bot.get_me()
-    logging.info(f"✅ Bot started as @{me.username}")
+        # Start BOT
+        await bot.start()
+        me = await bot.get_me()
+        logging.info(f"✅ Bot started as @{me.username}")
 
-    # keep running
-    await idle()
+        # keep running
+        await idle()
 
-    # Stop
-    await bot.stop()
-    await user.stop()
-    logging.info("🛑 Stopped bot & user")
+    finally:
+        # Stop safely (even if crash happens)
+        try:
+            await bot.stop()
+        except Exception:
+            pass
+
+        try:
+            await user.stop()
+        except Exception:
+            pass
+
+        logging.info("🛑 Stopped bot & user")
 
 
 if __name__ == "__main__":
-    # ✅ important: create ONE loop only
-    asyncio.get_event_loop().run_until_complete(main())
+    # ✅ Python 3.12 safe
+    asyncio.run(main())
