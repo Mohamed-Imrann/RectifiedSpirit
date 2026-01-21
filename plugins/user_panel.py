@@ -2,6 +2,7 @@
 from urllib.parse import quote, unquote
 
 from pyrogram import Client, filters
+from pyrogram.errors import MessageNotModified
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from database.series_sql import (
@@ -15,29 +16,79 @@ from database.series_sql import (
 )
 
 def q(s: str) -> str:
-    return quote(s, safe="")
+    return quote(s or "", safe="")
 
 def uq(s: str) -> str:
-    return unquote(s)
+    return unquote(s or "")
 
 def home_kb(series_id: int):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🌐 Languages", callback_data=f"usr:langs:{series_id}")]
     ])
 
+async def _edit_text_or_caption(msg, text: str, reply_markup=None):
+    """
+    Safe edit helper for both photo-caption messages and text messages
+    """
+    try:
+        if getattr(msg, "photo", None):
+            await msg.edit_caption(text, reply_markup=reply_markup)
+        else:
+            await msg.edit_text(text, reply_markup=reply_markup)
+    except MessageNotModified:
+        pass
+
+
 # -------- USER SEARCH (only published) --------
-@Client.on_message(filters.text & filters.incoming & ~filters.command(["newseries", "newseriesui"]))
+@Client.on_message(filters.text & filters.incoming & ~filters.command(["newseries", "newseriesui", "start"]))
 async def user_search(client: Client, message):
     query = (message.text or "").strip()
     if not query:
         return
 
-    row = await find_series(query, published_only=True)
+    row = await find_series(query)
     if not row:
-        return  # silent if not found / not published
+        return  # silent if not found
 
-    series_id, title, poster = row
-    text = f"🎬 **{title}**\n\nSelect option:"
+    # NEW DB STRUCTURE:
+    # id, title, poster_file_id, published, tmdb_id, year, rating, genres, overview
+    series_id = int(row[0])
+    title = row[1] or ""
+    poster = row[2]
+    published = int(row[3] or 0)
+
+    # Only show published to users
+    if published != 1:
+        return
+
+    # optional meta
+    year = (row[5] or "").strip()
+    rating = row[6]
+    genres = (row[7] or "").strip()
+    overview = (row[8] or "").strip()
+
+    meta_line = []
+    if year:
+        meta_line.append(year)
+    if rating:
+        try:
+            meta_line.append(f"⭐ {float(rating):.1f}")
+        except Exception:
+            pass
+    if genres:
+        meta_line.append(genres)
+
+    meta_txt = " • ".join(meta_line).strip()
+    if meta_txt:
+        text = f"🎬 **{title}**\n`{meta_txt}`\n\nSelect option:"
+    else:
+        text = f"🎬 **{title}**\n\nSelect option:"
+
+    # (overview optional, keep short)
+    if overview:
+        short = overview[:350].strip()
+        if short:
+            text += f"\n\n{short}"
 
     if poster:
         await message.reply_photo(
@@ -51,6 +102,7 @@ async def user_search(client: Client, message):
             reply_markup=home_kb(series_id)
         )
 
+
 # -------- LANGUAGES --------
 @Client.on_callback_query(filters.regex(r"^usr:langs:(\d+)$"))
 async def usr_langs(_, cq):
@@ -61,8 +113,10 @@ async def usr_langs(_, cq):
 
     rows = [[InlineKeyboardButton(l, callback_data=f"usr:lang:{sid}:{q(l)}")] for l in langs]
     rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"usr:home:{sid}")])
-    await cq.message.edit_reply_markup(InlineKeyboardMarkup(rows))
+
     await cq.answer()
+    await cq.message.edit_reply_markup(InlineKeyboardMarkup(rows))
+
 
 @Client.on_callback_query(filters.regex(r"^usr:home:(\d+)$"))
 async def usr_home(_, cq):
@@ -71,13 +125,45 @@ async def usr_home(_, cq):
     if not row:
         return await cq.answer("Not found", show_alert=True)
 
-    _, title, poster, _published = row
-    text = f"🎬 **{title}**\n\nSelect option:"
-    if poster:
-        await cq.message.edit_caption(text, reply_markup=home_kb(sid))
+    # NEW DB STRUCTURE:
+    # id, title, poster_file_id, published, tmdb_id, year, rating, genres, overview
+    title = row[1] or ""
+    poster = row[2]
+    published = int(row[3] or 0)
+
+    if published != 1:
+        return await cq.answer("Unpublished", show_alert=True)
+
+    year = (row[5] or "").strip()
+    rating = row[6]
+    genres = (row[7] or "").strip()
+    overview = (row[8] or "").strip()
+
+    meta_line = []
+    if year:
+        meta_line.append(year)
+    if rating:
+        try:
+            meta_line.append(f"⭐ {float(rating):.1f}")
+        except Exception:
+            pass
+    if genres:
+        meta_line.append(genres)
+
+    meta_txt = " • ".join(meta_line).strip()
+    if meta_txt:
+        text = f"🎬 **{title}**\n`{meta_txt}`\n\nSelect option:"
     else:
-        await cq.message.edit_text(text, reply_markup=home_kb(sid))
+        text = f"🎬 **{title}**\n\nSelect option:"
+
+    if overview:
+        short = overview[:350].strip()
+        if short:
+            text += f"\n\n{short}"
+
     await cq.answer()
+    await _edit_text_or_caption(cq.message, text, reply_markup=home_kb(sid))
+
 
 # -------- SEASONS --------
 @Client.on_callback_query(filters.regex(r"^usr:lang:(\d+):(.+)$"))
@@ -94,10 +180,12 @@ async def usr_seasons(_, cq):
         for s in seasons
     ]
     rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"usr:langs:{sid}")])
-    await cq.message.edit_reply_markup(InlineKeyboardMarkup(rows))
-    await cq.answer()
 
-# -------- QUALITIES (no counts for user) --------
+    await cq.answer()
+    await cq.message.edit_reply_markup(InlineKeyboardMarkup(rows))
+
+
+# -------- QUALITIES --------
 @Client.on_callback_query(filters.regex(r"^usr:season:(\d+):(.+):(.+)$"))
 async def usr_qualities(_, cq):
     sid = int(cq.matches[0].group(1))
@@ -113,8 +201,10 @@ async def usr_qualities(_, cq):
         for qu in qualities
     ]
     rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"usr:lang:{sid}:{q(lang)}")])
-    await cq.message.edit_reply_markup(InlineKeyboardMarkup(rows))
+
     await cq.answer()
+    await cq.message.edit_reply_markup(InlineKeyboardMarkup(rows))
+
 
 # -------- SEND FILES --------
 @Client.on_callback_query(filters.regex(r"^usr:send:(\d+):(.+):(.+):(.+)$"))
@@ -124,7 +214,8 @@ async def usr_send(client: Client, cq):
     season = uq(cq.matches[0].group(3))
     quality = uq(cq.matches[0].group(4))
 
-    group_id = await get_group_id_value(sid, lang, season, quality)
+    gid_row = await get_group_id_value(sid, lang, season, quality)
+    group_id = int(gid_row[0]) if gid_row else 0
     if not group_id:
         return await cq.answer("No files", show_alert=True)
 
@@ -133,5 +224,14 @@ async def usr_send(client: Client, cq):
         return await cq.answer("No files", show_alert=True)
 
     await cq.answer("Sending…")
-    for file_id, caption, _ in files:
-        await cq.message.reply_cached_media(file_id, caption=caption or "")
+
+    # send sequentially
+    for file_id, caption, _msg_type in files:
+        try:
+            await cq.message.reply_cached_media(file_id, caption=caption or "")
+        except Exception:
+            # fallback: try without caption if caption causes error
+            try:
+                await cq.message.reply_cached_media(file_id)
+            except Exception:
+                pass
