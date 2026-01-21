@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from pyrogram import Client, idle
-from pyromod import listen  # needed for client.ask / client.listen
+from pyromod import listen  # IMPORTANT: patch ask/listen before clients
 
 from info import API_ID, API_HASH, BOT_TOKEN
 from database.series_sql import init_db
@@ -14,7 +14,7 @@ logging.getLogger("pyrogram").setLevel(logging.ERROR)
 async def main():
     await init_db()
 
-    # USER (session file = user.session / user.session-journal)
+    # USER
     user = Client(
         "user",
         api_id=API_ID,
@@ -32,37 +32,26 @@ async def main():
         workdir=".",
     )
 
-    try:
-        # Start USER first
-        await user.start()
-        logging.info("✅ User session started")
+    # Start both in SAME running loop
+    await user.start()
+    user.loop = asyncio.get_running_loop()
+    logging.info("✅ User session started")
 
-        # attach user client to bot (plugins can access via client.user_client)
-        bot.user_client = user
+    bot.user_client = user
 
-        # Start BOT
-        await bot.start()
-        me = await bot.get_me()
-        logging.info(f"✅ Bot started as @{me.username}")
+    await bot.start()
+    bot.loop = asyncio.get_running_loop()
+    me = await bot.get_me()
+    logging.info(f"✅ Bot started as @{me.username}")
 
-        # keep running
-        await idle()
+    # keep running
+    await idle()
 
-    finally:
-        # Stop safely (even if crash happens)
-        try:
-            await bot.stop()
-        except Exception:
-            pass
-
-        try:
-            await user.stop()
-        except Exception:
-            pass
-
-        logging.info("🛑 Stopped bot & user")
+    await bot.stop()
+    await user.stop()
+    logging.info("🛑 Stopped bot & user")
 
 
 if __name__ == "__main__":
-    # ✅ Python 3.12 safe
+    # ✅ DO THIS (not get_event_loop)
     asyncio.run(main())
