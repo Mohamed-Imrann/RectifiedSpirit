@@ -125,99 +125,7 @@ async def kb_qualities(series_id: int, lang: str, season: str, qualities: List[s
 
 
 # =======================
-# /newseries (ADMIN PANEL)
-# =======================
-@Client.on_message(filters.command("newseries") & filters.user(ADMINS))
-async def newseries_panel(client: Client, message):
-    prompt = await message.reply_text("📌 Series name anuppu:")
-
-    try:
-        ask = await wait_user_message(message.chat.id, message.from_user.id, timeout=180)
-    except Exception:
-        return await prompt.edit_text("❌ Timeout. /newseries again.")
-
-    title = (ask.text or "").strip()
-    if not title:
-        return await prompt.edit_text("❌ Empty title. /newseries again.")
-
-    sid = await upsert_series(title)
-
-    row = await get_series_by_id(sid)
-    published = int(row[3]) if row else 0
-    cap = f"✅ **Series:** `{title}`\n\nSelect option:"
-    panel_msg = await message.reply_text(cap, reply_markup=kb_series_home(sid, published))
-
-    status = await message.reply_text("🎬 TMDB fetching…")
-    ok = False
-    try:
-        ok = await auto_fetch_and_set_poster_and_meta(client, sid, title, message.chat.id)
-    except Exception:
-        ok = False
-
-    try:
-        await status.delete()
-    except Exception:
-        pass
-    try:
-        await prompt.delete()
-    except Exception:
-        pass
-
-    if ok:
-        row2 = await get_series_by_id(sid)
-        if row2:
-            poster_file_id = row2[2]
-            if poster_file_id:
-                try:
-                    await panel_msg.delete()
-                except Exception:
-                    pass
-                await message.reply_photo(
-                    poster_file_id,
-                    caption=cap,
-                    reply_markup=kb_series_home(sid, published)
-                )
-
-
-# =======================
-# HOME
-# =======================
-@Client.on_callback_query(filters.regex(r"^adm:home:(\d+)$"))
-async def adm_home(_, cq):
-    sid = int(cq.matches[0].group(1))
-    row = await get_series_by_id(sid)
-    if not row:
-        return await cq.answer("Not found", show_alert=True)
-
-    _, title, _poster, published, *_ = row
-    await cq.answer()
-
-    caption = f"✅ **Series:** `{title}`\n\nSelect option:"
-    await edit_panel(cq.message, caption, kb_series_home(sid, int(published)))
-
-
-# =======================
-# PUBLISH TOGGLE
-# =======================
-@Client.on_callback_query(filters.regex(r"^adm:publish:(\d+)$"))
-async def adm_publish(_, cq):
-    sid = int(cq.matches[0].group(1))
-    new_val = await toggle_publish(sid)
-
-    row = await get_series_by_id(sid)
-    if not row:
-        return await cq.answer("Not found", show_alert=True)
-
-    _, title, _poster, published, *_ = row
-    status = "✅ Published" if int(new_val) == 1 else "❌ Unpublished"
-
-    caption = f"✅ **Series:** `{title}`\n\nStatus: **{status}**\n\nSelect option:"
-    await cq.answer(status, show_alert=True)
-    await edit_panel(cq.message, caption, kb_series_home(sid, int(published)))
-
-
-# =======================
-# POSTER (manual)
+# POSTER (manual) FIXED
 # =======================
 @Client.on_callback_query(filters.regex(r"^adm:poster:(\d+)$"))
 async def adm_poster(client: Client, cq):
@@ -237,3 +145,9 @@ async def adm_poster(client: Client, cq):
 
     row = await get_series_by_id(sid)
     if not row:
+        return await msg.edit_text("✅ Poster updated. (series missing?)")
+
+    _, title, _poster, published, *_ = row
+    await msg.edit_text("✅ Poster updated.")
+    cap = f"✅ **Series:** `{title}`\n\nSelect option:"
+    await edit_panel(cq.message, cap, kb_series_home(sid, int(published)))
