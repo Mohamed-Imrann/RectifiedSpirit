@@ -213,4 +213,84 @@ async def list_seasons(series_id: int, lang: str):
 
 
 async def list_qualities(series_id: int, lang: str, season: str):
-    async with a
+    async with aiosqlite.connect(DB_PATH, timeout=30) as db:
+        cur = await db.execute(
+            "SELECT DISTINCT quality FROM groups WHERE series_id=? AND lang=? AND season=? ORDER BY quality COLLATE NOCASE",
+            (series_id, lang, season),
+        )
+        rows = await cur.fetchall()
+        qualities = [r[0] for r in rows]
+        logger.debug(f"Qualities for sid={series_id}, lang={lang}, season={season}: {qualities}")
+        return qualities
+
+
+# ---------- delete functions ----------
+async def delete_language(series_id: int, lang: str):
+    async with db_lock:
+        async with aiosqlite.connect(DB_PATH, timeout=30) as db:
+            await db.execute("DELETE FROM groups WHERE series_id=? AND lang=?", (series_id, lang))
+            await db.commit()
+            logger.warning(f"🗑 Deleted language group sid={series_id}, lang={lang}")
+
+
+async def delete_season(series_id: int, lang: str, season: str):
+    async with db_lock:
+        async with aiosqlite.connect(DB_PATH, timeout=30) as db:
+            await db.execute(
+                "DELETE FROM groups WHERE series_id=? AND lang=? AND season=?",
+                (series_id, lang, season),
+            )
+            await db.commit()
+            logger.warning(f"🗑 Deleted season group sid={series_id}, lang={lang}, season={season}")
+
+
+async def delete_quality(series_id: int, lang: str, season: str, quality: str):
+    async with db_lock:
+        async with aiosqlite.connect(DB_PATH, timeout=30) as db:
+            await db.execute(
+                "DELETE FROM groups WHERE series_id=? AND lang=? AND season=? AND quality=?",
+                (series_id, lang, season, quality),
+            )
+            await db.commit()
+            logger.warning(f"🗑 Deleted quality group sid={series_id}, lang={lang}, season={season}, quality={quality}")
+
+
+# ---------- files ----------
+async def add_file(group_id: int, file_id: str, caption: str = "", msg_type: str = ""):
+    async with db_lock:
+        async with aiosqlite.connect(DB_PATH, timeout=30) as db:
+            await db.execute(
+                "INSERT INTO files(group_id, file_id, caption, msg_type) VALUES(?,?,?,?)",
+                (group_id, file_id, caption or "", msg_type or ""),
+            )
+            await db.commit()
+            logger.info(f"💾 Added file to group={group_id}, file_id={file_id}, type={msg_type}")
+
+
+async def get_files(group_id: int):
+    async with aiosqlite.connect(DB_PATH, timeout=30) as db:
+        cur = await db.execute(
+            "SELECT file_id, caption, msg_type FROM files WHERE group_id=? ORDER BY id ASC",
+            (group_id,),
+        )
+        rows = await cur.fetchall()
+        logger.debug(f"Fetched {len(rows)} files for group={group_id}")
+        return rows
+
+
+async def count_files_in_group(group_id: int) -> int:
+    if not group_id:
+        return 0
+    async with aiosqlite.connect(DB_PATH, timeout=30) as db:
+        cur = await db.execute("SELECT COUNT(1) FROM files WHERE group_id=?", (group_id,))
+        row = await cur.fetchone()
+        count = int(row[0] or 0)
+        logger.debug(f"Counted {count} files in group={group_id}")
+        return count
+
+
+# -------------------------
+# Backward compatibility aliases
+# -------------------------
+find_series_by_name = find_series
+get_group_id = get_group_id_value
