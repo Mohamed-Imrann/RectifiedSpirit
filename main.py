@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from pyrogram import Client, idle
-from plugins import ping, user_panel, userbot_sync, panel_like_ui
 from info import API_ID, API_HASH, BOT_TOKEN
 from database.series_sql import init_db
 
@@ -13,6 +12,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 async def start_clients():
+    # Initialize database
     await init_db()
 
     # USER client
@@ -29,7 +29,7 @@ async def start_clients():
         api_id=API_ID,
         api_hash=API_HASH,
         bot_token=BOT_TOKEN,
-        plugins={"root": "plugins"},
+        plugins={"root": "plugins"},  # auto-load all plugins in /plugins
         workdir=".",
     )
 
