@@ -1,10 +1,23 @@
 FROM python:3.9.7-slim-buster
 
-RUN apt update && apt upgrade -y
-RUN apt install git -y
-COPY requirements.txt /requirements.txt
-RUN cd /
-RUN pip install -U pip && pip install -U -r requirements.txt
+# Avoid interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# System deps
+RUN apt update && apt upgrade -y \
+    && apt install -y git build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install python deps first (better cache)
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --upgrade pip \
+    && pip install --no-cache-dir -r /tmp/requirements.txt
+
+# App directory
 WORKDIR /app
-COPY . .
+COPY . /app
+
+# Start bot
 CMD ["python", "bot.py"]
