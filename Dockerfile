@@ -21,3 +21,4 @@ COPY . /app
 
 # Start bot
 CMD ["python", "main.py"]
+
