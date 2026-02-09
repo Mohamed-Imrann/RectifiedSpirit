@@ -21,7 +21,7 @@ from pyrogram.raw.all import layer
 from database.users_chats_db import db
 from database.join_reqs import JoinReqs
 from info import *
-from utils import temp
+from utils import temp, setup_analytics_scheduler
 from typing import Union, Optional, AsyncGenerator
 from pyrogram import types
 from aiohttp import web
@@ -104,6 +104,7 @@ class Bot(Client):
           except Exception as e:
               logging.warning(f"Failed to send restart message to {admin}: {e}")
       await asyncio.sleep(4)
+      setup_analytics_scheduler(self)
       for id in DB_CHANNEL:
           try:
               await self.get_chat(id)
