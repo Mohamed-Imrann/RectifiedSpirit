@@ -20,7 +20,7 @@ BOT_TOKEN = '7448922857:AAEiLcjbuhP_XNSl0KOiCj70OpBJWFWKbCA'
 BOT_USERNAME = "Spidy_Series_bot"
 
 # Required Database and Channel Settings
-DATABASE_URI="mongodb+srv://sp:sp@cluster0.eh3zdcl.mongodb.net/?retryWrites=true&w=majority"
+DATABASE_URI="mongodb+srv://PreferableResponss:Germination@spidy_bots_speedy:27017/?tls=false"
 DATABASE_URL="mongodb+srv://sp:sp@cluster0.eh3zdcl.mongodb.net/?retryWrites=true&w=majority"
 DATABASE_NAME = "series_collection"
 COLLECTION_NAME = "series"
