@@ -13,7 +13,7 @@ import requests
 from fuzzywuzzy import fuzz # Import fuzzywuzzy
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
-from database.request_forcesub_db.py import get_req_one_count, get_req_two_count
+from database.request_forcesub_db import get_req_one_count, get_req_two_count
 from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, AUTO_DELETE_TIME, REQ_CHANNEL_ONE, REQ_CHANNEL_TWO, AUTO_DELETE_MSG, NO_POSTER_FOUND_IMG
 from database.crazy_db import episodes_collection # Import the episodes collection
 
