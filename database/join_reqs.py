@@ -3,8 +3,8 @@ from info import REQ_CHANNEL_ONE, REQ_CHANNEL_TWO
 
 class JoinReqs:
     def __init__(self):
-        from info import DATABASE_URI
-        if DATABASE_URI:
+        from info import DATABASE_URL
+        if DATABASE_URL:
             self.client = motor.motor_asyncio.AsyncIOMotorClient(DATABASE_URI)
             self.db = self.client["JoinReqs"]
             self.col1 = self.db[str(REQ_CHANNEL_ONE)]
