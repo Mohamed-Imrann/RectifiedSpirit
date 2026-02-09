@@ -23,6 +23,17 @@ async def delete_all_one():
 async def delete_all_two():
     req_two.delete_many({})
 
+async def get_all_req_one():
+    return list(req_one.find({}))
+
+async def get_req_one_count():
+    return req_one.count_documents({})
+
+async def get_all_req_two():
+    return list(req_two.find({}))
+
+async def get_req_two_count():
+    return req_two.count_documents({})
 
 async def is_requested_one(user_id):
     if await get_req_one(user_id): return True
