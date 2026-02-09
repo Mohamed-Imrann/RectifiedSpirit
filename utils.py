@@ -11,8 +11,10 @@ from imdb import Cinemagoer
 from bs4 import BeautifulSoup
 import requests
 from fuzzywuzzy import fuzz # Import fuzzywuzzy
-
-from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, AUTO_DELETE_TIME, AUTO_DELETE_MSG, NO_POSTER_FOUND_IMG
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from datetime import datetime
+from database.request_forcesub_db.py import get_req_one_count, get_req_two_count
+from info import ADMINS, AUTH_CHANNEL, LONG_IMDB_DESCRIPTION, MAX_LIST_ELM, DB_CHANNEL, RAW_DB_CHANNEL, AUTO_DELETE_TIME, REQ_CHANNEL_ONE, REQ_CHANNEL_TWO, AUTO_DELETE_MSG, NO_POSTER_FOUND_IMG
 from database.crazy_db import episodes_collection # Import the episodes collection
 
 logger = logging.getLogger(__name__)
@@ -358,6 +360,89 @@ async def forward_messages_without_tag(client: Client, from_chat_id: int, to_cha
     
     return new_message_ids
 
+async def fetch_metrics(client: Client):
+    """Collect member statistics from databases"""
+    try:
+        c1_current = await get_req_one_count()
+        c2_current = await get_req_two_count()
+        
+        # Calculate deltas
+        c1_delta = c1_current - cache_store["ch1_prev"]
+        c2_delta = c2_current - cache_store["ch2_prev"]
+        
+        # Build report
+        timestamp = datetime.now().strftime("%d %b %Y • %I:%M %p")
+        
+        report = f"""
+📊 **Member Analytics Report**
+🕐 {timestamp}
+
+━━━━━━━━━━━━━━━━━━━━
+**Channel Alpha**
+├ ID: `{CHANNEL_ONE_ID}`
+├ Total Members: **{c1_current:,}**
+├ Previous: {cache_store["ch1_prev"]:,}
+└ New Joins: **+{c1_delta:,}** {"✅" if c1_delta > 0 else ""}
+
+━━━━━━━━━━━━━━━━━━━━
+**Channel Beta**
+├ ID: `{CHANNEL_TWO_ID}`
+├ Total Members: **{c2_current:,}**
+├ Previous: {cache_store["ch2_prev"]:,}
+└ New Joins: **+{c2_delta:,}** {"✅" if c2_delta > 0 else ""}
+
+━━━━━━━━━━━━━━━━━━━━
+📈 **Combined Growth**
+└ Total New: **+{c1_delta + c2_delta:,}** members
+
+_Next update in 5 hours_
+"""
+        
+        # Send report
+        await client.send_message(
+            chat_id=ANALYTICS_CHAT,
+            text=report
+        )
+        
+        # Update cache
+        cache_store["ch1_prev"] = c1_current
+        cache_store["ch2_prev"] = c2_current
+        cache_store["last_update"] = datetime.now()
+        
+    except Exception as e:
+        await client.send_message(
+            ANALYTICS_CHAT,
+            f"⚠️ Analytics Error: `{str(e)}`"
+        )
+
+
+async def init_cache():
+    """Initialize previous counts on startup"""
+    cache_store["ch1_prev"] = await get_req_one_count()
+    cache_store["ch2_prev"] = await get_req_two_count()
+    cache_store["last_update"] = datetime.now()
+
+
+def setup_analytics_scheduler(client: Client):
+    """Configure automated analytics reporting"""
+    scheduler = AsyncIOScheduler()
+    
+    # Initialize cache
+    asyncio.create_task(init_cache())
+    
+    # Schedule every 5 hours
+    scheduler.add_job(
+        fetch_metrics,
+        trigger='interval',
+        hours=5,
+        args=[client],
+        id='analytics_job',
+        replace_existing=True
+    )
+    
+    scheduler.start()
+    return scheduler
+
 def extract_user(message: Message) -> Union[int, str]:
     """extracts the user from a message"""
     user_id = None
@@ -481,6 +566,13 @@ def gfilterparser(text, keyword):
         return note_data, buttons, alerts
     except:
         return note_data, buttons, None
+
+#no
+cache_store = {
+    "ch1_prev": 0,
+    "ch2_prev": 0,
+    "last_update": None
+}
         
 def parser(text, keyword):
     if "buttonalert" in text:
@@ -562,6 +654,10 @@ def _generate_reply_keyboard(options: List[str], row_width: int = 3):
         row = [KeyboardButton(text) for text in options[i:i+row_width]]
         keyboard_buttons.append(row)
     return ReplyKeyboardMarkup(keyboard_buttons, resize_keyboard=True, one_time_keyboard=True)
+
+ANALYTICS_CHAT = '7188908429'
+CHANNEL_ONE_ID = REQ_CHANNEL_ONE 
+CHANNEL_TWO_ID = REQ_CHANNEL_TWO
 
 def find_most_similar_title(query: str, titles: List[str]):
     """Finds the most similar title from a list using fuzzy matching."""
