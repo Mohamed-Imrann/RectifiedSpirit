@@ -5,7 +5,7 @@ class JoinReqs:
     def __init__(self):
         from info import DATABASE_URL
         if DATABASE_URL:
-            self.client = motor.motor_asyncio.AsyncIOMotorClient(DATABASE_URI)
+            self.client = motor.motor_asyncio.AsyncIOMotorClient(DATABASE_URL)
             self.db = self.client["JoinReqs"]
             self.col1 = self.db[str(REQ_CHANNEL_ONE)]
             self.col2 = self.db[str(REQ_CHANNEL_TWO)]
