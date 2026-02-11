@@ -407,26 +407,52 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
     chat_id = callback_query.message.chat.id
 
     try:
-        await callback_query.answer("Sending file...", show_alert=False)
+        await callback_query.answer("Sending files...", show_alert=False)
     except:
         pass
 
     try:
-        # must return TELEGRAM file_id (string)
-        file_id = await get_links_for_quality(link_key)
+        # ✅ Correct call (pass client)
+        files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(client, link_key)
 
-        if not file_id:
+        if not files_to_send:
             try:
-                await callback_query.answer("❌ File not found!", show_alert=True)
+                await callback_query.answer("❌ No files found!", show_alert=True)
             except:
                 pass
             return
 
-        await client.send_cached_media(
-            chat_id=chat_id,
-            file_id=file_id,
-            caption="✅ Here you go!"
-        )
+        sent_msgs = []
+
+        # ✅ Send each cached file
+        for item in files_to_send:
+            file_id = item.get("file_id")
+            caption = item.get("caption") or ""
+
+            if not file_id:
+                continue
+
+            try:
+                m = await client.send_cached_media(
+                    chat_id=chat_id,
+                    file_id=file_id,
+                    caption=caption
+                )
+                sent_msgs.append(m)
+                await asyncio.sleep(0.2)
+
+            except FloodWait as e:
+                await asyncio.sleep(e.x)
+                m = await client.send_cached_media(
+                    chat_id=chat_id,
+                    file_id=file_id,
+                    caption=caption
+                )
+                sent_msgs.append(m)
+
+        # ✅ Optional auto delete (if you want)
+        # process_msg = await client.send_message(chat_id, "✅ Files sent. Auto delete enabled.")
+        # asyncio.create_task(delete_file(sent_msgs, client, process_msg))
 
         try:
             await callback_query.answer("✅ Sent!", show_alert=False)
@@ -434,11 +460,12 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
             pass
 
     except Exception as e:
-        logger.error(f"File send error for key={link_key}: {e}")
+        logger.error(f"b: send error for key={link_key}: {e}")
         try:
-            await callback_query.answer("❌ Failed to send file.", show_alert=True)
+            await callback_query.answer("❌ Failed to send files.", show_alert=True)
         except:
             pass
+
     return
 
 if data.startswith("user_series>"):
