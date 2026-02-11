@@ -14,10 +14,10 @@ def is_enabled(value, default):
     else: return default
 
 # Required API Credentials and Bot Settings
-API_ID = '20400973' #bots
-API_HASH = '047838cb76d54bc445e155a7cab44664'
-BOT_TOKEN = '7448922857:AAEiLcjbuhP_XNSl0KOiCj70OpBJWFWKbCA'
-BOT_USERNAME = "Spidy_Series_bot"
+API_ID = '31445120' #bots
+API_HASH = '5e6c06ca38688ec6ec6e65dbff6d9b07'
+BOT_TOKEN = '8554616651:AAHwOIWuR4o17xA0vO7yLBJ_J67a2RCT084'
+BOT_USERNAME = "Spidy_Series_2_Bot"
 
 # Required Database and Channel Settings
 DATABASE_URI="mongodb://PreferableResponss:Germination@spidy_bots_speedy:27017/?tls=false"
