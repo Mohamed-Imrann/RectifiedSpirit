@@ -1,76 +1,67 @@
+# database/join_reqs.py
 import motor.motor_asyncio
-from info import REQ_CHANNEL_ONE, REQ_CHANNEL_TWO, REQ_CHANNEL_THREE
+from info import DATABASE_URL
 
 class JoinReqs:
     def __init__(self):
-        from info import DATABASE_URL
-        if DATABASE_URL:
-            self.client = motor.motor_asyncio.AsyncIOMotorClient(DATABASE_URL)
-            self.db = self.client["JoinReqs"]
-
-            # These are your join request collections (if you use them)
-            self.col1 = self.db[str(REQ_CHANNEL_ONE)]
-            self.col2 = self.db[str(REQ_CHANNEL_TWO)]
-            self.col3 = self.db[str(REQ_CHANNEL_THREE)] if REQ_CHANNEL_THREE else None
-
-            # Stores channel IDs for /setchat commands
-            self.chat_col1 = self.db["ChatId1"]
-            self.chat_col2 = self.db["ChatId2"]
-            self.chat_col3 = self.db["ChatId3"]   # ✅ NEW
-        else:
+        if not DATABASE_URL:
             self.client = None
             self.db = None
-            self.col1 = None
-            self.col2 = None
-            self.col3 = None
-            self.chat_col1 = None
-            self.chat_col2 = None
-            self.chat_col3 = None
+            return
 
-    ##############################################
-    # CHAT 1
-    ##############################################
-    async def add_fsub_chat1(self, chat_id):
-        try:
-            await self.chat_col1.delete_many({})
-            await self.chat_col1.insert_one({"chat_id": chat_id})
-        except:
-            pass
+        self.client = motor.motor_asyncio.AsyncIOMotorClient(DATABASE_URL)
+        self.db = self.client["JoinReqs"]
 
-    async def get_fsub_chat1(self):
-        return await self.chat_col1.find_one({})
+        # store fsub chat ids
+        self.fsub_col = self.db["fsub_chats"]
 
-    async def delete_fsub_chat1(self, chat_id):
-        await self.chat_col1.delete_one({"chat_id": chat_id})
+        # store per-user step
+        self.user_col = self.db["user_fsub_state"]
 
-    ##############################################
-    # CHAT 2
-    ##############################################
-    async def add_fsub_chat2(self, chat_id):
-        try:
-            await self.chat_col2.delete_many({})
-            await self.chat_col2.insert_one({"chat_id": chat_id})
-        except:
-            pass
+    # ---------------------------
+    # FSUB CHAT SET/GET (1/2/3)
+    # ---------------------------
+    async def set_fsub_chat(self, index: int, chat_id: int):
+        await self.fsub_col.update_one(
+            {"_id": f"fsub_chat{index}"},
+            {"$set": {"chat_id": int(chat_id)}},
+            upsert=True
+        )
 
-    async def get_fsub_chat2(self):
-        return await self.chat_col2.find_one({})
+    async def get_fsub_chat(self, index: int):
+        return await self.fsub_col.find_one({"_id": f"fsub_chat{index}"})
 
-    async def delete_fsub_chat2(self, chat_id):
-        await self.chat_col2.delete_one({"chat_id": chat_id})
+    async def get_all_fsub_chats(self):
+        chats = []
+        for i in (1, 2, 3):
+            doc = await self.get_fsub_chat(i)
+            if doc and doc.get("chat_id"):
+                chats.append(int(doc["chat_id"]))
+        return chats
 
-    ##############################################
-    # CHAT 3 ✅ NEW
-    ##############################################
-    async def add_fsub_chat3(self, chat_id):
-        try:
-            await self.chat_col3.delete_many({})
-            await self.chat_col3.insert_one({"chat_id": chat_id})
-        except:
-            pass
+    # ---------------------------
+    # USER STEP SET/GET/ADVANCE
+    # ---------------------------
+    async def get_user_step(self, user_id: int) -> int:
+        doc = await self.user_col.find_one({"_id": int(user_id)})
+        if not doc:
+            return 1
+        step = int(doc.get("step", 1))
+        if step < 1:
+            step = 1
+        return step
 
-    async def get_fsub_chat3(self):
-        return await self.chat_col3.find_one({})
+    async def set_user_step(self, user_id: int, step: int):
+        await self.user_col.update_one(
+            {"_id": int(user_id)},
+            {"$set": {"step": int(step)}},
+            upsert=True
+        )
 
-    async def delete_fsub_chat3(self, chat_id):
-        await self.chat_col3.delete_one({"chat_id": chat_id})
+    async def advance_user_step(self, user_id: int, total_steps: int):
+        # if total_steps=2 => 1->2->1
+        cur = await self.get_user_step(user_id)
+        nxt = cur + 1
+        if nxt > total_steps:
+            nxt = 1
+        await self.set_user_step(user_id, nxt)
