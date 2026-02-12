@@ -351,32 +351,6 @@ async def purge_req_two(bot: Bot, message: Message):
     await pls_wait.edit("<b>Req Two Database Purged ✅.</b>")
 from database.crazy_db import get_series
 
-@Bot.on_message(filters.command("stats") & filters.user(ADMINS))
-async def stats_cmd(client: Bot, message: Message):
-    try:
-        # users/chats count
-        total_users = await db.total_users_count()   # if your db has this
-        total_chats = await db.total_chats_count()   # if your db has this
-
-        # series count
-        series_list = get_series() or []
-        total_series = len(series_list)
-        published_series = len([s for s in series_list if s.get("published", False)])
-
-        txt = (
-            "📊 <b>Bot Stats</b>\n\n"
-            f"👤 Users: <code>{total_users}</code>\n"
-            f"👥 Chats: <code>{total_chats}</code>\n\n"
-            f"📺 Series Total: <code>{total_series}</code>\n"
-            f"✅ Published: <code>{published_series}</code>\n"
-        )
-
-        await message.reply_text(txt, parse_mode=enums.ParseMode.HTML)
-
-    except Exception as e:
-        await message.reply_text(f"❌ stats error: <code>{e}</code>", parse_mode=enums.ParseMode.HTML)
-
-
 # ✅ view all 3 fsub chats
 @Bot.on_message(filters.command("viewchat") & filters.user(ADMINS))
 async def view_fsub_chats(bot: Bot, message: Message):
@@ -457,3 +431,39 @@ async def add_fsub_chats3(bot: Bot, update: Message):
     )
 
     os.execl(sys.executable, sys.executable, "main.py")
+    from database.crazy_db import get_series
+
+@Bot.on_message(filters.command("stats") & filters.user(ADMINS))
+async def stats_cmd(client: Bot, message: Message):
+    try:
+        total_users = await db.total_users_count()
+        total_chats = await db.total_chat_count()
+
+        # DB size
+        try:
+            db_size = await db.get_db_size()
+        except Exception:
+            db_size = 0
+
+        # Series stats
+        series_list = get_series() or []
+        total_series = len(series_list)
+        published_series = len([s for s in series_list if s.get("published", False)])
+
+        txt = (
+            "📊 <b>Bot Stats</b>\n\n"
+            f"👤 Users: <code>{total_users}</code>\n"
+            f"👥 Groups: <code>{total_chats}</code>\n\n"
+            f"📺 Series Total: <code>{total_series}</code>\n"
+            f"✅ Published: <code>{published_series}</code>\n\n"
+            f"💾 DB Size: <code>{db_size}</code> bytes\n"
+        )
+
+        await message.reply_text(txt, parse_mode=enums.ParseMode.HTML)
+
+    except Exception as e:
+        await message.reply_text(
+            f"❌ stats error: <code>{e}</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
+
