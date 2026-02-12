@@ -1,3 +1,4 @@
+from bot import Bot
 from pyrogram.types import ChatJoinRequest
 from pyrogram.errors import FloodWait
 
