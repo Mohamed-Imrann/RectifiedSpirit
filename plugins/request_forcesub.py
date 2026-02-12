@@ -1,49 +1,67 @@
-#!/usr/bin/env python3
-# 8:43PM 2024-05-29
-# ebiza.t.me
-from bot import Bot
-from pyrogram import Client, filters, enums
-from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, ChatJoinRequest
-from info import ADMINS, REQ_CHANNEL_ONE, REQ_CHANNEL_TWO
-from Script import script
-import asyncio
-from info import CUSTOM_FILE_CAPTION
-from database.request_forcesub_db import add_req_one, add_req_two, is_requested_one, is_requested_two
-from utils import get_size, temp
-
-
-# utils ---> 609, plugins.commands ---> 97
+# plugins/request_forcesub.py
 import logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+from pyrogram import enums
+from pyrogram.types import InlineKeyboardButton
+from pyrogram.errors import UserNotParticipant
 
-async def create_request_forcesub_buttons(user_id:int):
-    #logger.info(f"Creating forcesub buttons for user {user_id}")
-    btn = []
-    if temp.LINK_ONE and user_id not in ADMINS and not await is_requested_one(user_id):
-        btn.append([InlineKeyboardButton("🎗 Jᴏɪɴ Cʜᴀɴɴᴇʟ 1 🎗", url=temp.LINK_ONE)])
-    if temp.LINK_TWO and user_id not in ADMINS and not await is_requested_two(user_id):
-        #logger.info("Adding Channel 2 button")
-        btn.append([InlineKeyboardButton("🎗 Jᴏɪɴ Cʜᴀɴɴᴇʟ 2 🎗", url=temp.LINK_TWO)])
-    if btn:
-        #logger.info("Returning forcesub buttons")
-        return btn
-    else:
-        #logger.info("No forcesub buttons needed")
+from database.join_reqs import JoinReqs
+
+logger = logging.getLogger(__name__)
+
+db1 = JoinReqs()
+
+async def _is_joined(client, chat_id: int, user_id: int) -> bool:
+    try:
+        mem = await client.get_chat_member(chat_id, user_id)
+        return mem.status != enums.ChatMemberStatus.BANNED
+    except UserNotParticipant:
+        return False
+    except Exception as e:
+        logger.error(f"_is_joined error: {e}")
+        return False
+
+async def get_required_fsub_chat(client, user_id: int):
+    """
+    Returns (chat_id, total_chats) based on user's step.
+    """
+    chats = await db1.get_all_fsub_chats()
+    if not chats:
+        return None, 0
+
+    step = await db1.get_user_step(user_id)  # 1..N
+    total = len(chats)
+
+    # clamp
+    if step > total:
+        step = 1
+        await db1.set_user_step(user_id, 1)
+
+    required_chat_id = chats[step - 1]
+    return required_chat_id, total
+
+async def create_request_forcesub_buttons(client, user_id: int):
+    """
+    ✅ ONLY ONE CHANNEL BUTTON returns.
+    If user not joined required channel -> return [[button]]
+    else -> return None
+    """
+    required_chat_id, total = await get_required_fsub_chat(client, user_id)
+    if not required_chat_id:
         return None
 
-@Bot.on_chat_join_request(filters.chat(REQ_CHANNEL_ONE) | filters.chat(REQ_CHANNEL_TWO))
-async def handle_join_request(bot: Bot, join_req: ChatJoinRequest):
-    #logger.info(f"Handling join request for user {join_req.from_user.id} in chat {join_req.chat.id}")
-    if join_req.chat.id == REQ_CHANNEL_ONE:
-        try:
-            #logger.info("Adding to req_one DB")
-            await add_req_one(join_req.from_user.id)
-        except Exception as e:
-            logger.error(f"Error adding to req_one: {e}")
-    elif join_req.chat.id == REQ_CHANNEL_TWO:
-        try:
-            #logger.info("Adding to req_two DB")
-            await add_req_two(join_req.from_user.id)
-        except Exception as e:
-            logger.error(f"Error adding to req_two: {e}")
+    joined = await _is_joined(client, required_chat_id, user_id)
+    if joined:
+        return None
+
+    try:
+        invite = await client.create_chat_invite_link(required_chat_id)
+        url = invite.invite_link
+    except Exception:
+        # public channel username might work without invite link
+        url = f"https://t.me/c/{str(required_chat_id).replace('-100','')}/1"
+
+    # ✅ only one button
+    return [[InlineKeyboardButton("🎗 Join Channel 🎗", url=url)]]
+
+async def advance_user_fsub_step(user_id: int, total: int):
+    await db1.advance_user_step(user_id, total)
