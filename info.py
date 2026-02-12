@@ -33,6 +33,12 @@ REQ_CHANNEL_ONE =environ.get("REQ_CHANNEL_ONE", None)
 REQ_CHANNEL_ONE = (int(REQ_CHANNEL_ONE) if REQ_CHANNEL_ONE and id_pattern.search(REQ_CHANNEL_ONE) else False) if REQ_CHANNEL_ONE is not None else None
 REQ_CHANNEL_TWO =environ.get("REQ_CHANNEL_TWO", None)
 REQ_CHANNEL_TWO = (int(REQ_CHANNEL_TWO) if REQ_CHANNEL_TWO and id_pattern.search(REQ_CHANNEL_TWO) else False) if REQ_CHANNEL_TWO is not None else None
+REQ_CHANNEL_THREE = environ.get("REQ_CHANNEL_THREE", None)
+REQ_CHANNEL_THREE = (
+    int(REQ_CHANNEL_THREE)
+    if REQ_CHANNEL_THREE and id_pattern.search(REQ_CHANNEL_THREE)
+    else False
+) if REQ_CHANNEL_THREE is not None else None
 
 LOG_CHANNEL = "-1002361556192"
 DB_CHANNEL = [-1002400599577, -1002964945426]
