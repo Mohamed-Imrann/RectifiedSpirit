@@ -1,20 +1,38 @@
 # database/join_reqs.py
 # -*- coding: utf-8 -*-
 
-from database.users_chats_db import db  # your existing motor db instance
+import motor.motor_asyncio
+from info import DATABASE_URI, DATABASE_URL  # whichever exists
+
+
+def _get_mongo_uri() -> str:
+    # some repos use DATABASE_URL, some use DATABASE_URI
+    uri = (DATABASE_URL or "").strip() if "DATABASE_URL" in globals() else ""
+    if not uri:
+        uri = (DATABASE_URI or "").strip()
+    return uri
 
 
 class JoinReqs:
     """
     Stores:
-    - required fsub chats (chat1/chat2/chat3)
-    - per-user fsub step state
+    - fsub chats: fsub_chat1/2/3
+    - per-user step state
     """
 
     def __init__(self):
+        uri = _get_mongo_uri()
+        if not uri:
+            raise RuntimeError("DATABASE_URL / DATABASE_URI not set")
+
+        self.client = motor.motor_asyncio.AsyncIOMotorClient(uri)
+
+        # Use separate DB name to avoid conflict
+        self.db = self.client["JoinReqsDB"]
+
         # collections
-        self.col = db["join_reqs"]          # stores fsub chats
-        self.state = db["fsub_state"]       # stores user step
+        self.col = self.db["join_reqs"]      # stores fsub chats
+        self.state = self.db["fsub_state"]   # stores user step
 
     # -------------------------
     # Generic helpers
@@ -33,7 +51,7 @@ class JoinReqs:
         await self.col.delete_one({"_id": f"fsub_chat{idx}"})
 
     # -------------------------
-    # chat1
+    # chat1/2/3 aliases (your bot expects these names)
     # -------------------------
     async def add_fsub_chat1(self, chat_id: int):
         return await self.set_fsub_chat(1, chat_id)
@@ -44,9 +62,6 @@ class JoinReqs:
     async def delete_fsub_chat1(self, chat_id: int = None):
         return await self.del_fsub_chat(1)
 
-    # -------------------------
-    # chat2
-    # -------------------------
     async def add_fsub_chat2(self, chat_id: int):
         return await self.set_fsub_chat(2, chat_id)
 
@@ -56,9 +71,6 @@ class JoinReqs:
     async def delete_fsub_chat2(self, chat_id: int = None):
         return await self.del_fsub_chat(2)
 
-    # -------------------------
-    # chat3
-    # -------------------------
     async def add_fsub_chat3(self, chat_id: int):
         return await self.set_fsub_chat(3, chat_id)
 
@@ -70,7 +82,6 @@ class JoinReqs:
 
     # -------------------------
     # User step state
-    # step = 1 / 2 / 3 ...
     # -------------------------
     async def get_user_step(self, user_id: int) -> int:
         doc = await self.state.find_one({"_id": int(user_id)})
