@@ -14,17 +14,17 @@ from pyrogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery,
     InputMediaPhoto
 )
-from pyrogram.errors import MessageNotModified, FloodWait, BadRequest
+from pyrogram.errors import MessageNotModified, FloodWait
 
 from info import SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG, ADMINS, CHANNELS
 from database.crazy_db import get_series, get_series_name, get_poster_manuel
 from database.gfilters_mdb import find_gfilter, get_gfilters
 from utils import temp, get_links_for_quality
 
-# ✅ FSUB system (ONE-CHANNEL ONLY + STEP ADVANCE)
+# ✅ NEW FSUB system (STRICT JOIN + AUTO STEP ADVANCE)
 from plugins.request_forcesub import (
     create_request_forcesub_buttons,
-    advance_user_fsub_step
+    check_and_advance_if_joined
 )
 
 import imdb
@@ -326,7 +326,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     data = callback_query.data
 
-    # ✅ QUALITY BUTTON HANDLER (b:) — FSUB + send PM + step advance
+    # ✅ QUALITY BUTTON HANDLER (b:) — STRICT FSUB + PM SEND + AUTO STEP ADVANCE
     if data.startswith("b:"):
         link_key = data.split(":", 1)[1]
         origin_chat_id = callback_query.message.chat.id
@@ -344,29 +344,36 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                 pass
             return
 
-        # ✅ ONE-CHANNEL FORCE SUB CHECK
+        # ✅ STRICT CHECK: if not joined => MUST STOP here
         try:
-            btn = await create_request_forcesub_buttons(client, user_id)  # returns [[button]] or None
+            ok = await check_and_advance_if_joined(client, user_id)
         except Exception as e:
-            logger.error(f"create_request_forcesub_buttons error: {e}")
-            btn = None
+            logger.error(f"check_and_advance_if_joined error: {e}")
+            ok = True  # fail-safe: do not block on crash
 
-        if btn:
+        if not ok:
+            try:
+                btn = await create_request_forcesub_buttons(client, user_id)
+            except Exception as e:
+                logger.error(f"create_request_forcesub_buttons error: {e}")
+                btn = None
+
             try:
                 await callback_query.answer("⚠️ Join the channel first!", show_alert=True)
             except:
                 pass
 
-            try:
-                await client.send_message(
-                    chat_id=user_id,
-                    text="<b>🔒 Please join this channel to continue</b>",
-                    reply_markup=InlineKeyboardMarkup(btn),
-                    parse_mode=enums.ParseMode.HTML
-                )
-            except Exception as e:
-                logger.error(f"Failed to send fsub buttons in PM: {e}")
-            return
+            if btn:
+                try:
+                    await client.send_message(
+                        chat_id=user_id,
+                        text="<b>🔒 Please join this channel to continue</b>",
+                        reply_markup=InlineKeyboardMarkup(btn),
+                        parse_mode=enums.ParseMode.HTML
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send fsub buttons in PM: {e}")
+            return  # ✅ VERY IMPORTANT (no files should send)
 
         # ✅ Joined => send files in PM
         try:
@@ -374,7 +381,6 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
         except:
             pass
 
-        sent_any = False
         try:
             files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(client, link_key)
 
@@ -397,19 +403,11 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                         file_id=file_id,
                         caption=caption
                     )
-                    sent_any = True
                     await asyncio.sleep(0.2)
                 except FloodWait as e:
                     await asyncio.sleep(e.x)
                 except Exception as e:
                     logger.error(f"send_cached_media error: {e}")
-
-            # ✅ advance to next fsub channel ONLY IF sent
-            if sent_any:
-                try:
-                    await advance_user_fsub_step(user_id)  # next request -> next channel
-                except Exception as e:
-                    logger.error(f"advance step error: {e}")
 
             try:
                 await callback_query.answer("✅ Sent in PM!", show_alert=False)
