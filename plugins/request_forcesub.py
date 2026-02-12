@@ -1,118 +1,164 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-from bot import Bot
-from pyrogram import filters, enums
-from pyrogram.types import InlineKeyboardButton, ChatJoinRequest
+# plugins/request_forcesub.py
+import logging
+from pyrogram import enums
+from pyrogram.types import InlineKeyboardButton
 from pyrogram.errors import UserNotParticipant
 
-from info import ADMINS, REQ_CHANNEL_ONE, REQ_CHANNEL_TWO, REQ_CHANNEL_THREE
-from utils import temp
-
-import logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
+from database.join_reqs import JoinReqs
 from database.request_forcesub_db import (
-    add_req_one, add_req_two, add_req_three,
-    is_requested_one, is_requested_two, is_requested_three
+    get_user_step,
+    set_user_step,
+    advance_user_step,
 )
 
-# -----------------------------
-# Internal: which channel is next for this user?
-# -----------------------------
-async def _get_pending_step(user_id: int):
-    if user_id in ADMINS:
-        return None
-
-    if REQ_CHANNEL_ONE and temp.LINK_ONE and not await is_requested_one(user_id):
-        return (1, int(REQ_CHANNEL_ONE), temp.LINK_ONE, add_req_one)
-
-    if REQ_CHANNEL_TWO and temp.LINK_TWO and not await is_requested_two(user_id):
-        return (2, int(REQ_CHANNEL_TWO), temp.LINK_TWO, add_req_two)
-
-    if REQ_CHANNEL_THREE and getattr(temp, "LINK_THREE", None) and not await is_requested_three(user_id):
-        return (3, int(REQ_CHANNEL_THREE), temp.LINK_THREE, add_req_three)
-
-    return None
+logger = logging.getLogger(__name__)
+db1 = JoinReqs()
 
 
-# -----------------------------
-# Public: Buttons (ONE CHANNEL ONLY)
-# -----------------------------
-async def create_request_forcesub_buttons(client: Bot, user_id: int):
-    pending = await _get_pending_step(user_id)
-    if not pending:
-        return None
-
-    step_no, channel_id, link, add_fn = pending
-    return [[InlineKeyboardButton(f"🎗 Join Channel {step_no} 🎗", url=link)]]
-
-
-# -----------------------------
-# Public: strict check + auto advance
-# -----------------------------
-async def check_and_advance_if_joined(client: Bot, user_id: int) -> bool:
-    pending = await _get_pending_step(user_id)
-    if not pending:
-        return True
-
-    step_no, channel_id, link, add_fn = pending
-
+# ----------------------------
+# Internal helpers
+# ----------------------------
+async def _is_joined_or_requested(client, chat_id: int, user_id: int) -> bool:
+    """
+    ✅ True if:
+      - user is already member
+      - OR user sent Join Request (pending)
+    """
     try:
-        member = await client.get_chat_member(channel_id, user_id)
-        if member.status in (
-            enums.ChatMemberStatus.MEMBER,
-            enums.ChatMemberStatus.ADMINISTRATOR,
-            enums.ChatMemberStatus.OWNER
-        ):
-            try:
-                await add_fn(user_id)
-            except Exception as e:
-                logger.error(f"DB add step{step_no} failed: {e}")
-            return True
-
-        return False
+        mem = await client.get_chat_member(int(chat_id), int(user_id))
+        return mem.status != enums.ChatMemberStatus.BANNED
 
     except UserNotParticipant:
+        # ✅ If join-request pending => allow
+        try:
+            reqs = await client.get_chat_join_requests(int(chat_id), limit=200)
+            for r in reqs:
+                if r.from_user and r.from_user.id == int(user_id):
+                    return True
+        except Exception:
+            pass
         return False
+
     except Exception as e:
-        logger.error(f"check_and_advance_if_joined error: {e}")
+        logger.error(f"_is_joined_or_requested error: {e}")
+        return False
+
+
+async def _get_chat_invite_url(client, chat_id: int) -> str:
+    """
+    ✅ Prefer join-request invite link (creates_join_request=True)
+    """
+    try:
+        invite = await client.create_chat_invite_link(int(chat_id), creates_join_request=True)
+        if invite and invite.invite_link:
+            return invite.invite_link
+    except Exception:
+        pass
+
+    try:
+        chat = await client.get_chat(int(chat_id))
+        if chat and getattr(chat, "username", None):
+            return f"https://t.me/{chat.username}"
+    except Exception:
+        pass
+
+    return "https://t.me/"
+
+
+async def get_all_fsub_chats() -> list:
+    """
+    Reads fsub chats from JoinReqs DB (chat1/chat2/chat3).
+    """
+    chats = []
+
+    try:
+        c1 = await db1.get_fsub_chat1()
+        if c1 and c1.get("chat_id"):
+            chats.append(int(c1["chat_id"]))
+    except Exception as e:
+        logger.error(f"get_fsub_chat1 error: {e}")
+
+    try:
+        c2 = await db1.get_fsub_chat2()
+        if c2 and c2.get("chat_id"):
+            chats.append(int(c2["chat_id"]))
+    except Exception as e:
+        logger.error(f"get_fsub_chat2 error: {e}")
+
+    if hasattr(db1, "get_fsub_chat3"):
+        try:
+            c3 = await db1.get_fsub_chat3()
+            if c3 and c3.get("chat_id"):
+                chats.append(int(c3["chat_id"]))
+        except Exception as e:
+            logger.error(f"get_fsub_chat3 error: {e}")
+
+    # uniq preserve order
+    uniq = []
+    for x in chats:
+        if x not in uniq:
+            uniq.append(x)
+    return uniq
+
+
+# ----------------------------
+# Public API
+# ----------------------------
+async def get_required_fsub_chat(client, user_id: int):
+    """
+    Returns (required_chat_id, total, step)
+    """
+    chats = await get_all_fsub_chats()
+    if not chats:
+        return None, 0, 0
+
+    total = len(chats)
+
+    step = await get_user_step(int(user_id))
+    if step < 1 or step > total:
+        step = 1
+        await set_user_step(int(user_id), 1)
+
+    required_chat_id = chats[step - 1]
+    return required_chat_id, total, step
+
+
+async def create_request_forcesub_buttons(client, user_id: int):
+    """
+    Returns buttons if NOT joined/requested required channel.
+    """
+    required_chat_id, total, step = await get_required_fsub_chat(client, int(user_id))
+    if not required_chat_id:
+        return None
+
+    ok = await _is_joined_or_requested(client, required_chat_id, int(user_id))
+    if ok:
+        return None
+
+    url = await _get_chat_invite_url(client, required_chat_id)
+
+    # ✅ only one button
+    return [[InlineKeyboardButton(f"🎗 Join Channel {step} 🎗", url=url)]]
+
+
+async def check_and_advance_if_joined(client, user_id: int) -> bool:
+    """
+    ✅ If joined/requested => advance step and return True
+    """
+    required_chat_id, total, step = await get_required_fsub_chat(client, int(user_id))
+    if not required_chat_id:
         return True
 
+    ok = await _is_joined_or_requested(client, required_chat_id, int(user_id))
+    if not ok:
+        return False
 
-# -----------------------------
-# Join Request handler (ONLY for channels that exist)
-# -----------------------------
-_join_filters = []
-if REQ_CHANNEL_ONE:
-    _join_filters.append(filters.chat(int(REQ_CHANNEL_ONE)))
-if REQ_CHANNEL_TWO:
-    _join_filters.append(filters.chat(int(REQ_CHANNEL_TWO)))
-if REQ_CHANNEL_THREE:
-    _join_filters.append(filters.chat(int(REQ_CHANNEL_THREE)))
+    await advance_user_step(int(user_id), total)
+    return True
 
-if _join_filters:
-    join_filter = _join_filters[0]
-    for f in _join_filters[1:]:
-        join_filter = join_filter | f
 
-    @Bot.on_chat_join_request(join_filter)
-    async def handle_join_request(bot: Bot, join_req: ChatJoinRequest):
-        user_id = join_req.from_user.id
-        chat_id = join_req.chat.id
-
-        try:
-            await join_req.approve()
-        except Exception as e:
-            logger.error(f"approve join request failed: {e}")
-
-        try:
-            if REQ_CHANNEL_ONE and chat_id == int(REQ_CHANNEL_ONE):
-                await add_req_one(user_id)
-            elif REQ_CHANNEL_TWO and chat_id == int(REQ_CHANNEL_TWO):
-                await add_req_two(user_id)
-            elif REQ_CHANNEL_THREE and chat_id == int(REQ_CHANNEL_THREE):
-                await add_req_three(user_id)
-        except Exception as e:
-            logger.error(f"handle_join_request db save failed: {e}")
+# Backward compat
+async def advance_user_fsub_step(user_id: int, total: int = 3):
+    # not used now
+    await advance_user_step(int(user_id), int(total))
