@@ -21,28 +21,24 @@ from database.crazy_db import get_series, get_series_name, get_poster_manuel
 from database.gfilters_mdb import find_gfilter, get_gfilters
 from utils import temp, get_links_for_quality
 
-# ✅ NEW FSUB system (ONE-CHANNEL ONLY + STEP ADVANCE)
+# ✅ FSUB system (ONE-CHANNEL ONLY + STEP ADVANCE)
 from plugins.request_forcesub import (
     create_request_forcesub_buttons,
-    get_required_fsub_chat,
     advance_user_fsub_step
 )
 
 import imdb
 import difflib
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Global variables
 user_requestor: Dict[str, Dict] = {}
 request_timestamps: Dict[str, float] = {}
 
-# IMDb setup
 ia = imdb.IMDb()
 
 
@@ -58,17 +54,13 @@ async def DeleteMessage(msg):
 
 
 async def clean_expired_requests():
-    """Clean up user_requestor entries older than 30 minutes"""
     while True:
         await asyncio.sleep(600)
-        current_time = time.time()
-        expired_keys = []
-        for key, timestamp in request_timestamps.items():
-            if current_time - timestamp > 1800:
-                expired_keys.append(key)
-        for key in expired_keys:
-            user_requestor.pop(key, None)
-            request_timestamps.pop(key, None)
+        now = time.time()
+        expired = [k for k, ts in request_timestamps.items() if now - ts > 1800]
+        for k in expired:
+            user_requestor.pop(k, None)
+            request_timestamps.pop(k, None)
 
 
 def create_user_layout_from_pattern(
@@ -82,34 +74,24 @@ def create_user_layout_from_pattern(
         return []
 
     layout = []
-    item_index = 0
+    i = 0
 
     for row_count in layout_pattern:
-        if item_index >= len(items):
+        if i >= len(items):
             break
         row = []
         for _ in range(row_count):
-            if item_index < len(items):
-                row.append(
-                    InlineKeyboardButton(
-                        items[item_index],
-                        callback_data=f"{callback_prefix}_{item_index}"
-                    )
-                )
-                item_index += 1
+            if i < len(items):
+                row.append(InlineKeyboardButton(items[i], callback_data=f"{callback_prefix}_{i}"))
+                i += 1
         if row:
             layout.append(row)
 
-    while item_index < len(items):
+    while i < len(items):
         row = []
-        for _ in range(min(2, len(items) - item_index)):
-            row.append(
-                InlineKeyboardButton(
-                    items[item_index],
-                    callback_data=f"{callback_prefix}_{item_index}"
-                )
-            )
-            item_index += 1
+        for _ in range(min(2, len(items) - i)):
+            row.append(InlineKeyboardButton(items[i], callback_data=f"{callback_prefix}_{i}"))
+            i += 1
         if row:
             layout.append(row)
 
@@ -137,11 +119,6 @@ def find_most_similar_title(query: str, search_results: list):
 
 
 async def get_main_poster(client: Bot, series_key: str) -> str:
-    """
-    Get poster as Telegram file_id.
-    1) DB (poster_file_id)
-    2) IMDb -> upload to Telegram -> cache file_id
-    """
     poster_file_id = get_poster_manuel(series_key)
     if poster_file_id:
         return poster_file_id
@@ -165,7 +142,6 @@ async def get_main_poster(client: Bot, series_key: str) -> str:
         if not poster_url:
             return NO_POSTER_FOUND_IMG[0]
 
-        uploaded = None
         while True:
             try:
                 uploaded = await client.send_photo(
@@ -173,13 +149,12 @@ async def get_main_poster(client: Bot, series_key: str) -> str:
                     photo=poster_url,
                     caption=f"Auto-fetched poster for {title}"
                 )
+                poster_file_id = uploaded.photo.file_id
                 break
             except FloodWait as e:
                 await asyncio.sleep(e.value)
             except Exception:
                 return NO_POSTER_FOUND_IMG[0]
-
-        poster_file_id = uploaded.photo.file_id
 
         try:
             from database.crazy_db import update_poster_file_id
@@ -212,33 +187,15 @@ async def global_filters(client: Bot, message: Message, text=False) -> bool:
             try:
                 if fileid == "None":
                     if btn == "[]":
-                        await client.send_message(
-                            group_id, reply_text,
-                            disable_web_page_preview=True,
-                            reply_to_message_id=reply_id
-                        )
+                        await client.send_message(group_id, reply_text, disable_web_page_preview=True, reply_to_message_id=reply_id)
                     else:
                         button = eval(btn)
-                        await client.send_message(
-                            group_id, reply_text,
-                            disable_web_page_preview=True,
-                            reply_markup=InlineKeyboardMarkup(button),
-                            reply_to_message_id=reply_id
-                        )
+                        await client.send_message(group_id, reply_text, disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(button), reply_to_message_id=reply_id)
                 elif btn == "[]":
-                    await client.send_cached_media(
-                        group_id, fileid,
-                        caption=reply_text or "",
-                        reply_to_message_id=reply_id
-                    )
+                    await client.send_cached_media(group_id, fileid, caption=reply_text or "", reply_to_message_id=reply_id)
                 else:
                     button = eval(btn)
-                    await message.reply_cached_media(
-                        fileid,
-                        caption=reply_text or "",
-                        reply_markup=InlineKeyboardMarkup(button),
-                        reply_to_message_id=reply_id
-                    )
+                    await message.reply_cached_media(fileid, caption=reply_text or "", reply_markup=InlineKeyboardMarkup(button), reply_to_message_id=reply_id)
                 return True
             except Exception:
                 pass
@@ -250,7 +207,7 @@ async def global_filters(client: Bot, message: Message, text=False) -> bool:
 # Series filter
 # ----------------------------
 async def series_filter(client: Bot, message: Message):
-    text = message.text.strip()
+    text = (message.text or "").strip()
     series_infos = get_series()
     published_series = [s for s in series_infos if s.get('published', False)]
 
@@ -269,7 +226,7 @@ async def series_filter(client: Bot, message: Message):
 
         if not series_key:
             close_matches = find_close_matches(text, series_names)
-            if not close_matches:
+            if not close_matches and text:
                 first_word = text.split()[0]
                 close_matches = [name for name in series_names if name.lower().startswith(first_word.lower())]
 
@@ -281,18 +238,18 @@ async def series_filter(client: Bot, message: Message):
                         buttons.append(InlineKeyboardButton(match, callback_data=f"user_series>{s_info['_id']}"))
 
                 if buttons:
-                    layout = [[button] for button in buttons]
+                    layout = [[b] for b in buttons]
                     layout.append([InlineKeyboardButton("✨ Request Series ✨", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
                     layout.append([InlineKeyboardButton("✨Latest Series✨", url="https://t.me/+yKtGXrUgchswYjZl")])
-                    reply_markup = InlineKeyboardMarkup(layout)
 
                     etho = await message.reply_photo(
                         photo=random.choice(SPELL_CHECK_IMAGE),
                         caption="<b>Choose Your Series:</b>",
-                        reply_markup=reply_markup
+                        reply_markup=InlineKeyboardMarkup(layout)
                     )
-                    reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
-                    user_requestor[f"{etho.chat.id}•{etho.id}"] = {"data": reply_etho_user_id, "timestamp": time.time()}
+
+                    reply_user = etho.reply_to_message.from_user.id if etho.reply_to_message and etho.reply_to_message.from_user else None
+                    user_requestor[f"{etho.chat.id}•{etho.id}"] = {"data": reply_user, "timestamp": time.time()}
                     request_timestamps[f"{etho.chat.id}•{etho.id}"] = time.time()
                     return
 
@@ -319,17 +276,15 @@ async def series_filter(client: Bot, message: Message):
             await message.reply("No languages available for this series.")
             return
 
-        reply_markup = InlineKeyboardMarkup(layout)
-
         etho = await message.reply_photo(
             photo=poster_url if poster_url else NO_POSTER_FOUND_IMG[0],
             caption=reply_text,
-            reply_markup=reply_markup
+            reply_markup=InlineKeyboardMarkup(layout)
         )
 
-        reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
+        req_user = etho.reply_to_message.from_user.id if etho.reply_to_message and etho.reply_to_message.from_user else message.chat.id
         user_requestor[f"{etho.chat.id}•{etho.id}"] = {
-            "data": {"series_key": series_key, "requested_user": reply_etho_user_id},
+            "data": {"series_key": series_key, "requested_user": req_user},
             "timestamp": time.time()
         }
         request_timestamps[f"{etho.chat.id}•{etho.id}"] = time.time()
@@ -391,7 +346,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
 
         # ✅ ONE-CHANNEL FORCE SUB CHECK
         try:
-            btn = await create_request_forcesub_buttons(client, user_id)  # ✅ correct signature
+            btn = await create_request_forcesub_buttons(client, user_id)  # returns [[button]] or None
         except Exception as e:
             logger.error(f"create_request_forcesub_buttons error: {e}")
             btn = None
@@ -402,7 +357,6 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
             except:
                 pass
 
-            # send join in PM
             try:
                 await client.send_message(
                     chat_id=user_id,
@@ -420,6 +374,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
         except:
             pass
 
+        sent_any = False
         try:
             files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(client, link_key)
 
@@ -438,23 +393,23 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
 
                 try:
                     await client.send_cached_media(
-                        chat_id=user_id,  # ✅ ALWAYS PM
+                        chat_id=user_id,   # ✅ ALWAYS PM
                         file_id=file_id,
                         caption=caption
                     )
+                    sent_any = True
                     await asyncio.sleep(0.2)
                 except FloodWait as e:
                     await asyncio.sleep(e.x)
                 except Exception as e:
                     logger.error(f"send_cached_media error: {e}")
 
-            # ✅ advance to next fsub channel after success
-            try:
-                _, total = await get_required_fsub_chat(client, user_id)
-                if total > 0:
-                    await advance_user_fsub_step(user_id, total)
-            except Exception as e:
-                logger.error(f"advance step error: {e}")
+            # ✅ advance to next fsub channel ONLY IF sent
+            if sent_any:
+                try:
+                    await advance_user_fsub_step(user_id)  # next request -> next channel
+                except Exception as e:
+                    logger.error(f"advance step error: {e}")
 
             try:
                 await callback_query.answer("✅ Sent in PM!", show_alert=False)
@@ -547,19 +502,18 @@ async def user_series_callback_handler(client: Bot, query: CallbackQuery):
                 pass
             return
 
-        reply_markup = InlineKeyboardMarkup(layout)
         poster = await get_main_poster(client, series_key)
 
         try:
             await query.message.edit_media(
                 media=InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
-                reply_markup=reply_markup
+                reply_markup=InlineKeyboardMarkup(layout)
             )
         except MessageNotModified:
             pass
         except Exception:
             try:
-                await query.message.edit_text(text=text, reply_markup=reply_markup, parse_mode=enums.ParseMode.MARKDOWN)
+                await query.message.edit_text(text=text, reply_markup=InlineKeyboardMarkup(layout), parse_mode=enums.ParseMode.MARKDOWN)
             except Exception:
                 pass
 
@@ -624,13 +578,12 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
 
             text = base_text + "Select the language you need...!"
             layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
-            reply_markup = InlineKeyboardMarkup(layout)
-
             poster = await get_main_poster(client, series_key)
+
             try:
                 await query.message.edit_media(
                     media=InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
-                    reply_markup=reply_markup
+                    reply_markup=InlineKeyboardMarkup(layout)
                 )
             except Exception:
                 pass
@@ -647,91 +600,87 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
 
             text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
             layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
-            reply_markup = InlineKeyboardMarkup(layout)
 
             try:
                 await query.message.edit_media(
                     media=InputMediaPhoto(media=query.message.photo.file_id, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
-                    reply_markup=reply_markup
+                    reply_markup=InlineKeyboardMarkup(layout)
                 )
             except Exception:
                 pass
             return
 
     # Parse callback
-    callback_parts = data.split("_", 1)
-    if len(callback_parts) != 2:
+    parts = data.split("_", 1)
+    if len(parts) != 2:
         return
 
-    callback_type = callback_parts[0]
+    cb_type = parts[0]
     try:
-        callback_index = int(callback_parts[1])
+        cb_index = int(parts[1])
     except ValueError:
         return
 
     # Language click
-    if callback_type == "lang":
+    if cb_type == "lang":
         languages = series.get("languages", [])
-        if not (0 <= callback_index < len(languages)):
+        if not (0 <= cb_index < len(languages)):
             return
 
-        language_name = languages[callback_index]["name"]
-        seasons = languages[callback_index].get("seasons", [])
-        season_layout = languages[callback_index].get("season_layout", [1] * len(seasons))
+        language_name = languages[cb_index]["name"]
+        seasons = languages[cb_index].get("seasons", [])
+        season_layout = languages[cb_index].get("season_layout", [1] * len(seasons))
         season_names = [season['name'] for season in seasons]
 
-        stored_data.update({
-            "language_name": language_name,
-            "language_index": callback_index
-        })
+        stored_data.update({"language_name": language_name, "language_index": cb_index})
         user_requestor[f"{chat_id}•{message_id}"] = {"data": stored_data, "timestamp": time.time()}
         request_timestamps[f"{chat_id}•{message_id}"] = time.time()
 
         text = base_text + f"○ **Language:** `{language_name}`\nSelect the season you need...!"
         layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
-        reply_markup = InlineKeyboardMarkup(layout)
 
         try:
             await query.message.edit_media(
                 media=InputMediaPhoto(media=query.message.photo.file_id, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
-                reply_markup=reply_markup
+                reply_markup=InlineKeyboardMarkup(layout)
             )
         except Exception:
             pass
         return
 
     # Season click
-    if callback_type == "season":
+    if cb_type == "season":
         language_index = stored_data.get("language_index")
         languages = series.get("languages", [])
         seasons = languages[language_index].get("seasons", [])
-        if not (0 <= callback_index < len(seasons)):
+        if not (0 <= cb_index < len(seasons)):
             return
 
-        season_name = seasons[callback_index]["name"]
-        qualities = seasons[callback_index].get("qualities", [])
+        season_name = seasons[cb_index]["name"]
+        qualities = seasons[cb_index].get("qualities", [])
 
-        stored_data.update({
-            "season_name": season_name,
-            "season_index": callback_index
-        })
+        stored_data.update({"season_name": season_name, "season_index": cb_index})
         user_requestor[f"{chat_id}•{message_id}"] = {"data": stored_data, "timestamp": time.time()}
         request_timestamps[f"{chat_id}•{message_id}"] = time.time()
 
-        text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`\n○ **Season:** `{season_name}`\nSelect the quality you need...!"
+        text = (
+            base_text
+            + f"○ **Language:** `{stored_data.get('language_name')}`\n"
+            + f"○ **Season:** `{season_name}`\n"
+            + "Select the quality you need...!"
+        )
 
         layout = []
-        for quality in qualities:
-            if quality.get("link_key"):
-                layout.append([InlineKeyboardButton(quality["name"], callback_data=f"b:{quality['link_key']}")])
+        for q in qualities:
+            if q.get("link_key"):
+                layout.append([InlineKeyboardButton(q["name"], callback_data=f"b:{q['link_key']}")])
 
         layout.append([InlineKeyboardButton("⬅️ Back", callback_data="back_season")])
-        reply_markup = InlineKeyboardMarkup(layout)
 
         try:
             await query.message.edit_media(
                 media=InputMediaPhoto(media=query.message.photo.file_id, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
-                reply_markup=reply_markup
+                reply_markup=InlineKeyboardMarkup(layout)
             )
         except Exception:
             pass
