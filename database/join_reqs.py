@@ -38,3 +38,29 @@ class JoinReqs:
     async def delete_fsub_chat2(self, chat_id):
         await self.chat_col2.delete_one({"chat_id": chat_id})
     ##############################################
+from database.users_chats_db import db  # your existing db import
+
+class JoinReqs:
+    def __init__(self):
+        self.col = db["join_reqs"]
+
+    # chat1
+    async def set_fsub_chat1(self, chat_id: int):
+        await self.col.update_one({"_id": "fsub_chat1"}, {"$set": {"chat_id": chat_id}}, upsert=True)
+
+    async def get_fsub_chat1(self):
+        return await self.col.find_one({"_id": "fsub_chat1"})
+
+    # chat2
+    async def set_fsub_chat2(self, chat_id: int):
+        await self.col.update_one({"_id": "fsub_chat2"}, {"$set": {"chat_id": chat_id}}, upsert=True)
+
+    async def get_fsub_chat2(self):
+        return await self.col.find_one({"_id": "fsub_chat2"})
+
+    # chat3 ✅ NEW
+    async def set_fsub_chat3(self, chat_id: int):
+        await self.col.update_one({"_id": "fsub_chat3"}, {"$set": {"chat_id": chat_id}}, upsert=True)
+
+    async def get_fsub_chat3(self):
+        return await self.col.find_one({"_id": "fsub_chat3"})
