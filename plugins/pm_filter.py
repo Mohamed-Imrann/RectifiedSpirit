@@ -410,7 +410,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                 pass
             return
 
-        # ✅ STRICT CHECK (NOT JOINED => save pending + show join btn, DO NOT send files)
+        # ✅ GET REQUIRED FSUB CHAT
         try:
             required_chat_id, total, step = await get_required_fsub_chat(client, user_id)
         except Exception as e:
@@ -419,13 +419,13 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
 
         # ask join button if user not joined
         try:
-            btn = await create_request_forcesub_buttons(client, user_id)  # returns [[button]] or None
+            btn = await create_request_forcesub_buttons(client, user_id)
         except Exception as e:
             logger.error(f"create_request_forcesub_buttons error: {e}")
             btn = None
 
+        # 🔒 USER NOT JOINED
         if btn:
-            # ✅ save pending so join-request triggers auto-send
             if required_chat_id:
                 try:
                     await set_pending(
@@ -446,15 +446,23 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
             try:
                 await client.send_message(
                     chat_id=user_id,
-                    text="<b>🔒 Please join this channel to continue</b>\n\n✅ After join-request, files will come automatically.",
+                    text="<b>🔒 Please join this channel to continue</b>\n\n"
+                         "✅ After join-request, files will come automatically.",
                     reply_markup=InlineKeyboardMarkup(btn),
                     parse_mode=enums.ParseMode.HTML
                 )
             except Exception as e:
                 logger.error(f"Failed to send fsub buttons in PM: {e}")
-            return  # ✅ STOP HERE
+                try:
+                    await callback_query.answer(
+                        "Open bot PM and press /start first!",
+                        show_alert=True
+                    )
+                except:
+                    pass
+            return
 
-        # ✅ If no fsub configured OR already joined => send files in PM
+        # ✅ ALREADY JOINED → SEND FILES
         try:
             await callback_query.answer("Sending files in PM...", show_alert=False)
         except:
@@ -478,23 +486,21 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
 
                 try:
                     await client.send_cached_media(
-                        chat_id=user_id,   # ✅ ALWAYS PM
+                        chat_id=user_id,
                         file_id=file_id,
                         caption=caption
                     )
                     await asyncio.sleep(0.2)
                 except FloodWait as e:
-                    await asyncio.sleep(e.x)
+                    await asyncio.sleep(e.value)
                 except Exception as e:
                     logger.error(f"send_cached_media error: {e}")
 
-            # if user was pending from earlier, clear it
             try:
                 await clear_pending(int(user_id))
             except Exception:
                 pass
 
-            # ✅ advance after successful send (not before)
             if required_chat_id and total:
                 try:
                     await advance_user_step(int(user_id), int(total))
@@ -520,7 +526,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
         await user_series_callback_handler(client, callback_query)
         return
 
-    # ✅ UI BUTTONS (language/season/back)
+    # ✅ UI BUTTONS
     if data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_"):
         await user_interface_callback_handler(client, callback_query)
         return
