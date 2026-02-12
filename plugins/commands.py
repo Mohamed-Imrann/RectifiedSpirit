@@ -518,3 +518,61 @@ async def delete_fsub_chat2(bot: Bot, update: Message):
     except Exception as e:
         logger.error(f"Error deleting chat 2: {e}")
         await update.reply_text("An error occurred while deleting chat 2. Please check the logs.", quote=True)
+from database.crazy_db import get_series
+
+@Bot.on_message(filters.command("fsl") & filters.user(ADMINS))
+async def full_series_list(client: Bot, message: Message):
+    try:
+        args = message.text.split(maxsplit=1)
+        mode = args[1].strip().lower() if len(args) > 1 else ""
+
+        series_list = get_series() or []
+        if not series_list:
+            return await message.reply_text("❌ No series found in database.", parse_mode=enums.ParseMode.HTML)
+
+        total_series = len(series_list)
+
+        if mode == "detailed":
+            text = "📚 <b>Full Series List (Detailed)</b>\n\n"
+        else:
+            text = "📚 <b>Full Series List</b>\n\n"
+
+        text += f"📺 Total Series: <code>{total_series}</code>\n\n"
+
+        for i, s in enumerate(series_list, start=1):
+            title = s.get("title", "Unknown")
+            released = s.get("released_on", "N/A")
+            rating = s.get("rating", "N/A")
+            published = "✅" if s.get("published", False) else "❌"
+
+            if mode == "detailed":
+                languages = s.get("languages", []) or []
+                lang_count = len(languages)
+
+                season_count = 0
+                for lang in languages:
+                    seasons = lang.get("seasons", []) or []
+                    season_count += len(seasons)
+
+                text += (
+                    f"{i}. <b>{title}</b> {published}\n"
+                    f"   📅 {released} | ⭐ {rating}\n"
+                    f"   🌐 Languages: <code>{lang_count}</code> | 🎬 Seasons: <code>{season_count}</code>\n\n"
+                )
+            else:
+                text += (
+                    f"{i}. <b>{title}</b>\n"
+                    f"   📅 {released} | ⭐ {rating} {published}\n\n"
+                )
+
+        # Telegram 4096 limit safe split
+        if len(text) > 4000:
+            chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+            for chunk in chunks:
+                await message.reply_text(chunk, parse_mode=enums.ParseMode.HTML)
+        else:
+            await message.reply_text(text, parse_mode=enums.ParseMode.HTML)
+
+    except Exception as e:
+        await message.reply_text(f"❌ fsl error: <code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+
