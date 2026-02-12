@@ -12,37 +12,27 @@ db1 = JoinReqs()
 
 
 async def _is_joined(client, chat_id: int, user_id: int) -> bool:
-    """
-    ✅ REAL join check:
-    MEMBER/ADMIN/OWNER/RESTRICTED => joined
-    LEFT/BANNED => not joined
-    """
     try:
         mem = await client.get_chat_member(int(chat_id), int(user_id))
-
-        if mem.status in (
-            enums.ChatMemberStatus.MEMBER,
-            enums.ChatMemberStatus.ADMINISTRATOR,
-            enums.ChatMemberStatus.OWNER,
-            enums.ChatMemberStatus.RESTRICTED,
-        ):
-            return True
-
-        return False
-
+        return mem.status != enums.ChatMemberStatus.BANNED
     except UserNotParticipant:
+        # ✅ NOT joined, but maybe join-request is pending
+        try:
+            # Pyrogram supports join requests list (bot must be admin in that channel)
+            reqs = await client.get_chat_join_requests(int(chat_id), limit=50)
+            for r in reqs:
+                if r.from_user and r.from_user.id == int(user_id):
+                    return True  # ✅ requested -> allow files
+        except Exception:
+            pass
         return False
     except Exception as e:
-        logger.error(f"_is_joined error chat={chat_id} user={user_id}: {e}")
+        logger.error(f"_is_joined error: {e}")
         return False
 
-
 async def _get_chat_invite_url(client, chat_id: int) -> str:
-    """
-    invite link (needs admin) இல்லனா username link try பண்ணும்
-    """
     try:
-        invite = await client.create_chat_invite_link(int(chat_id))
+        invite = await client.create_chat_invite_link(int(chat_id), creates_join_request=True)
         if invite and invite.invite_link:
             return invite.invite_link
     except Exception:
