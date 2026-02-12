@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
 from bot import Bot
 import asyncio
 import re
@@ -10,7 +11,7 @@ from typing import Dict, Optional, List
 
 from pyrogram import Client, filters, enums
 from pyrogram.types import (
-    InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery, 
+    InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery,
     InputMediaPhoto
 )
 from info import SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG, ADMINS, CHANNELS
@@ -26,6 +27,15 @@ from utils import temp, get_links_for_quality
 import imdb
 import difflib
 import aiohttp
+
+# ✅ FORCE-SUB buttons import (supports multiple repo structures)
+try:
+    from plugins.request_forcesub import create_request_forcesub_buttons
+except Exception:
+    try:
+        from .request_forcesub import create_request_forcesub_buttons
+    except Exception:
+        create_request_forcesub_buttons = None
 
 # Configure logging
 logging.basicConfig(
@@ -56,60 +66,66 @@ async def clean_expired_requests():
         await asyncio.sleep(600)
         current_time = time.time()
         expired_keys = []
-        
+
         for key, timestamp in request_timestamps.items():
             if current_time - timestamp > 1800:
                 expired_keys.append(key)
-        
+
         for key in expired_keys:
             user_requestor.pop(key, None)
             request_timestamps.pop(key, None)
-        
+
         if expired_keys:
             logger.info(f"Cleaned {len(expired_keys)} expired requests")
 
-def create_user_layout_from_pattern(items: List[str], layout_pattern: List[int], callback_prefix: str = "user_item", add_back_button: bool = False, back_target: str = "") -> List[List[InlineKeyboardButton]]:
+def create_user_layout_from_pattern(
+    items: List[str],
+    layout_pattern: List[int],
+    callback_prefix: str = "user_item",
+    add_back_button: bool = False,
+    back_target: str = ""
+) -> List[List[InlineKeyboardButton]]:
     if not items:
         return []
-    
+
     layout = []
     item_index = 0
-    
+
     for row_count in layout_pattern:
         if item_index >= len(items):
             break
-        
+
         row = []
         for _ in range(row_count):
             if item_index < len(items):
                 item_button = InlineKeyboardButton(
-                    items[item_index], 
+                    items[item_index],
                     callback_data=f"{callback_prefix}_{item_index}"
                 )
                 row.append(item_button)
                 item_index += 1
-        
+
         if row:
             layout.append(row)
-    
+
     while item_index < len(items):
         row = []
         for _ in range(min(2, len(items) - item_index)):
             item_button = InlineKeyboardButton(
-                items[item_index], 
+                items[item_index],
                 callback_data=f"{callback_prefix}_{item_index}"
             )
             row.append(item_button)
             item_index += 1
         if row:
             layout.append(row)
-    
+
     if add_back_button:
         layout.append([InlineKeyboardButton("✨Latest Series✨", url="https://t.me/+yKtGXrUgchswYjZl")])
         layout.append([InlineKeyboardButton("✨ Request Series ✨", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
         back_button = InlineKeyboardButton("⬅️ Back", callback_data=f"back_{back_target}")
         layout.append([back_button])
-    
+
     return layout
 
 def find_close_matches(query, possibilities, n=3, cutoff=0.6):
@@ -209,8 +225,8 @@ def find_most_similar_title(query: str, search_results: list) -> dict:
 async def global_filters(client: Bot, message: Message, text=False) -> bool:
     logger.info(f"Applying global filters to message {message.id} from user {message.from_user.id}")
     group_id = message.chat.id
-    name = text or message.text 
-    reply_id = message.reply_to_message.id if message.reply_to_message else message.id 
+    name = text or message.text
+    reply_id = message.reply_to_message.id if message.reply_to_message else message.id
     keywords = await get_gfilters("gfilters")
 
     for keyword in reversed(sorted(keywords, key=len)):
@@ -220,7 +236,7 @@ async def global_filters(client: Bot, message: Message, text=False) -> bool:
             reply_text, btn, alert, fileid = await find_gfilter("gfilters", keyword)
             if reply_text:
                 reply_text = reply_text.replace("\\n", " ").replace("\\t", "\t")
-            
+
             try:
                 if fileid == "None":
                     if btn == "[]":
@@ -266,14 +282,14 @@ async def series_filter(client: Bot, message: Message):
     logger.info(f"Applying series filter to message {message.id} from user {message.from_user.id}")
     text = message.text.strip()
     series_infos = get_series()
-    
+
     published_series = [s for s in series_infos if s.get('published', False)]
-    
+
     series_keys = [series['_id'] for series in published_series]
     series_names = [series['title'] for series in published_series]
 
     series_key = None
-    
+
     if text.lower().replace(" ", "").replace("-", "") in series_keys:
         series_key = text.lower().replace(" ", "").replace("-", "")
         logger.info(f"Found exact key match: {series_key}")
@@ -283,13 +299,13 @@ async def series_filter(client: Bot, message: Message):
                 series_key = s_info['_id']
                 logger.info(f"Found exact title match: {series_key}")
                 break
-        
+
         if not series_key:
             close_matches = find_close_matches(text, series_names)
             if not close_matches:
                 first_word = text.split()[0]
                 close_matches = [name for name in series_names if name.lower().startswith(first_word.lower())]
-            
+
             if close_matches:
                 logger.info(f"Found {len(close_matches)} close matches: {close_matches}")
                 buttons = []
@@ -297,16 +313,16 @@ async def series_filter(client: Bot, message: Message):
                     s_info = next((s for s in published_series if s['title'] == match), None)
                     if s_info:
                         buttons.append(InlineKeyboardButton(match, callback_data=f"user_series>{s_info['_id']}"))
-                
+
                 if buttons:
                     layout = [[button] for button in buttons]
                     layout.append([InlineKeyboardButton("✨ Request Series ✨", url="https://t.me/+WeBqY_ljwpc3ZjE1")])
                     layout.append([InlineKeyboardButton("✨Latest Series✨", url="https://t.me/+yKtGXrUgchswYjZl")])
                     reply_markup = InlineKeyboardMarkup(layout)
-                    
+
                     etho = await message.reply_photo(
-                        photo=random.choice(SPELL_CHECK_IMAGE), 
-                        caption="<b>Choose Your Series:</b>", 
+                        photo=random.choice(SPELL_CHECK_IMAGE),
+                        caption="<b>Choose Your Series:</b>",
                         reply_markup=reply_markup
                     )
                     reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else None
@@ -315,10 +331,9 @@ async def series_filter(client: Bot, message: Message):
                         "timestamp": time.time()
                     }
                     request_timestamps[f"{etho.chat.id}•{etho.id}"] = time.time()
-                    #asyncio.create_task(DeleteMessage(etho))
                     logger.info(f"Sent series selection message with {len(buttons)} options")
                     return
-    
+
     if series_key:
         logger.info(f"Processing series with key: {series_key}")
         series = get_series_name(series_key)
@@ -328,7 +343,7 @@ async def series_filter(client: Bot, message: Message):
 
         languages = series.get("languages", [])
         language_layout = series.get("language_layout", [1] * len(languages))
-        
+
         reply_text = (
             f"○ **Title:** `{series['title']}`\n"
             f"○ **Released On:** `{series['released_on']}`\n"
@@ -337,23 +352,22 @@ async def series_filter(client: Bot, message: Message):
             "Select the language you need...!"
         )
         poster_url = await get_main_poster(client, series_key)
-        
+
         language_names = [lang['name'] for lang in languages]
-        
         layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
-        
+
         if not layout:
             await message.reply("No languages available for this series.")
             return
-        
+
         reply_markup = InlineKeyboardMarkup(layout)
-        
+
         try:
             if poster_url:
                 etho = await message.reply_photo(photo=poster_url, caption=reply_text, reply_markup=reply_markup)
             else:
                 etho = await message.reply_photo(photo=NO_POSTER_FOUND_IMG[0], caption=reply_text, reply_markup=reply_markup)
-            
+
             reply_etho_user_id = etho.reply_to_message.from_user.id if etho.reply_to_message else message.chat.id
             user_requestor[f"{etho.chat.id}•{etho.id}"] = {
                 "data": {
@@ -363,7 +377,6 @@ async def series_filter(client: Bot, message: Message):
                 "timestamp": time.time()
             }
             request_timestamps[f"{etho.chat.id}•{etho.id}"] = time.time()
-            #asyncio.create_task(DeleteMessage(etho))
             logger.info(f"Sent series filter response for {series['title']}")
         except Exception as e:
             logger.error(f"Error sending series filter message: {e}")
@@ -385,7 +398,7 @@ async def handle_message(client: Bot, message: Message):
         if glob == False:
             await series_filter(client, message)
         return
-    
+
     if user_id not in CHANNELS:
         glob = await global_filters(client, message)
         if glob == False:
@@ -402,18 +415,61 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
     data = callback_query.data
     logger.info(f"Received callback query from user {user_id}: {data}")
 
-    # ✅ QUALITY BUTTON HANDLER (b:)
+    # ✅ QUALITY BUTTON HANDLER (b:)  --- FIXED WITH FSUB + PRIVATE SEND
     if data.startswith("b:"):
         link_key = data.split(":", 1)[1]
-        chat_id = callback_query.message.chat.id
 
+        # original message place (group/private)
+        origin_chat_id = callback_query.message.chat.id
+        origin_msg_id = callback_query.message.id
+
+        # ✅ Ownership check in group: only requester can click
+        stored_entry = user_requestor.get(f"{origin_chat_id}•{origin_msg_id}", {})
+        stored_data = stored_entry.get("data") if isinstance(stored_entry, dict) else None
+        requested_user = None
+        if isinstance(stored_data, dict):
+            requested_user = stored_data.get("requested_user")
+
+        if origin_chat_id < 0 and requested_user and user_id != requested_user:
+            try:
+                await callback_query.answer("Not your request!", show_alert=True)
+            except:
+                pass
+            return
+
+        # ✅ FORCE SUB CHECK (VERY IMPORTANT)
+        if create_request_forcesub_buttons:
+            try:
+                btn = await create_request_forcesub_buttons(user_id)
+            except Exception as e:
+                logger.error(f"create_request_forcesub_buttons error: {e}")
+                btn = None
+
+            if btn:
+                try:
+                    await callback_query.answer("⚠️ First join the channels!", show_alert=True)
+                except:
+                    pass
+
+                # send join buttons in private
+                try:
+                    await client.send_message(
+                        chat_id=user_id,
+                        text="<b>🔒 Please join channels below to use bot</b>",
+                        reply_markup=InlineKeyboardMarkup(btn),
+                        parse_mode=enums.ParseMode.HTML
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send fsub buttons in PM: {e}")
+                return
+
+        # ✅ If joined => send files to USER PRIVATE (not group)
         try:
             await callback_query.answer("Sending files...", show_alert=False)
         except:
             pass
 
         try:
-            # IMPORTANT: pass client + get tuple return
             files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(client, link_key)
 
             if not files_to_send:
@@ -426,13 +482,12 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
             for item in files_to_send:
                 file_id = item.get("file_id")
                 caption = item.get("caption") or ""
-
                 if not file_id:
                     continue
 
                 try:
                     await client.send_cached_media(
-                        chat_id=chat_id,
+                        chat_id=user_id,   # ✅ ALWAYS PM
                         file_id=file_id,
                         caption=caption
                     )
@@ -440,14 +495,12 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
 
                 except FloodWait as e:
                     await asyncio.sleep(e.x)
-                    await client.send_cached_media(
-                        chat_id=chat_id,
-                        file_id=file_id,
-                        caption=caption
-                    )
+                except Exception as e:
+                    logger.error(f"send_cached_media error: {e}")
+                    continue
 
             try:
-                await callback_query.answer("✅ Sent!", show_alert=False)
+                await callback_query.answer("✅ Sent in PM!", show_alert=False)
             except:
                 pass
 
@@ -487,7 +540,7 @@ async def user_series_callback_handler(client: Bot, query: CallbackQuery):
     except Exception as e:
         logger.warning(f"Failed to acknowledge callback: {e}")
 
-    reply_msg = query.message.reply_to_message  
+    reply_msg = query.message.reply_to_message
     if reply_msg and reply_msg.from_user:
         requested_user = reply_msg.from_user.id
     else:
@@ -496,7 +549,7 @@ async def user_series_callback_handler(client: Bot, query: CallbackQuery):
             requested_user = stored_data.get("requested_user")
         else:
             requested_user = stored_data
-    
+
     if chat_id < 0 and requested_user and clicked_user != requested_user:
         logger.warning(f"User {clicked_user} tried to access another user's request")
         try:
@@ -531,26 +584,26 @@ async def user_series_callback_handler(client: Bot, query: CallbackQuery):
 
         languages = series.get("languages", [])
         language_layout = series.get("language_layout", [1] * len(languages))
-        
+
         base_text = (
             f"○ **Title:** `{series['title']}`\n"
             f"○ **Released On:** `{series['released_on']}`\n"
             f"○ **Genre:** `{series['genre']}`\n"
             f"○ **Rating:** `{series['rating']}`\n\n"
         )
-        
+
         language_names = [lang['name'] for lang in languages]
         text = base_text + "Select the language you need...!"
-        
+
         layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
-        
+
         if not layout:
             try:
                 await query.message.edit_text("No languages available for this series.")
             except Exception as e:
                 logger.error(f"Failed to edit message: {e}")
             return
-        
+
         reply_markup = InlineKeyboardMarkup(layout)
         poster = await get_main_poster(client, series_key)
         try:
@@ -585,25 +638,25 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
     message_id = query.message.id
     data = query.data
     logger.info(f"Processing user interface callback: {data}")
-    
+
     try:
         await query.answer()
     except Exception as e:
         logger.warning(f"Failed to acknowledge callback: {e}")
-    
+
     stored_entry = user_requestor.get(f"{chat_id}•{message_id}", {})
     stored_data = stored_entry.get("data") if isinstance(stored_entry, dict) else None
-    
+
     if not stored_data or not isinstance(stored_data, dict):
         try:
             await query.answer("Session expired. Please search again.", show_alert=True)
         except:
             pass
         return
-    
+
     series_key = stored_data.get("series_key")
     requested_user = stored_data.get("requested_user")
-    
+
     if chat_id < 0 and requested_user and user_id != requested_user:
         logger.warning(f"User {user_id} tried to access another user's request")
         try:
@@ -611,7 +664,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
         except:
             pass
         return
-    
+
     series = get_series_name(series_key)
     if not series or not series.get('published', False):
         try:
@@ -619,35 +672,35 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
         except:
             pass
         return
-    
+
     base_text = (
         f"○ **Title:** `{series['title']}`\n"
         f"○ **Released On:** `{series['released_on']}`\n"
         f"○ **Genre:** `{series['genre']}`\n"
         f"○ **Rating:** `{series['rating']}`\n\n"
     )
-    
+
     if data.startswith("back_"):
         target = data.split("_")[1]
-        
+
         if target == "language":
             languages = series.get("languages", [])
             language_layout = series.get("language_layout", [1] * len(languages))
             language_names = [lang['name'] for lang in languages]
-            
+
             text = base_text + "Select the language you need...!"
-            
+
             layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
-            
+
             if not layout:
                 try:
                     await query.answer("No languages available for this series.", show_alert=True)
                 except:
                     pass
                 return
-            
+
             reply_markup = InlineKeyboardMarkup(layout)
-            
+
             user_requestor[f"{chat_id}•{message_id}"] = {
                 "data": {
                     "series_key": series_key,
@@ -683,18 +736,18 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
                 except:
                     pass
             return
-        
+
         elif target == "season":
             language_index = stored_data.get("language_index")
             language_name = stored_data.get("language_name")
-            
+
             if language_index is None:
                 try:
                     await query.answer("Session error. Please start again.", show_alert=True)
                 except:
                     pass
                 return
-            
+
             languages = series.get("languages", [])
             if language_index >= len(languages):
                 try:
@@ -702,24 +755,24 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
                 except:
                     pass
                 return
-            
+
             seasons = languages[language_index].get("seasons", [])
             season_layout = languages[language_index].get("season_layout", [1] * len(seasons))
             season_names = [season['name'] for season in seasons]
-            
+
             text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
-            
+
             layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
-            
+
             if not layout:
                 try:
                     await query.answer("No seasons available for this language.", show_alert=True)
                 except:
                     pass
                 return
-            
+
             reply_markup = InlineKeyboardMarkup(layout)
-            
+
             user_requestor[f"{chat_id}•{message_id}"] = {
                 "data": {
                     "series_key": series_key,
@@ -730,7 +783,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
                 "timestamp": time.time()
             }
             request_timestamps[f"{chat_id}•{message_id}"] = time.time()
-            
+
             try:
                 if query.message.photo:
                     await query.message.edit_media(
@@ -757,7 +810,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
                 except:
                     pass
             return
-    
+
     callback_parts = data.split("_")
     callback_type = callback_parts[0]
     try:
@@ -768,13 +821,13 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
         except:
             pass
         return
-    
+
     if callback_type == "lang":
         languages = series.get("languages", [])
-        
+
         if 0 <= callback_index < len(languages):
             language_name = languages[callback_index]["name"]
-            
+
             user_requestor[f"{chat_id}•{message_id}"] = {
                 "data": {
                     "series_key": series_key,
@@ -785,24 +838,24 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
                 "timestamp": time.time()
             }
             request_timestamps[f"{chat_id}•{message_id}"] = time.time()
-            
+
             seasons = languages[callback_index].get("seasons", [])
             season_layout = languages[callback_index].get("season_layout", [1] * len(seasons))
             season_names = [season['name'] for season in seasons]
-            
+
             text = base_text + f"○ **Language:** `{language_name}`\nSelect the season you need...!"
-            
+
             layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
-            
+
             if not layout:
                 try:
                     await query.answer("No seasons available for this language.", show_alert=True)
                 except:
                     pass
                 return
-            
+
             reply_markup = InlineKeyboardMarkup(layout)
-            
+
             try:
                 if query.message.photo:
                     await query.message.edit_media(
@@ -833,17 +886,17 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
                 await query.answer("Invalid selection.", show_alert=True)
             except:
                 pass
-    
+
     elif callback_type == "season":
         language_index = stored_data.get("language_index")
-        
+
         if language_index is None:
             try:
                 await query.answer("Session error. Please start again.", show_alert=True)
             except:
                 pass
             return
-        
+
         languages = series.get("languages", [])
         if language_index >= len(languages):
             try:
@@ -851,12 +904,12 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
             except:
                 pass
             return
-        
+
         seasons = languages[language_index].get("seasons", [])
-        
+
         if 0 <= callback_index < len(seasons):
             season_name = seasons[callback_index]["name"]
-            
+
             user_requestor[f"{chat_id}•{message_id}"] = {
                 "data": {
                     "series_key": series_key,
@@ -869,32 +922,32 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
                 "timestamp": time.time()
             }
             request_timestamps[f"{chat_id}•{message_id}"] = time.time()
-            
+
             qualities = seasons[callback_index].get("qualities", [])
-            
+
             text = base_text + f"○ **Language:** `{stored_data.get('language_name')}`\n○ **Season:** `{season_name}`\nSelect the quality you need...!"
-            
+
             layout = []
             for quality in qualities:
                 if quality.get("link_key"):
                     quality_button = InlineKeyboardButton(
-                        quality['name'], 
+                        quality['name'],
                         callback_data=f"b:{quality['link_key']}"
                     )
                     layout.append([quality_button])
-            
+
             back_button = InlineKeyboardButton("⬅️ Back", callback_data="back_season")
             layout.append([back_button])
-            
+
             if not layout:
                 try:
                     await query.answer("No qualities available for this season.", show_alert=True)
                 except:
                     pass
                 return
-            
+
             reply_markup = InlineKeyboardMarkup(layout)
-            
+
             try:
                 if query.message.photo:
                     await query.message.edit_media(
