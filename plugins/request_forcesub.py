@@ -1,12 +1,12 @@
 # plugins/request_forcesub.py
 import logging
-from pyrogram import enums
+from pyrogram.enums import ChatMemberStatus
 from pyrogram.types import InlineKeyboardButton
 from pyrogram.errors import UserNotParticipant
 
 from database.join_reqs import JoinReqs
 
-# ✅ user-step DB (your new sequential db file)
+# ✅ user-step DB (sequential)
 from database.request_forcesub_db import (
     get_user_step,
     set_user_step,
@@ -21,10 +21,18 @@ db1 = JoinReqs()
 # Internal helpers
 # ----------------------------
 async def _is_joined(client, chat_id: int, user_id: int) -> bool:
+    """
+    ✅ Correct join check:
+    ONLY MEMBER / ADMIN / OWNER => joined
+    LEFT / RESTRICTED / KICKED / BANNED / NOT PARTICIPANT => not joined
+    """
     try:
         mem = await client.get_chat_member(int(chat_id), int(user_id))
-        # if banned => treat not joined
-        return mem.status != enums.ChatMemberStatus.BANNED
+        return mem.status in (
+            ChatMemberStatus.MEMBER,
+            ChatMemberStatus.ADMINISTRATOR,
+            ChatMemberStatus.OWNER,
+        )
     except UserNotParticipant:
         return False
     except Exception as e:
@@ -52,7 +60,6 @@ async def _get_chat_invite_url(client, chat_id: int) -> str:
     except Exception:
         pass
 
-    # 3) last fallback (private channel can't be opened without invite anyway)
     return "https://t.me/"
 
 
@@ -96,7 +103,7 @@ async def get_all_fsub_chats() -> list:
 
 
 # ----------------------------
-# Public API (used by start + pmfilter)
+# Public API
 # ----------------------------
 async def get_required_fsub_chat(client, user_id: int):
     """
@@ -109,7 +116,7 @@ async def get_required_fsub_chat(client, user_id: int):
 
     total = len(chats)
 
-    step = await get_user_step(int(user_id))  # from fsub_state
+    step = await get_user_step(int(user_id))
     if step < 1 or step > total:
         step = 1
         await set_user_step(int(user_id), 1)
@@ -121,12 +128,11 @@ async def get_required_fsub_chat(client, user_id: int):
 async def create_request_forcesub_buttons(*args, **kwargs):
     """
     ✅ ONLY ONE CHANNEL button.
-
-    Supports both calls:
+    Supports:
       1) await create_request_forcesub_buttons(client, user_id)
-      2) await create_request_forcesub_buttons(user_id)   (client passed via kwargs if available)
+      2) await create_request_forcesub_buttons(user_id, client=client)
     Returns:
-      - [[InlineKeyboardButton]] if NOT joined required channel
+      - [[InlineKeyboardButton]] if NOT joined
       - None if joined OR no fsub configured
     """
     client = None
@@ -142,7 +148,6 @@ async def create_request_forcesub_buttons(*args, **kwargs):
         user_id = int(kwargs.get("user_id"))
 
     if client is None or user_id is None:
-        # can't check join without client
         return None
 
     required_chat_id, total, step = await get_required_fsub_chat(client, user_id)
@@ -154,32 +159,27 @@ async def create_request_forcesub_buttons(*args, **kwargs):
         return None
 
     url = await _get_chat_invite_url(client, required_chat_id)
-
-    # ✅ only one button
-    btn = [[InlineKeyboardButton(f"🎗 Join Channel {step} 🎗", url=url)]]
-    return btn
+    return [[InlineKeyboardButton(f"🎗 Join Channel {step} 🎗", url=url)]]
 
 
 async def check_and_advance_if_joined(client, user_id: int) -> bool:
     """
     Use this inside 'b:' handler BEFORE sending files.
-    - If not joined => returns False (show fsub button)
-    - If joined => advances user step and returns True
+    - If not joined => False
+    - If joined => advances user step and True
     """
     required_chat_id, total, step = await get_required_fsub_chat(client, int(user_id))
     if not required_chat_id:
-        return True  # no fsub setup
+        return True
 
     joined = await _is_joined(client, required_chat_id, int(user_id))
     if not joined:
         return False
 
-    # ✅ joined -> next step for NEXT request
     await advance_user_step(int(user_id))
     return True
 
 
-# Backward compatible name (your pmfilter imports this)
+# Backward compatible name
 async def advance_user_fsub_step(user_id: int, total: int = 3):
-    # total param not needed anymore; kept for compatibility
     await advance_user_step(int(user_id))
