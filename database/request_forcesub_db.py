@@ -76,3 +76,9 @@ async def get_all_states():
 
 async def get_states_count():
     return fsub_state.count_documents({})
+    
+async def get_req_one_count():
+    return req_one.count_documents({})
+
+async def get_req_two_count():
+    return req_two.count_documents({})
