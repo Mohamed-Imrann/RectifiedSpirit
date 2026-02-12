@@ -159,11 +159,18 @@ async def get_main_poster(client: Bot, series_key: str) -> str:
                     photo=poster_url,
                     caption=f"Auto-fetched poster for {title}"
                 )
-                poster_file_id = uploaded.photo.file_id
+
+                # ✅ FIX: photo is a LIST
+                poster_file_id = uploaded.photo[-1].file_id if uploaded.photo else None
+                if not poster_file_id:
+                    return NO_POSTER_FOUND_IMG[0]
+
                 break
+
             except FloodWait as e:
                 await asyncio.sleep(e.value)
-            except Exception:
+            except Exception as e:
+                # optional: logger.error(f"send_photo poster error: {e}")
                 return NO_POSTER_FOUND_IMG[0]
 
         try:
