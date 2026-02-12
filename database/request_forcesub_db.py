@@ -1,5 +1,8 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 # database/request_forcesub_db.py
+
 import pymongo
 from info import DATABASE_URI, DATABASE_NAME
 
@@ -10,7 +13,7 @@ mydb = myclient[DATABASE_NAME]
 req_one = mydb["req_one"]
 req_two = mydb["req_two"]
 
-# Step tracking
+# Step tracking (per user)
 fsub_steps = mydb["fsub_steps"]
 
 # ✅ Pending file send (so user no need to click again)
@@ -26,6 +29,7 @@ async def get_user_step(user_id: int) -> int:
         return 1
     return int(doc.get("step", 1))
 
+
 async def set_user_step(user_id: int, step: int):
     fsub_steps.update_one(
         {"user_id": int(user_id)},
@@ -33,16 +37,24 @@ async def set_user_step(user_id: int, step: int):
         upsert=True
     )
 
+
 async def advance_user_step(user_id: int, total: int):
-    # ✅ total MUST come from actual chat list length
-    if total <= 0:
+    """
+    ✅ 1 -> 2 -> 3 -> (STOP at 3)
+    total = actual fsub chats count
+    """
+    if not total or int(total) <= 0:
         await set_user_step(user_id, 1)
         return
 
+    total = int(total)
     step = await get_user_step(user_id)
-    step += 1
+    step = int(step) + 1
+
+    # ✅ do NOT loop back to 1
     if step > total:
-        step = 1
+        step = total
+
     await set_user_step(user_id, step)
 
 
@@ -62,8 +74,10 @@ async def set_pending(user_id: int, link_key: str, required_chat_id: int, step: 
         upsert=True
     )
 
+
 async def get_pending(user_id: int):
     return pending_fsub.find_one({"user_id": int(user_id)})
+
 
 async def clear_pending(user_id: int):
     pending_fsub.delete_one({"user_id": int(user_id)})
@@ -75,17 +89,22 @@ async def clear_pending(user_id: int):
 async def get_req_one(user_id):
     return req_one.find_one({"user_id": int(user_id)})
 
+
 async def get_req_two(user_id):
     return req_two.find_one({"user_id": int(user_id)})
+
 
 async def get_req_one_count():
     return req_one.count_documents({})
 
+
 async def get_req_two_count():
     return req_two.count_documents({})
 
+
 async def delete_all_one():
     req_one.delete_many({})
+
 
 async def delete_all_two():
     req_two.delete_many({})
