@@ -8,15 +8,14 @@ from os import environ, execle, system
 import os
 import logging
 from Script import script
+
 from pyrogram import filters, enums
 from pyrogram.errors import ChatAdminRequired, FloodWait, BadRequest
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from database.users_chats_db import db
 from database.request_forcesub_db import delete_all_one, delete_all_two
-from .request_forcesub import create_request_forcesub_buttons
 from database.join_reqs import JoinReqs
-db1 = JoinReqs
 
 from pymongo import MongoClient
 from info import (
@@ -27,6 +26,9 @@ from info import (
 )
 from utils import get_size, is_subscribed
 import json
+
+# ✅ FIX: correct import path
+from plugins.request_forcesub import create_request_forcesub_buttons
 
 # Configure logging
 logging.basicConfig(
@@ -41,6 +43,9 @@ from utils import get_messages, delete_file
 mongo_client = MongoClient(DATABASE_URI)
 edb = mongo_client["file_database"]
 ecollection = edb["episodes"]
+
+# ✅ FIX: make instance once (avoid db1())
+db1 = JoinReqs()
 
 
 @Bot.on_message(filters.command("start"))
@@ -67,8 +72,8 @@ async def start_command(client, message):
             deep_link = message.text.split(None, 1)[1]
 
         # ============================================================
-        # ✅ IMPORTANT CHANGE:
-        # ForceSub + AUTH_CHANNEL check ONLY when deep_link exists
+        # ✅ IMPORTANT:
+        # AUTH_CHANNEL + FORCE SUB check ONLY when deep_link exists
         # ============================================================
         if deep_link:
 
@@ -91,13 +96,13 @@ async def start_command(client, message):
                 )
                 return
 
-            # ✅ FORCE SUB check only for deep_link (files access)
-            btn = await create_request_forcesub_buttons(message.from_user.id)
+            # ✅ FIX: pass client + user_id (without this FSUB will skip)
+            btn = await create_request_forcesub_buttons(client, message.from_user.id)
             if btn:
                 btn.append([InlineKeyboardButton("↻ Tʀʏ Aɢᴀɪɴ", callback_data=f"b:{deep_link}")])
                 await client.send_message(
                     chat_id=message.from_user.id,
-                    text="<b>Please join channels below to use bot</b>",
+                    text="<b>Please join channel(s) below to use bot</b>",
                     reply_markup=InlineKeyboardMarkup(btn),
                     parse_mode=enums.ParseMode.HTML
                 )
@@ -256,7 +261,7 @@ async def start_command(client, message):
                 return
 
         # ============================================================
-        # ✅ NORMAL /start (NO deep_link) => show START_TXT + buttons
+        # ✅ NORMAL /start (NO deep_link)
         # ============================================================
         buttons = [
             [InlineKeyboardButton("📢 Series Channel", url="https://t.me/Spidy_Series")],
@@ -302,7 +307,11 @@ async def restart_bot(client, message):
 
 @Bot.on_message(filters.command("purgerequests1") & filters.user(ADMINS))
 async def purge_req_one(bot: Bot, message: Message):
-    pls_wait = await bot.send_message(chat_id=message.chat.id, text="<b>Purging Req One Database...</b>", reply_to_message_id=message.id)
+    pls_wait = await bot.send_message(
+        chat_id=message.chat.id,
+        text="<b>Purging Req One Database...</b>",
+        reply_to_message_id=message.id
+    )
     await asyncio.sleep(1)
     await delete_all_one()
     await pls_wait.edit("<b>Req One Database Purged ✅.</b>")
@@ -310,10 +319,37 @@ async def purge_req_one(bot: Bot, message: Message):
 
 @Bot.on_message(filters.command("purgerequests2") & filters.user(ADMINS))
 async def purge_req_two(bot: Bot, message: Message):
-    pls_wait = await bot.send_message(chat_id=message.chat.id, text="<b>Purging Req Two Database...</b>", reply_to_message_id=message.id)
+    pls_wait = await bot.send_message(
+        chat_id=message.chat.id,
+        text="<b>Purging Req Two Database...</b>",
+        reply_to_message_id=message.id
+    )
     await asyncio.sleep(1)
     await delete_all_two()
     await pls_wait.edit("<b>Req Two Database Purged ✅.</b>")
+
+
+# ✅ NEW: view all 3 fsub chats
+@Bot.on_message(filters.command("viewchat") & filters.user(ADMINS))
+async def view_fsub_chats(bot: Bot, message: Message):
+    try:
+        c1 = await db1.get_fsub_chat1()
+        c2 = await db1.get_fsub_chat2()
+        c3 = await db1.get_fsub_chat3() if hasattr(db1, "get_fsub_chat3") else None
+
+        t1 = c1.get("chat_id") if c1 else None
+        t2 = c2.get("chat_id") if c2 else None
+        t3 = c3.get("chat_id") if c3 else None
+
+        txt = (
+            "✅ <b>FSUB Chats</b>\n\n"
+            f"1️⃣ <code>{t1}</code>\n"
+            f"2️⃣ <code>{t2}</code>\n"
+            f"3️⃣ <code>{t3}</code>\n"
+        )
+        await message.reply_text(txt, parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await message.reply_text(f"❌ viewchat error: <code>{e}</code>", parse_mode=enums.ParseMode.HTML)
 
 
 @Bot.on_message(filters.command("setchat1") & filters.user(ADMINS))
@@ -324,9 +360,14 @@ async def add_fsub_chats1(bot: Bot, update: Message):
         return
     chat = int(chat)
 
-    await db1().add_fsub_chat1(chat)
-    await update.reply_text(f"Added chat <code>{chat}</code> to the database.", quote=True, parse_mode=enums.ParseMode.HTML)
+    await db1.add_fsub_chat1(chat)
+    await update.reply_text(
+        f"Added chat <code>{chat}</code> to the database.",
+        quote=True,
+        parse_mode=enums.ParseMode.HTML
+    )
 
+    # NOTE: this overwrites file. If you want all 3 in one file, tell me.
     with open("./dynamic.env", "wt+", encoding="utf-8") as f:
         f.write(f"REQ_CHANNEL_ONE={chat}\n")
 
@@ -342,8 +383,12 @@ async def add_fsub_chats2(bot: Bot, update: Message):
         return
     chat = int(chat)
 
-    await db1().add_fsub_chat2(chat)
-    await update.reply_text(f"Added chat <code>{chat}</code> to the database.", quote=True, parse_mode=enums.ParseMode.HTML)
+    await db1.add_fsub_chat2(chat)
+    await update.reply_text(
+        f"Added chat <code>{chat}</code> to the database.",
+        quote=True,
+        parse_mode=enums.ParseMode.HTML
+    )
 
     with open("./dynamic.env", "wt+", encoding="utf-8") as f:
         f.write(f"REQ_CHANNEL_TWO={chat}\n")
@@ -360,8 +405,17 @@ async def add_fsub_chats3(bot: Bot, update: Message):
         return
     chat = int(chat)
 
-    await db1().add_fsub_chat3(chat)
-    await update.reply_text(f"Added chat <code>{chat}</code> to the database.", quote=True, parse_mode=enums.ParseMode.HTML)
+    # if your JoinReqs doesn't have add_fsub_chat3, this will throw
+    if not hasattr(db1, "add_fsub_chat3"):
+        await update.reply_text("Your JoinReqs DB has no chat3 support.", quote=True)
+        return
+
+    await db1.add_fsub_chat3(chat)
+    await update.reply_text(
+        f"Added chat <code>{chat}</code> to the database.",
+        quote=True,
+        parse_mode=enums.ParseMode.HTML
+    )
 
     with open("./dynamic.env", "wt+", encoding="utf-8") as f:
         f.write(f"REQ_CHANNEL_THREE={chat}\n")
