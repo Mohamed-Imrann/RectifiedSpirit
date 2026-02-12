@@ -229,141 +229,148 @@ def _extract_file_id(msg):
     return None, None
 
 
-async def download_and_upload_poster(client: Bot, message: Message, send_to_log_channel: bool = True):
+def _extract_file_id(msg: Message):
     """
-    ✅ NO DOWNLOAD
-    - Copies user sent photo/video/document to LOG_CHANNEL (or ADMINS[1])
-    - Returns stable file_id from copied message
+    Returns (file_id, type) for photo/video/document
     """
     try:
-        # first check user message has media
-        src_file_id, src_type = _extract_file_id(message)
+        if getattr(msg, "photo", None):
+            return msg.photo.file_id, "photo"
+        if getattr(msg, "video", None):
+            return msg.video.file_id, "video"
+        if getattr(msg, "document", None):
+            return msg.document.file_id, "document"
+    except Exception:
+        pass
+    return None, None
+
+
+async def download_and_upload_poster(client: Bot, message: Message, send_to_log_channel: bool = True):
+    """
+    ✅ Robust Poster Save
+
+    - Admin அனுப்பும் photo/video/document ல இருந்து file_id எடுக்கும்
+    - LOG_CHANNEL (அல்லது ADMINS[1]) க்கு copy பண்ணி "store" பண்ண try பண்ணும்
+    - copy fail ஆனா (bot permission / LOG_CHANNEL wrong) -> original file_id-ஐ fallback ஆக return பண்ணும்
+
+    இதனால் "Failed to process the poster" issue fix ஆகும் ✅
+    """
+    try:
+        src_file_id, _src_type = _extract_file_id(message)
         if not src_file_id:
             return None
 
-        # where to store
-        target_chat = int(LOG_CHANNEL) if send_to_log_channel and LOG_CHANNEL else int(ADMINS[1])
+        # store பண்ண வேண்டாம் என்றால் direct original file_id
+        if not send_to_log_channel:
+            return src_file_id
 
-        # ✅ copy message to target (keeps quality)
-        copied = None
-        while True:
+        # target chat choose
+        target_chat = None
+        if LOG_CHANNEL:
             try:
-                copied = await message.copy(
-                    chat_id=target_chat,
-                    caption="✅ Poster saved"
-                )
-                break
-            except FloodWait as e:
-                await asyncio.sleep(e.value)
+                target_chat = int(LOG_CHANNEL)
             except Exception:
-                return None
+                target_chat = None
+        if not target_chat:
+            target_chat = int(ADMINS[1])
 
-        # ✅ extract stable file_id from copied message
-        new_file_id, new_type = _extract_file_id(copied)
-        return new_file_id
+        # best: copy to target, but never fail poster flow
+        try:
+            copied = await message.copy(chat_id=target_chat, caption="✅ Poster saved")
+            new_file_id, _ = _extract_file_id(copied)
+            return new_file_id or src_file_id
+
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+            try:
+                copied = await message.copy(chat_id=target_chat, caption="✅ Poster saved")
+                new_file_id, _ = _extract_file_id(copied)
+                return new_file_id or src_file_id
+            except Exception:
+                return src_file_id
+
+        except Exception:
+            return src_file_id
 
     except Exception:
         return None
 
-
 async def process_poster_input(client: Bot, message: Message, poster_type: str, mode: str = "new"):
-    """Process poster input (series/language/season)"""
+    """
+    ✅ Process poster input (series/language/season)
 
-    # ✅ Basic validation
-    if not message.from_user:
-        return
-
-    user_id = message.from_user.id
-
-    # ✅ Ensure temp data exists
-    if user_id not in temp_admin_data:
-        await message.reply("Session expired. Please open admin panel again.")
-        return
-
-    series_key = temp_admin_data[user_id].get("current_series_key")
-    language_name = temp_admin_data[user_id].get("current_language")
-    season_name = temp_admin_data[user_id].get("current_season")
-
-    if not series_key:
-        await message.reply("Session expired (no series key). Please try again.")
-        return
-
-    # ✅ Get poster file_id (THIS should handle download/copy/log/upload and return file_id)
-    poster_file_id = await download_and_upload_poster(
-        client,
-        message=message,
-        send_to_log_channel=(poster_type == "series")
-    )
-
-    if not poster_file_id:
-        await message.reply("Failed to process the poster. Please try again.")
-        return
-
-    # ✅ Save poster to DB based on type
+    poster_type:
+      - "series"
+      - "language"
+      - "season"
+    """
     try:
+        if not message.from_user:
+            return
+
+        user_id = message.from_user.id
+        if user_id not in temp_admin_data:
+            await message.reply("Session expired. Please open admin panel again.")
+            return
+
+        series_key = temp_admin_data[user_id].get("current_series_key")
+        language_name = temp_admin_data[user_id].get("current_language")
+        season_name = temp_admin_data[user_id].get("current_season")
+
+        if not series_key:
+            await message.reply("Series not selected. Please try again.")
+            return
+
+        # ✅ only series poster -> store to log, others can use original file_id also
+        poster_file_id = await download_and_upload_poster(
+            client,
+            message=message,
+            send_to_log_channel=(poster_type == "series")
+        )
+
+        if not poster_file_id:
+            await message.reply("Failed to process the poster. Please try again.")
+            return
+
         if poster_type == "series":
-            ok = update_poster_file_id(series_key, poster_file_id)
-            await message.reply("✅ Series poster updated successfully." if ok else "❌ Failed to update series poster. Please try again.")
+            if update_poster_file_id(series_key, poster_file_id):
+                await message.reply("✅ Series poster updated successfully.")
+            else:
+                await message.reply("❌ Failed to update series poster. Please try again.")
 
         elif poster_type == "language":
             if not language_name:
-                await message.reply("Missing language name. Please try again.")
+                await message.reply("Language not selected. Please try again.")
                 return
-            ok = add_or_update_language(series_key, language_name, poster_file_id)
-            await message.reply("✅ Language poster updated successfully." if ok else "❌ Failed to update language poster. Please try again.")
+            if add_or_update_language(series_key, language_name, poster_file_id):
+                await message.reply("✅ Language poster updated successfully.")
+            else:
+                await message.reply("❌ Failed to update language poster. Please try again.")
 
         elif poster_type == "season":
             if not language_name or not season_name:
-                await message.reply("Missing language/season. Please try again.")
+                await message.reply("Language/Season not selected. Please try again.")
                 return
-            ok = add_or_update_season(series_key, language_name, season_name, poster_file_id)
-            await message.reply("✅ Season poster updated successfully." if ok else "❌ Failed to update season poster. Please try again.")
+            if add_or_update_season(series_key, language_name, season_name, poster_file_id):
+                await message.reply("✅ Season poster updated successfully.")
+            else:
+                await message.reply("❌ Failed to update season poster. Please try again.")
 
-        else:
-            await message.reply("Unknown poster type.")
-            return
-
-    except Exception as e:
-        logger.error(f"process_poster_input db error: {e}")
-        await message.reply("❌ Error while saving poster. Please try again.")
-        return
-
-    # ✅ Refresh UI
-    try:
+        # refresh UI
         main_message_id = temp_admin_data[user_id].get("main_message_id")
-
         if poster_type == "series":
-            await send_series_details_message(
-                client,
-                user_id,
-                get_series_by_key(series_key),
-                main_message_id,
-                mode
-            )
-
+            await send_series_details_message(client, user_id, get_series_by_key(series_key), main_message_id, mode)
         elif poster_type == "language":
-            await send_season_management_message(
-                client,
-                user_id,
-                series_key,
-                language_name,
-                main_message_id,
-                mode
-            )
-
+            await send_season_management_message(client, user_id, series_key, language_name, main_message_id, mode)
         elif poster_type == "season":
-            await send_quality_management_message(
-                client,
-                user_id,
-                series_key,
-                language_name,
-                season_name,
-                main_message_id,
-                mode
-            )
+            await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id, mode)
 
     except Exception as e:
-        logger.error(f"process_poster_input refresh ui error: {e}")
+        logger.exception(f"process_poster_input error: {e}")
+        try:
+            await message.reply("Failed to process the poster. Please try again.")
+        except Exception:
+            pass
 async def send_series_selection_message(client: Bot, user_id: int, query: str, results: list, message_id: int = None, mode: str = "new"):
     """Send series selection message"""
     logger.info(f"Sending series selection message to user {user_id} (mode: {mode})")
