@@ -4,14 +4,11 @@
 from bot import Bot
 import sys
 import asyncio
-import datetime, pytz, time
 from os import environ, execle, system
 import os
 import logging
-import random
-from typing import List, Tuple
 from Script import script
-from pyrogram import Client, filters, enums
+from pyrogram import filters, enums
 from pyrogram.errors import ChatAdminRequired, FloodWait, BadRequest
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -24,14 +21,12 @@ db1 = JoinReqs
 from pymongo import MongoClient
 from info import (
     ADMINS, AUTH_CHANNEL, LOG_CHANNEL, CUSTOM_FILE_CAPTION, BATCH_FILE_CAPTION,
-    PROTECT_CONTENT, DATABASE_URI, DATABASE_NAME, AUTO_DELETE_TIME, AUTO_DELETE_MSG,
-    BATCH_FILE_CAPTION as CUSTOM_CAPTION, DB_CHANNEL, RAW_DB_CHANNEL,
-    STICKER, STICKER_ID, PIC, PICS, START_TXT
+    PROTECT_CONTENT, DATABASE_URI, AUTO_DELETE_TIME, AUTO_DELETE_MSG,
+    BATCH_FILE_CAPTION as CUSTOM_CAPTION, RAW_DB_CHANNEL,
+    START_TXT
 )
-from utils import get_size, is_subscribed, temp, temp_requests
-import re
+from utils import get_size, is_subscribed
 import json
-import base64
 
 # Configure logging
 logging.basicConfig(
@@ -40,22 +35,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-import pymongo
-
 BATCH_FILES = {}
 from utils import get_messages, delete_file
 
 mongo_client = MongoClient(DATABASE_URI)
 edb = mongo_client["file_database"]
 ecollection = edb["episodes"]
-logger = logging.getLogger(__name__)
 
 
 @Bot.on_message(filters.command("start"))
 async def start_command(client, message):
     try:
+        # ✅ GROUP START => just register group and return
         if message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
-            await asyncio.sleep(4)
+            await asyncio.sleep(2)
             if not await db.get_chat(message.chat.id):
                 total = await client.get_chat_members_count(message.chat.id)
                 await client.send_message(
@@ -65,6 +58,7 @@ async def start_command(client, message):
                 await db.add_chat(message.chat.id, message.chat.title)
             return
 
+        # ✅ add user
         if not await db.is_user_exist(message.from_user.id):
             await db.add_user(message.from_user.id, message.from_user.first_name)
 
@@ -72,39 +66,44 @@ async def start_command(client, message):
         if len(message.command) > 1:
             deep_link = message.text.split(None, 1)[1]
 
-        if AUTH_CHANNEL and not await is_subscribed(client, message):
-            try:
-                invite_link = await client.create_chat_invite_link(int(AUTH_CHANNEL))
-            except ChatAdminRequired:
-                logger.error("ChatAdminRequired error while creating invite link")
-                return
+        # ============================================================
+        # ✅ IMPORTANT CHANGE:
+        # ForceSub + AUTH_CHANNEL check ONLY when deep_link exists
+        # ============================================================
+        if deep_link:
 
-            btn = [[InlineKeyboardButton("❆ Jᴏɪɴ Oᴜʀ Bᴀᴄᴋ-Uᴘ Cʜᴀɴɴᴇʟ ❆", url=invite_link.invite_link)]]
-            if len(message.command) > 1 and message.command[1] != "subscribe":
+            # ✅ AUTH_CHANNEL check only for deep_link (files access)
+            if AUTH_CHANNEL and not await is_subscribed(client, message):
+                try:
+                    invite_link = await client.create_chat_invite_link(int(AUTH_CHANNEL))
+                except ChatAdminRequired:
+                    logger.error("AUTH_CHANNEL: bot not admin / invite permission missing")
+                    return
+
+                btn = [[InlineKeyboardButton("❆ Jᴏɪɴ Oᴜʀ Bᴀᴄᴋ-Uᴘ Cʜᴀɴɴᴇʟ ❆", url=invite_link.invite_link)]]
                 btn.append([InlineKeyboardButton("⏳ Try Again ⏳", callback_data=f"b:{deep_link}")])
 
-            await client.send_message(
-                chat_id=message.from_user.id,
-                text="♦️ <b><u>READ THIS INSTRUCTION</u></b> ♦️\n\n🗣 <i>Follow instructions to access movies</i>",
-                reply_markup=InlineKeyboardMarkup(btn),
-                parse_mode=enums.ParseMode.MARKDOWN
-            )
-            return
+                await client.send_message(
+                    chat_id=message.from_user.id,
+                    text="♦️ <b><u>READ THIS INSTRUCTION</u></b> ♦️\n\n🗣 <i>Follow instructions to access movies</i>",
+                    reply_markup=InlineKeyboardMarkup(btn),
+                    parse_mode=enums.ParseMode.HTML
+                )
+                return
 
-        btn = await create_request_forcesub_buttons(message.from_user.id)
-        if btn:
-            if len(message.command) > 1 and message.command[1] != "subscribe":
+            # ✅ FORCE SUB check only for deep_link (files access)
+            btn = await create_request_forcesub_buttons(message.from_user.id)
+            if btn:
                 btn.append([InlineKeyboardButton("↻ Tʀʏ Aɢᴀɪɴ", callback_data=f"b:{deep_link}")])
+                await client.send_message(
+                    chat_id=message.from_user.id,
+                    text="<b>Please join channels below to use bot</b>",
+                    reply_markup=InlineKeyboardMarkup(btn),
+                    parse_mode=enums.ParseMode.HTML
+                )
+                return
 
-            await client.send_message(
-                chat_id=message.from_user.id,
-                text="<b>Please join channels below to use bot</b>",
-                reply_markup=InlineKeyboardMarkup(btn),
-                parse_mode=enums.ParseMode.HTML
-            )
-            return False
-
-        if deep_link:
+            # ✅ Passed fsub => continue deep_link flow
             temp_msg = await message.reply("Please wait...")
 
             if deep_link.startswith("get_"):
@@ -113,9 +112,11 @@ async def start_command(client, message):
                     channel_id = args[1]
                     start = int(args[2])
                     end = int(args[3])
+
                     if int(channel_id) not in RAW_DB_CHANNEL:
                         await temp_msg.delete()
                         return
+
                     ids = range(start, end + 1)
                 else:
                     await temp_msg.delete()
@@ -126,10 +127,6 @@ async def start_command(client, message):
                         get_messages(client, f"-100{channel_id}", ids),
                         timeout=30.0
                     )
-                except asyncio.TimeoutError:
-                    logger.error("Timeout while fetching messages")
-                    await temp_msg.delete()
-                    return
                 except Exception as e:
                     logger.error(f"Error fetching messages: {e}")
                     await temp_msg.delete()
@@ -148,58 +145,28 @@ async def start_command(client, message):
                         reply_markup = msg.reply_markup
 
                         if AUTO_DELETE_TIME and AUTO_DELETE_TIME > 0:
-                            try:
-                                copied_msg = await msg.copy(
-                                    chat_id=message.from_user.id,
-                                    caption=caption,
-                                    parse_mode=enums.ParseMode.HTML,
-                                    reply_markup=reply_markup
-                                )
-                                if copied_msg:
-                                    track_msgs.append(copied_msg)
-                            except FloodWait as e:
-                                logger.warning(f"FloodWait encountered: {e.value} seconds")
-                                await asyncio.sleep(e.value)
-                                copied_msg = await msg.copy(
-                                    chat_id=message.from_user.id,
-                                    caption=caption,
-                                    parse_mode=enums.ParseMode.HTML,
-                                    reply_markup=reply_markup
-                                )
-                                if copied_msg:
-                                    track_msgs.append(copied_msg)
-                            except BadRequest as e:
-                                logger.error(f"BadRequest copying message: {str(e)}")
-                                continue
-                            except Exception as e:
-                                logger.error(f"Error copying message: {str(e)}")
-                                continue
+                            copied_msg = await msg.copy(
+                                chat_id=message.from_user.id,
+                                caption=caption,
+                                parse_mode=enums.ParseMode.HTML,
+                                reply_markup=reply_markup
+                            )
+                            if copied_msg:
+                                track_msgs.append(copied_msg)
                         else:
-                            try:
-                                await msg.copy(
-                                    chat_id=message.from_user.id,
-                                    caption=caption,
-                                    parse_mode=enums.ParseMode.HTML,
-                                    reply_markup=reply_markup
-                                )
-                                await asyncio.sleep(0.5)
-                            except FloodWait as e:
-                                logger.warning(f"FloodWait encountered: {e.value} seconds")
-                                await asyncio.sleep(e.value)
-                                await msg.copy(
-                                    chat_id=message.from_user.id,
-                                    caption=caption,
-                                    parse_mode=enums.ParseMode.HTML,
-                                    reply_markup=reply_markup
-                                )
-                            except BadRequest as e:
-                                logger.error(f"BadRequest copying message: {str(e)}")
-                                continue
-                            except Exception as e:
-                                logger.error(f"Error copying message: {str(e)}")
-                                continue
-                    except Exception as e:
-                        logger.error(f"Unexpected error processing message: {str(e)}")
+                            await msg.copy(
+                                chat_id=message.from_user.id,
+                                caption=caption,
+                                parse_mode=enums.ParseMode.HTML,
+                                reply_markup=reply_markup
+                            )
+                            await asyncio.sleep(0.4)
+
+                    except FloodWait as e:
+                        await asyncio.sleep(e.value)
+                    except BadRequest:
+                        continue
+                    except Exception:
                         continue
 
                 if track_msgs:
@@ -208,49 +175,37 @@ async def start_command(client, message):
                         text=AUTO_DELETE_MSG.format(time=AUTO_DELETE_TIME)
                     )
                     asyncio.create_task(delete_file(track_msgs, client, delete_data))
-                else:
-                    logger.info("No messages to track for deletion")
                 return
 
             elif deep_link.startswith("e_"):
                 args = deep_link.split("_")
                 if len(args) < 2:
-                    logger.error("Invalid series key: not enough arguments")
+                    await temp_msg.delete()
                     return
 
                 series_name = args[1]
                 series_data = ecollection.find_one({"series": series_name})
                 if not series_data or not series_data.get("files"):
-                    logger.warning(f"No files found for series: {series_name}")
+                    await temp_msg.delete()
                     return
 
-                await message.reply(f"📤 Sending {series_name} files...")
-                messages = []
-                files_count = len(series_data["files"])
-
-                for i, entry in enumerate(series_data["files"]):
+                await temp_msg.delete()
+                for entry in series_data["files"]:
                     try:
-                        sent_msg = await client.send_cached_media(
+                        await client.send_cached_media(
                             message.chat.id,
                             entry["file_id"],
                             caption=entry.get("caption", ""),
                             protect_content=PROTECT_CONTENT
                         )
-                        messages.append(sent_msg)
-                        await asyncio.sleep(3)
+                        await asyncio.sleep(2)
                     except FloodWait as e:
-                        logger.warning(f"FloodWait encountered: {e.value} seconds")
                         await asyncio.sleep(e.value)
-                    except BadRequest as e:
-                        logger.error(f"BadRequest sending file {i+1}: {str(e)}")
-                        continue
-                    except Exception as e:
-                        logger.error(f"Error sending file {i+1}: {str(e)}")
+                    except Exception:
                         continue
                 return
 
             elif deep_link.startswith("B-"):
-                sts = await message.reply("𝖳𝗁𝖾 𝖱𝖾𝗊𝗎𝖾𝗌𝗍𝖾𝖽 𝖥𝗂𝗅𝖾𝗌.....\n𝖪𝗂𝗇𝖽𝗅𝗒 𝖶𝖺𝗂𝗍!!!!")
                 file_id = deep_link.split("-", 1)[1]
                 msgs = BATCH_FILES.get(file_id)
 
@@ -260,13 +215,13 @@ async def start_command(client, message):
                         with open(file) as file_data:
                             msgs = json.loads(file_data.read())
                     except Exception as e:
-                        logger.error(f"Error opening batch file: {str(e)}")
-                        await sts.edit("FAILED")
-                        return await client.send_message(LOG_CHANNEL, f"UNABLE TO OPEN FILE: {str(e)}")
+                        await temp_msg.edit(f"FAILED: {e}")
+                        return
                     os.remove(file)
                     BATCH_FILES[file_id] = msgs
 
-                new_messages = []
+                await temp_msg.delete()
+
                 for msg in msgs:
                     try:
                         title = msg.get("title")
@@ -280,58 +235,44 @@ async def start_command(client, message):
                                     file_size='' if size is None else size,
                                     previouscaption='' if f_caption is None else f_caption
                                 )
-                            except Exception as e:
-                                logger.error(f"Error formatting batch caption: {str(e)}")
+                            except Exception:
+                                pass
 
                         if f_caption is None:
                             f_caption = f"{title}"
 
-                        bj = await client.send_cached_media(
+                        await client.send_cached_media(
                             chat_id=message.from_user.id,
                             file_id=msg.get("file_id"),
                             caption=f_caption,
                             protect_content=msg.get('protect', PROTECT_CONTENT)
                         )
-                        new_messages.append(bj)
                         await asyncio.sleep(1)
-                    except FloodWait as e:
-                        logger.warning(f"FloodWait encountered: {e.x} seconds")
-                        await asyncio.sleep(e.x)
-                        try:
-                            bj = await client.send_cached_media(
-                                chat_id=message.from_user.id,
-                                file_id=msg.get("file_id"),
-                                caption=f_caption,
-                                protect_content=msg.get('protect', PROTECT_CONTENT)
-                            )
-                            new_messages.append(bj)
-                        except Exception as e:
-                            logger.error(f"Error after FloodWait: {str(e)}")
-                            continue
-                    except BadRequest as e:
-                        logger.error(f"BadRequest sending cached media: {str(e)}")
-                        continue
-                    except Exception as e:
-                        logger.error(f"Error sending cached media: {str(e)}")
-                        continue
 
-                await sts.delete()
+                    except FloodWait as e:
+                        await asyncio.sleep(e.x)
+                    except Exception:
+                        continue
                 return
 
-        buttons = [[InlineKeyboardButton('Switch Inline', switch_inline_query_current_chat='')]]
+        # ============================================================
+        # ✅ NORMAL /start (NO deep_link) => show START_TXT + buttons
+        # ============================================================
+        buttons = [
+            [InlineKeyboardButton("📢 Updates Channel", url="https://t.me/YOUR_UPDATES")],
+            [InlineKeyboardButton("👥 Support Group", url="https://t.me/YOUR_GROUP")],
+            [InlineKeyboardButton("Switch Inline", switch_inline_query_current_chat='')]
+        ]
         reply_markup = InlineKeyboardMarkup(buttons)
 
-        try:
-            await message.reply_text(
-                text=START_TXT,
-                reply_markup=reply_markup,
-                disable_web_page_preview=True,
-                parse_mode=enums.ParseMode.MARKDOWN
-            )
-        except Exception as e:
-            logger.error(f"Error sending start text: {str(e)}")
-
+        await message.reply_text(
+            text=START_TXT,
+            reply_markup=reply_markup,
+            disable_web_page_preview=True,
+            parse_mode=enums.ParseMode.MARKDOWN
+        )
         return
+
     except Exception as e:
         logger.error(f"Unexpected error in start_command: {str(e)}", exc_info=True)
         try:
@@ -342,25 +283,20 @@ async def start_command(client, message):
 
 @Bot.on_message(filters.command("logs") & filters.user(ADMINS))
 async def log_file(bot, message):
-    """Send log file"""
     try:
         await message.reply_document('TelegramBot.txt')
-        logger.info("Log file sent successfully")
     except Exception as e:
-        logger.error(f"Error sending log file: {str(e)}")
         await message.reply(str(e))
 
 
 @Bot.on_message(filters.command('restart') & filters.user(ADMINS))
 async def restart_bot(client, message):
-    logger.info(f"Admin {message.from_user.id} requested bot restart")
     try:
         msg = await message.reply_text(text="<b>Bot Restarting ...</b>")
         await msg.edit("<b>Restart Successfully Completed ✅</b>")
         system("git pull -f && pip3 install --no-cache-dir -r requirements.txt")
         execle(sys.executable, sys.executable, "main.py", environ)
     except Exception as e:
-        logger.error(f"Error during restart: {str(e)}")
         await message.reply_text(f"Restart failed: {str(e)}")
 
 
@@ -389,20 +325,17 @@ async def add_fsub_chats1(bot: Bot, update: Message):
     chat = int(chat)
 
     await db1().add_fsub_chat1(chat)
-    text = f"Added chat <code>{chat}</code> to the database."
-    await update.reply_text(text=text, quote=True, parse_mode=enums.ParseMode.HTML)
+    await update.reply_text(f"Added chat <code>{chat}</code> to the database.", quote=True, parse_mode=enums.ParseMode.HTML)
 
     with open("./dynamic.env", "wt+", encoding="utf-8") as f:
         f.write(f"REQ_CHANNEL_ONE={chat}\n")
 
-    logger.info("Restarting to update REQ_CHANNEL_ONE from database...")
     await update.reply_text("Restarting...", quote=True)
     os.execl(sys.executable, sys.executable, "main.py")
 
 
 @Bot.on_message(filters.command("setchat2") & filters.user(ADMINS))
 async def add_fsub_chats2(bot: Bot, update: Message):
-    logger.info(f"Admin {update.from_user.id} requested to set chat 2")
     chat = update.command[1] if len(update.command) > 1 else None
     if not chat:
         await update.reply_text("Invalid chat id.", quote=True)
@@ -410,21 +343,17 @@ async def add_fsub_chats2(bot: Bot, update: Message):
     chat = int(chat)
 
     await db1().add_fsub_chat2(chat)
-    text = f"Added chat <code>{chat}</code> to the database."
-    await update.reply_text(text=text, quote=True, parse_mode=enums.ParseMode.HTML)
+    await update.reply_text(f"Added chat <code>{chat}</code> to the database.", quote=True, parse_mode=enums.ParseMode.HTML)
 
     with open("./dynamic.env", "wt+", encoding="utf-8") as f:
         f.write(f"REQ_CHANNEL_TWO={chat}\n")
 
-    logger.info("Restarting to update REQ_CHANNEL_TWO from database...")
     await update.reply_text("Restarting...", quote=True)
     os.execl(sys.executable, sys.executable, "main.py")
 
 
-# ✅ NEW: setchat3
 @Bot.on_message(filters.command("setchat3") & filters.user(ADMINS))
 async def add_fsub_chats3(bot: Bot, update: Message):
-    logger.info(f"Admin {update.from_user.id} requested to set chat 3")
     chat = update.command[1] if len(update.command) > 1 else None
     if not chat:
         await update.reply_text("Invalid chat id.", quote=True)
@@ -432,125 +361,10 @@ async def add_fsub_chats3(bot: Bot, update: Message):
     chat = int(chat)
 
     await db1().add_fsub_chat3(chat)
-    text = f"Added chat <code>{chat}</code> to the database."
-    await update.reply_text(text=text, quote=True, parse_mode=enums.ParseMode.HTML)
+    await update.reply_text(f"Added chat <code>{chat}</code> to the database.", quote=True, parse_mode=enums.ParseMode.HTML)
 
     with open("./dynamic.env", "wt+", encoding="utf-8") as f:
         f.write(f"REQ_CHANNEL_THREE={chat}\n")
 
-    logger.info("Restarting to update REQ_CHANNEL_THREE from database...")
     await update.reply_text("Restarting...", quote=True)
     os.execl(sys.executable, sys.executable, "main.py")
-
-
-@Bot.on_message(filters.command("viewchat") & filters.user(ADMINS))
-async def get_fsub_chat(bot: Bot, update: Message):
-    processing_msg = None
-    try:
-        logger.info(f"Admin {update.from_user.id} requested to view fsub chats")
-        processing_msg = await update.reply_text("Processing...", quote=True)
-
-        chat1 = await db1().get_fsub_chat1()
-        chat2 = await db1().get_fsub_chat2()
-        chat3 = await db1().get_fsub_chat3()
-
-        if not chat1 and not chat2 and not chat3:
-            await processing_msg.delete()
-            await update.reply_text("No fsub chat found in the database.", quote=True)
-            return
-
-        text = "Fsub chats found:\n"
-        text += f"Chat 1: <code>{chat1['chat_id']}</code>\n" if chat1 else "Chat 1: Not set\n"
-        text += f"Chat 2: <code>{chat2['chat_id']}</code>\n" if chat2 else "Chat 2: Not set\n"
-        text += f"Chat 3: <code>{chat3['chat_id']}</code>\n" if chat3 else "Chat 3: Not set\n"
-
-        await processing_msg.delete()
-        await update.reply_text(text, quote=True, parse_mode=enums.ParseMode.HTML)
-
-    except Exception as e:
-        if processing_msg:
-            await processing_msg.delete()
-        logging.error(f"Error fetching fsub chats: {e}")
-        await update.reply_text("An error occurred while fetching the fsub chats. Please check the logs.", quote=True)
-
-
-@Bot.on_message(filters.command("delchat1") & filters.user(ADMINS))
-async def delete_fsub_chat1(bot: Bot, update: Message):
-    logger.info(f"Admin {update.from_user.id} requested to delete chat 1")
-    try:
-        chat_data = await db1().get_fsub_chat1()
-        if not chat_data:
-            await update.reply_text("Chat 1 is not set in the database.", quote=True)
-            return
-
-        chat_id = chat_data['chat_id']
-        await db1().delete_fsub_chat1(chat_id)
-
-        with open("./dynamic.env", "wt+", encoding="utf-8") as f:
-            f.write("REQ_CHANNEL_ONE=None\n")
-
-        text = f"Removed chat <code>{chat_id}</code> from the database."
-        await update.reply_text(text=text, quote=True, parse_mode=enums.ParseMode.HTML)
-
-        logger.info("Restarting to update REQ_CHANNEL_ONE from database...")
-        await update.reply_text("Restarting...", quote=True)
-        os.execl(sys.executable, sys.executable, "main.py")
-
-    except Exception as e:
-        logger.error(f"Error deleting chat 1: {e}")
-        await update.reply_text("An error occurred while deleting chat 1. Please check the logs.", quote=True)
-
-
-@Bot.on_message(filters.command("delchat2") & filters.user(ADMINS))
-async def delete_fsub_chat2(bot: Bot, update: Message):
-    logger.info(f"Admin {update.from_user.id} requested to delete chat 2")
-    try:
-        chat_data = await db1().get_fsub_chat2()
-        if not chat_data:
-            await update.reply_text("Chat 2 is not set in the database.", quote=True)
-            return
-
-        chat_id = chat_data['chat_id']
-        await db1().delete_fsub_chat2(chat_id)
-
-        with open("./dynamic.env", "wt+", encoding="utf-8") as f:
-            f.write("REQ_CHANNEL_TWO=None\n")
-
-        text = f"Removed chat <code>{chat_id}</code> from the database."
-        await update.reply_text(text=text, quote=True, parse_mode=enums.ParseMode.HTML)
-
-        logger.info("Restarting to update REQ_CHANNEL_TWO from database...")
-        await update.reply_text("Restarting...", quote=True)
-        os.execl(sys.executable, sys.executable, "main.py")
-
-    except Exception as e:
-        logger.error(f"Error deleting chat 2: {e}")
-        await update.reply_text("An error occurred while deleting chat 2. Please check the logs.", quote=True)
-
-
-# ✅ NEW: delchat3
-@Bot.on_message(filters.command("delchat3") & filters.user(ADMINS))
-async def delete_fsub_chat3(bot: Bot, update: Message):
-    logger.info(f"Admin {update.from_user.id} requested to delete chat 3")
-    try:
-        chat_data = await db1().get_fsub_chat3()
-        if not chat_data:
-            await update.reply_text("Chat 3 is not set in the database.", quote=True)
-            return
-
-        chat_id = chat_data['chat_id']
-        await db1().delete_fsub_chat3(chat_id)
-
-        with open("./dynamic.env", "wt+", encoding="utf-8") as f:
-            f.write("REQ_CHANNEL_THREE=None\n")
-
-        text = f"Removed chat <code>{chat_id}</code> from the database."
-        await update.reply_text(text=text, quote=True, parse_mode=enums.ParseMode.HTML)
-
-        logger.info("Restarting to update REQ_CHANNEL_THREE from database...")
-        await update.reply_text("Restarting...", quote=True)
-        os.execl(sys.executable, sys.executable, "main.py")
-
-    except Exception as e:
-        logger.error(f"Error deleting chat 3: {e}")
-        await update.reply_text("An error occurred while deleting chat 3. Please check the logs.", quote=True)
