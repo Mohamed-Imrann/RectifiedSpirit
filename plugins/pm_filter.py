@@ -402,83 +402,77 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
     data = callback_query.data
     logger.info(f"Received callback query from user {user_id}: {data}")
 
+    # ✅ QUALITY BUTTON HANDLER (b:)
     if data.startswith("b:"):
-    link_key = data.split(":", 1)[1]
-    chat_id = callback_query.message.chat.id
+        link_key = data.split(":", 1)[1]
+        chat_id = callback_query.message.chat.id
 
-    try:
-        await callback_query.answer("Sending files...", show_alert=False)
-    except:
-        pass
+        try:
+            await callback_query.answer("Sending files...", show_alert=False)
+        except:
+            pass
 
-    try:
-        # ✅ Correct call (pass client)
-        files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(client, link_key)
+        try:
+            # IMPORTANT: pass client + get tuple return
+            files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(client, link_key)
 
-        if not files_to_send:
+            if not files_to_send:
+                try:
+                    await callback_query.answer("❌ No files found!", show_alert=True)
+                except:
+                    pass
+                return
+
+            for item in files_to_send:
+                file_id = item.get("file_id")
+                caption = item.get("caption") or ""
+
+                if not file_id:
+                    continue
+
+                try:
+                    await client.send_cached_media(
+                        chat_id=chat_id,
+                        file_id=file_id,
+                        caption=caption
+                    )
+                    await asyncio.sleep(0.2)
+
+                except FloodWait as e:
+                    await asyncio.sleep(e.x)
+                    await client.send_cached_media(
+                        chat_id=chat_id,
+                        file_id=file_id,
+                        caption=caption
+                    )
+
             try:
-                await callback_query.answer("❌ No files found!", show_alert=True)
+                await callback_query.answer("✅ Sent!", show_alert=False)
             except:
                 pass
-            return
 
-        sent_msgs = []
-
-        # ✅ Send each cached file
-        for item in files_to_send:
-            file_id = item.get("file_id")
-            caption = item.get("caption") or ""
-
-            if not file_id:
-                continue
-
+        except Exception as e:
+            logger.error(f"b: send error for key={link_key}: {e}")
             try:
-                m = await client.send_cached_media(
-                    chat_id=chat_id,
-                    file_id=file_id,
-                    caption=caption
-                )
-                sent_msgs.append(m)
-                await asyncio.sleep(0.2)
+                await callback_query.answer("❌ Failed to send files.", show_alert=True)
+            except:
+                pass
 
-            except FloodWait as e:
-                await asyncio.sleep(e.x)
-                m = await client.send_cached_media(
-                    chat_id=chat_id,
-                    file_id=file_id,
-                    caption=caption
-                )
-                sent_msgs.append(m)
+        return
 
-        # ✅ Optional auto delete (if you want)
-        # process_msg = await client.send_message(chat_id, "✅ Files sent. Auto delete enabled.")
-        # asyncio.create_task(delete_file(sent_msgs, client, process_msg))
+    # ✅ SERIES BUTTON
+    if data.startswith("user_series>"):
+        logger.info(f"User series callback from user {user_id}")
+        await user_series_callback_handler(client, callback_query)
+        return
 
-        try:
-            await callback_query.answer("✅ Sent!", show_alert=False)
-        except:
-            pass
+    # ✅ UI BUTTONS (language/season/back)
+    elif data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_"):
+        logger.info(f"User interface callback from user {user_id}")
+        await user_interface_callback_handler(client, callback_query)
+        return
 
-    except Exception as e:
-        logger.error(f"b: send error for key={link_key}: {e}")
-        try:
-            await callback_query.answer("❌ Failed to send files.", show_alert=True)
-        except:
-            pass
-
-    return
-
-if data.startswith("user_series>"):
-    logger.info(f"User series callback from user {user_id}")
-    await user_series_callback_handler(client, callback_query)
-    return
-
-elif data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_"):
-    logger.info(f"User interface callback from user {user_id}")
-    await user_interface_callback_handler(client, callback_query)
-    return
-
-logger.warning(f"Unknown callback type from user {user_id}: {data}")
+    logger.warning(f"Unknown callback type from user {user_id}: {data}")
 
 async def user_series_callback_handler(client: Bot, query: CallbackQuery):
     data = query.data
