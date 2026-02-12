@@ -1,31 +1,25 @@
 # plugins/request_forcesub.py
 import logging
-from pyrogram.enums import ChatMemberStatus
+from pyrogram import enums
 from pyrogram.types import InlineKeyboardButton
 from pyrogram.errors import UserNotParticipant
 
 from database.join_reqs import JoinReqs
-
-# ✅ user-step DB (sequential)
-from database.request_forcesub_db import (
-    get_user_step,
-    set_user_step,
-    advance_user_step,
-)
+from database.request_forcesub_db import get_user_step, set_user_step, advance_user_step
 
 logger = logging.getLogger(__name__)
 db1 = JoinReqs()
 
 
-# ----------------------------
-# Internal helpers
-# ----------------------------
 async def _is_joined(client, chat_id: int, user_id: int) -> bool:
+    """
+    ✅ REAL join check:
+    MEMBER/ADMIN/OWNER/RESTRICTED => joined
+    LEFT/BANNED => not joined
+    """
     try:
         mem = await client.get_chat_member(int(chat_id), int(user_id))
 
-        # ✅ Must be actually joined
-        # Allow MEMBER/ADMIN/OWNER/RESTRICTED
         if mem.status in (
             enums.ChatMemberStatus.MEMBER,
             enums.ChatMemberStatus.ADMINISTRATOR,
@@ -34,20 +28,19 @@ async def _is_joined(client, chat_id: int, user_id: int) -> bool:
         ):
             return True
 
-        # LEFT / BANNED => not joined
         return False
 
     except UserNotParticipant:
         return False
     except Exception as e:
-        logger.error(f"_is_joined error: {e}")
+        logger.error(f"_is_joined error chat={chat_id} user={user_id}: {e}")
         return False
+
 
 async def _get_chat_invite_url(client, chat_id: int) -> str:
     """
-    Try invite link (needs admin). If fails, try public @username link.
+    invite link (needs admin) இல்லனா username link try பண்ணும்
     """
-    # 1) invite link
     try:
         invite = await client.create_chat_invite_link(int(chat_id))
         if invite and invite.invite_link:
@@ -55,7 +48,6 @@ async def _get_chat_invite_url(client, chat_id: int) -> str:
     except Exception:
         pass
 
-    # 2) username link
     try:
         chat = await client.get_chat(int(chat_id))
         if chat and getattr(chat, "username", None):
@@ -68,8 +60,7 @@ async def _get_chat_invite_url(client, chat_id: int) -> str:
 
 async def get_all_fsub_chats() -> list:
     """
-    Reads fsub chats from JoinReqs DB (chat1/chat2/chat3).
-    Returns list like: [chat1, chat2, chat3] (only those set)
+    Reads chats from JoinReqs DB: chat1/chat2/chat3
     """
     chats = []
 
@@ -87,7 +78,6 @@ async def get_all_fsub_chats() -> list:
     except Exception as e:
         logger.error(f"get_fsub_chat2 error: {e}")
 
-    # chat3 optional
     if hasattr(db1, "get_fsub_chat3"):
         try:
             c3 = await db1.get_fsub_chat3()
@@ -96,7 +86,7 @@ async def get_all_fsub_chats() -> list:
         except Exception as e:
             logger.error(f"get_fsub_chat3 error: {e}")
 
-    # remove duplicates while preserving order
+    # unique preserve order
     uniq = []
     for x in chats:
         if x not in uniq:
@@ -105,13 +95,9 @@ async def get_all_fsub_chats() -> list:
     return uniq
 
 
-# ----------------------------
-# Public API
-# ----------------------------
 async def get_required_fsub_chat(client, user_id: int):
     """
-    Returns (required_chat_id, total_chats, step)
-    step = 1..total
+    returns (required_chat_id, total, step)
     """
     chats = await get_all_fsub_chats()
     if not chats:
@@ -124,41 +110,20 @@ async def get_required_fsub_chat(client, user_id: int):
         step = 1
         await set_user_step(int(user_id), 1)
 
-    required_chat_id = chats[step - 1]
-    return required_chat_id, total, step
+    return chats[step - 1], total, step
 
 
-async def create_request_forcesub_buttons(*args, **kwargs):
+async def create_request_forcesub_buttons(client, user_id: int):
     """
-    ✅ ONLY ONE CHANNEL button.
-    Supports:
-      1) await create_request_forcesub_buttons(client, user_id)
-      2) await create_request_forcesub_buttons(user_id, client=client)
-    Returns:
-      - [[InlineKeyboardButton]] if NOT joined
-      - None if joined OR no fsub configured
+    ✅ ONLY ONE CHANNEL BUTTON.
+    joined இல்லைனா => [[button]]
+    joined ஆகி இருந்தா => None
     """
-    client = None
-    user_id = None
-
-    if len(args) == 2:
-        client, user_id = args[0], int(args[1])
-    elif len(args) == 1:
-        user_id = int(args[0])
-        client = kwargs.get("client", None)
-    else:
-        client = kwargs.get("client", None)
-        user_id = int(kwargs.get("user_id"))
-
-    if client is None or user_id is None:
-        return None
-
-    required_chat_id, total, step = await get_required_fsub_chat(client, user_id)
+    required_chat_id, total, step = await get_required_fsub_chat(client, int(user_id))
     if not required_chat_id:
         return None
 
-    joined = await _is_joined(client, required_chat_id, user_id)
-    if joined:
+    if await _is_joined(client, required_chat_id, int(user_id)):
         return None
 
     url = await _get_chat_invite_url(client, required_chat_id)
@@ -167,22 +132,17 @@ async def create_request_forcesub_buttons(*args, **kwargs):
 
 async def check_and_advance_if_joined(client, user_id: int) -> bool:
     """
-    Use this inside 'b:' handler BEFORE sending files.
-    - If not joined => False
-    - If joined => advances user step and True
+    ✅ Use inside 'b:' handler BEFORE sending files
+    - Not joined => False
+    - Joined => advance step for NEXT request and True
     """
     required_chat_id, total, step = await get_required_fsub_chat(client, int(user_id))
     if not required_chat_id:
-        return True
+        return True  # no fsub configured
 
     joined = await _is_joined(client, required_chat_id, int(user_id))
     if not joined:
         return False
 
-    await advance_user_step(int(user_id))
+    await advance_user_step(int(user_id), total)
     return True
-
-
-# Backward compatible name
-async def advance_user_fsub_step(user_id: int, total: int = 3):
-    await advance_user_step(int(user_id))
