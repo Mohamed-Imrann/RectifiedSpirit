@@ -259,8 +259,8 @@ async def start_command(client, message):
         # ✅ NORMAL /start (NO deep_link) => show START_TXT + buttons
         # ============================================================
         buttons = [
-            [InlineKeyboardButton("📢 Updates Channel", url="https://t.me/YOUR_UPDATES")],
-            [InlineKeyboardButton("👥 Support Group", url="https://t.me/YOUR_GROUP")],
+            [InlineKeyboardButton("📢 Series Channel", url="https://t.me/Spidy_Series")],
+            [InlineKeyboardButton("👥 Series Group", url="https://t.me/+0hnh1h_L0dc5MDE1")],
             [InlineKeyboardButton("Switch Inline", switch_inline_query_current_chat='')]
         ]
         reply_markup = InlineKeyboardMarkup(buttons)
