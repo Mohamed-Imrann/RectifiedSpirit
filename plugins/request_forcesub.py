@@ -1,4 +1,3 @@
-
 # plugins/request_forcesub.py
 import logging
 from pyrogram import enums
@@ -19,20 +18,33 @@ db1 = JoinReqs()
 # ----------------------------
 # Internal helpers
 # ----------------------------
+async def _is_member_status_ok(status: enums.ChatMemberStatus) -> bool:
+    """
+    ✅ True only if user is actually inside the channel.
+    """
+    return status in (
+        enums.ChatMemberStatus.MEMBER,
+        enums.ChatMemberStatus.ADMINISTRATOR,
+        enums.ChatMemberStatus.OWNER,
+    )
+
+
 async def _is_joined_or_requested(client, chat_id: int, user_id: int) -> bool:
     """
     ✅ True if:
-      - user is already member
-      - OR user sent Join Request (pending)
+      - user is already member/admin/owner
+      - OR user sent Join Request (pending)  (best-effort)
     """
     try:
         mem = await client.get_chat_member(int(chat_id), int(user_id))
-        return mem.status != enums.ChatMemberStatus.BANNED
+        return _is_member_status_ok(mem.status)
 
     except UserNotParticipant:
-        # ✅ If join-request pending => allow
+        # ✅ If join-request pending => allow (best-effort)
+        # NOTE: Telegram may not always return all requests with small limit,
+        # so we try higher limit + ignore errors.
         try:
-            reqs = await client.get_chat_join_requests(int(chat_id), limit=200)
+            reqs = await client.get_chat_join_requests(int(chat_id), limit=1000)
             for r in reqs:
                 if r.from_user and r.from_user.id == int(user_id):
                     return True
@@ -41,7 +53,7 @@ async def _is_joined_or_requested(client, chat_id: int, user_id: int) -> bool:
         return False
 
     except Exception as e:
-        logger.error(f"_is_joined_or_requested error: {e}")
+        logger.error(f"_is_joined_or_requested error: {e}", exc_info=True)
         return False
 
 
@@ -56,6 +68,7 @@ async def _get_chat_invite_url(client, chat_id: int) -> str:
     except Exception:
         pass
 
+    # fallback: public username
     try:
         chat = await client.get_chat(int(chat_id))
         if chat and getattr(chat, "username", None):
@@ -77,14 +90,14 @@ async def get_all_fsub_chats() -> list:
         if c1 and c1.get("chat_id"):
             chats.append(int(c1["chat_id"]))
     except Exception as e:
-        logger.error(f"get_fsub_chat1 error: {e}")
+        logger.error(f"get_fsub_chat1 error: {e}", exc_info=True)
 
     try:
         c2 = await db1.get_fsub_chat2()
         if c2 and c2.get("chat_id"):
             chats.append(int(c2["chat_id"]))
     except Exception as e:
-        logger.error(f"get_fsub_chat2 error: {e}")
+        logger.error(f"get_fsub_chat2 error: {e}", exc_info=True)
 
     if hasattr(db1, "get_fsub_chat3"):
         try:
@@ -92,7 +105,7 @@ async def get_all_fsub_chats() -> list:
             if c3 and c3.get("chat_id"):
                 chats.append(int(c3["chat_id"]))
         except Exception as e:
-            logger.error(f"get_fsub_chat3 error: {e}")
+            logger.error(f"get_fsub_chat3 error: {e}", exc_info=True)
 
     # uniq preserve order
     uniq = []
@@ -138,7 +151,7 @@ async def create_request_forcesub_buttons(client, user_id: int):
 
     url = await _get_chat_invite_url(client, required_chat_id)
 
-    # ✅ only one button
+    # ✅ only one button (step-by-step)
     return [[InlineKeyboardButton(f"🎗 Join Channel {step} 🎗", url=url)]]
 
 
@@ -154,11 +167,14 @@ async def check_and_advance_if_joined(client, user_id: int) -> bool:
     if not ok:
         return False
 
-    await advance_user_step(int(user_id), total)
+    try:
+        await advance_user_step(int(user_id), int(total))
+    except Exception as e:
+        logger.error(f"advance_user_step error: {e}", exc_info=True)
+
     return True
 
 
 # Backward compat
 async def advance_user_fsub_step(user_id: int, total: int = 3):
-    # not used now
     await advance_user_step(int(user_id), int(total))
