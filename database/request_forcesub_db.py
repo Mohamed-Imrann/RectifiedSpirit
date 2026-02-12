@@ -1,84 +1,73 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import pymongo
 from info import DATABASE_URI, DATABASE_NAME, ADMINS
 
-# Mongo
 myclient = pymongo.MongoClient(DATABASE_URI)
 mydb = myclient[DATABASE_NAME]
 
-# ✅ single state collection (sequential)
-fsub_state = mydb["fsub_state"]  # { _id: user_id, step: 1/2/3 }
+req_one = mydb['req_one']
+req_two = mydb['req_two']
 
-# ----------------------------
-# Helpers
-# ----------------------------
-def _is_admin(user_id: int) -> bool:
-    try:
-        return int(user_id) in ADMINS
-    except Exception:
-        return False
 
-# ----------------------------
-# Step logic (1 -> 2 -> 3 -> 1)
-# ----------------------------
-async def get_user_step(user_id: int) -> int:
-    if _is_admin(user_id):
-        return 0  # admin no fsub
+# ---------------------------
+# GET
+# ---------------------------
 
-    doc = fsub_state.find_one({"_id": int(user_id)})
-    if not doc:
-        return 1
-    step = int(doc.get("step", 1))
-    if step not in (1, 2, 3):
-        step = 1
-    return step
+async def get_req_one(user_id):
+    return req_one.find_one({"user_id": int(user_id)})
 
-async def set_user_step(user_id: int, step: int):
-    if _is_admin(user_id):
-        return
+async def get_req_two(user_id):
+    return req_two.find_one({"user_id": int(user_id)})
 
-    step = int(step)
-    if step not in (1, 2, 3):
-        step = 1
-    fsub_state.update_one(
-        {"_id": int(user_id)},
-        {"$set": {"step": step}},
-        upsert=True
-    )
 
-async def advance_user_step(user_id: int) -> int:
-    """
-    Called only AFTER user joined required channel successfully.
-    """
-    if _is_admin(user_id):
-        return 0
+# ---------------------------
+# COUNT  ✅
+# ---------------------------
 
-    step = await get_user_step(user_id)
-    next_step = 1 if step == 3 else step + 1
-    await set_user_step(user_id, next_step)
-    return next_step
-
-async def reset_user_step(user_id: int):
-    if _is_admin(user_id):
-        return
-    fsub_state.delete_one({"_id": int(user_id)})
-
-# ----------------------------
-# Admin utilities (optional)
-# ----------------------------
-async def delete_all_states():
-    fsub_state.delete_many({})
-
-async def get_all_states():
-    return list(fsub_state.find({}))
-
-async def get_states_count():
-    return fsub_state.count_documents({})
-    
 async def get_req_one_count():
     return req_one.count_documents({})
 
 async def get_req_two_count():
     return req_two.count_documents({})
+
+
+# ---------------------------
+# DELETE ALL  ✅
+# ---------------------------
+
+async def delete_all_one():
+    req_one.delete_many({})
+
+async def delete_all_two():
+    req_two.delete_many({})
+
+
+# ---------------------------
+# CHECK
+# ---------------------------
+
+async def is_requested_one(user_id):
+    if await get_req_one(user_id):
+        return True
+    if user_id in ADMINS:
+        return True
+    return False
+
+async def is_requested_two(user_id):
+    if await get_req_two(user_id):
+        return True
+    if user_id in ADMINS:
+        return True
+    return False
+
+
+# ---------------------------
+# ADD
+# ---------------------------
+
+async def add_req_one(user_id):
+    if not await get_req_one(user_id):
+        req_one.insert_one({"user_id": int(user_id)})
+
+async def add_req_two(user_id):
+    if not await get_req_two(user_id):
+        req_two.insert_one({"user_id": int(user_id)})
