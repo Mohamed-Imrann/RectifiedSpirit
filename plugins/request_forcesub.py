@@ -21,24 +21,27 @@ db1 = JoinReqs()
 # Internal helpers
 # ----------------------------
 async def _is_joined(client, chat_id: int, user_id: int) -> bool:
-    """
-    ✅ Correct join check:
-    ONLY MEMBER / ADMIN / OWNER => joined
-    LEFT / RESTRICTED / KICKED / BANNED / NOT PARTICIPANT => not joined
-    """
     try:
         mem = await client.get_chat_member(int(chat_id), int(user_id))
-        return mem.status in (
-            ChatMemberStatus.MEMBER,
-            ChatMemberStatus.ADMINISTRATOR,
-            ChatMemberStatus.OWNER,
-        )
+
+        # ✅ Must be actually joined
+        # Allow MEMBER/ADMIN/OWNER/RESTRICTED
+        if mem.status in (
+            enums.ChatMemberStatus.MEMBER,
+            enums.ChatMemberStatus.ADMINISTRATOR,
+            enums.ChatMemberStatus.OWNER,
+            enums.ChatMemberStatus.RESTRICTED,
+        ):
+            return True
+
+        # LEFT / BANNED => not joined
+        return False
+
     except UserNotParticipant:
         return False
     except Exception as e:
         logger.error(f"_is_joined error: {e}")
         return False
-
 
 async def _get_chat_invite_url(client, chat_id: int) -> str:
     """
