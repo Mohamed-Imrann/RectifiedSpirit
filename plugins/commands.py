@@ -27,7 +27,7 @@ from info import (
 from utils import get_size, is_subscribed
 import json
 
-# ✅ FIX: correct import path
+# ✅ correct import path
 from plugins.request_forcesub import create_request_forcesub_buttons
 
 # Configure logging
@@ -44,8 +44,30 @@ mongo_client = MongoClient(DATABASE_URI)
 edb = mongo_client["file_database"]
 ecollection = edb["episodes"]
 
-# ✅ FIX: make instance once (avoid db1())
+# ✅ instance once
 db1 = JoinReqs()
+
+
+def _append_env_line(key: str, value: int):
+    """
+    ✅ Append to dynamic.env without overwriting.
+    Also removes old same-key line if exists (optional safe).
+    """
+    path = "./dynamic.env"
+    lines = []
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except Exception:
+            lines = []
+
+    # remove old same-key lines
+    new_lines = [ln for ln in lines if not ln.startswith(f"{key}=")]
+    new_lines.append(f"{key}={value}")
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(new_lines) + "\n")
 
 
 @Bot.on_message(filters.command("start"))
@@ -96,7 +118,7 @@ async def start_command(client, message):
                 )
                 return
 
-            # ✅ FIX: pass client + user_id (without this FSUB will skip)
+            # ✅ FSUB check only for deep_link
             btn = await create_request_forcesub_buttons(client, message.from_user.id)
             if btn:
                 btn.append([InlineKeyboardButton("↻ Tʀʏ Aɢᴀɪɴ", callback_data=f"b:{deep_link}")])
@@ -329,7 +351,7 @@ async def purge_req_two(bot: Bot, message: Message):
     await pls_wait.edit("<b>Req Two Database Purged ✅.</b>")
 
 
-# ✅ NEW: view all 3 fsub chats
+# ✅ view all 3 fsub chats
 @Bot.on_message(filters.command("viewchat") & filters.user(ADMINS))
 async def view_fsub_chats(bot: Bot, message: Message):
     try:
@@ -352,73 +374,60 @@ async def view_fsub_chats(bot: Bot, message: Message):
         await message.reply_text(f"❌ viewchat error: <code>{e}</code>", parse_mode=enums.ParseMode.HTML)
 
 
+# ✅ setchat1 = save only, NO restart
 @Bot.on_message(filters.command("setchat1") & filters.user(ADMINS))
 async def add_fsub_chats1(bot: Bot, update: Message):
     chat = update.command[1] if len(update.command) > 1 else None
     if not chat:
-        await update.reply_text("Invalid chat id.", quote=True)
-        return
+        return await update.reply_text("Invalid chat id.", quote=True)
     chat = int(chat)
 
     await db1.add_fsub_chat1(chat)
+    _append_env_line("REQ_CHANNEL_ONE", chat)
+
     await update.reply_text(
-        f"Added chat <code>{chat}</code> to the database.",
+        f"✅ Saved chat1: <code>{chat}</code>\nℹ️ Restart will happen after /setchat3",
         quote=True,
         parse_mode=enums.ParseMode.HTML
     )
 
-    # NOTE: this overwrites file. If you want all 3 in one file, tell me.
-    with open("./dynamic.env", "wt+", encoding="utf-8") as f:
-        f.write(f"REQ_CHANNEL_ONE={chat}\n")
 
-    await update.reply_text("Restarting...", quote=True)
-    os.execl(sys.executable, sys.executable, "main.py")
-
-
+# ✅ setchat2 = save only, NO restart
 @Bot.on_message(filters.command("setchat2") & filters.user(ADMINS))
 async def add_fsub_chats2(bot: Bot, update: Message):
     chat = update.command[1] if len(update.command) > 1 else None
     if not chat:
-        await update.reply_text("Invalid chat id.", quote=True)
-        return
+        return await update.reply_text("Invalid chat id.", quote=True)
     chat = int(chat)
 
     await db1.add_fsub_chat2(chat)
+    _append_env_line("REQ_CHANNEL_TWO", chat)
+
     await update.reply_text(
-        f"Added chat <code>{chat}</code> to the database.",
+        f"✅ Saved chat2: <code>{chat}</code>\nℹ️ Restart will happen after /setchat3",
         quote=True,
         parse_mode=enums.ParseMode.HTML
     )
 
-    with open("./dynamic.env", "wt+", encoding="utf-8") as f:
-        f.write(f"REQ_CHANNEL_TWO={chat}\n")
 
-    await update.reply_text("Restarting...", quote=True)
-    os.execl(sys.executable, sys.executable, "main.py")
-
-
+# ✅ setchat3 = save + restart
 @Bot.on_message(filters.command("setchat3") & filters.user(ADMINS))
 async def add_fsub_chats3(bot: Bot, update: Message):
     chat = update.command[1] if len(update.command) > 1 else None
     if not chat:
-        await update.reply_text("Invalid chat id.", quote=True)
-        return
+        return await update.reply_text("Invalid chat id.", quote=True)
     chat = int(chat)
 
-    # if your JoinReqs doesn't have add_fsub_chat3, this will throw
     if not hasattr(db1, "add_fsub_chat3"):
-        await update.reply_text("Your JoinReqs DB has no chat3 support.", quote=True)
-        return
+        return await update.reply_text("Your JoinReqs DB has no chat3 support.", quote=True)
 
     await db1.add_fsub_chat3(chat)
+    _append_env_line("REQ_CHANNEL_THREE", chat)
+
     await update.reply_text(
-        f"Added chat <code>{chat}</code> to the database.",
+        f"✅ Saved chat3: <code>{chat}</code>\n🔄 Restarting now...",
         quote=True,
         parse_mode=enums.ParseMode.HTML
     )
 
-    with open("./dynamic.env", "wt+", encoding="utf-8") as f:
-        f.write(f"REQ_CHANNEL_THREE={chat}\n")
-
-    await update.reply_text("Restarting...", quote=True)
     os.execl(sys.executable, sys.executable, "main.py")
