@@ -209,51 +209,161 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
         logger.error(f"An unexpected error occurred with TMDB: {e}")
         return None
 
-async def download_and_upload_poster(client: Bot, poster_url: str = None, message: Message = None, send_to_log_channel: bool = True):
-    """Download and upload poster to log channel"""
-    logger.info("Downloading and uploading poster")
-    temp_dir = os.path.join(TMP_DOWNLOAD_DIRECTORY, str(uuid.uuid4()))
-    os.makedirs(temp_dir, exist_ok=True)
-    download_path = None
-    file_id = None
+from pyrogram import enums
+from pyrogram.errors import FloodWait
 
+# ✅ Put your LOG_CHANNEL in info.py (or use ADMINS[1])
+from info import LOG_CHANNEL, ADMINS
+
+
+def _extract_file_id(msg):
+    """Return (file_id, media_type) from a Message."""
+    if msg.photo:
+        return msg.photo[-1].file_id, "photo"  # ✅ IMPORTANT: [-1]
+    if msg.video:
+        return msg.video.file_id, "video"
+    if msg.document:
+        return msg.document.file_id, "document"
+    if msg.animation:
+        return msg.animation.file_id, "animation"
+    return None, None
+
+
+async def download_and_upload_poster(client: Bot, message: Message, send_to_log_channel: bool = True):
+    """
+    ✅ NO DOWNLOAD
+    - Copies user sent photo/video/document to LOG_CHANNEL (or ADMINS[1])
+    - Returns stable file_id from copied message
+    """
     try:
-        if poster_url:
-            logger.info(f"Downloading poster from URL: {poster_url}")
-            response = requests.get(poster_url, stream=True)
-            response.raise_for_status()
-            download_path = os.path.join(temp_dir, "poster.jpg")
-            with open(download_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        elif message and message.photo and message.photo.file_id:
-            logger.info("Downloading user-provided photo")
-            download_path = await client.download_media(message.photo.file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
-        elif message and message.video and message.video.thumbs and message.video.thumbs[0].file_id:
-            logger.info("Downloading user-provided video thumbnail")
-            download_path = await client.download_media(message.video.thumbs[0].file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
-        else:
-            logger.warning("No valid poster source provided")
+        # first check user message has media
+        src_file_id, src_type = _extract_file_id(message)
+        if not src_file_id:
             return None
 
-        if download_path:
-            logger.info("Uploading poster to LOG_CHANNEL")
-            caption = "#MainPoster" if send_to_log_channel else "Series Poster"
-            sent_msg = await client.send_photo(ADMINS[1], photo=download_path, caption=caption)
-            file_id = sent_msg.photo.file_id
-            try:
-                await sent_msg.delete()
-                logger.debug("Deleted temporary poster from LOG_CHANNEL")
-            except Exception as e:
-                logger.warning(f"Could not delete temporary poster message from LOG_CHANNEL: {e}")
-    except Exception as e:
-        logger.error(f"Error downloading/uploading poster: {e}")
-    finally:
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-            logger.debug(f"Cleaned up temporary directory: {temp_dir}")
-    return file_id
+        # where to store
+        target_chat = int(LOG_CHANNEL) if send_to_log_channel and LOG_CHANNEL else int(ADMINS[1])
 
+        # ✅ copy message to target (keeps quality)
+        copied = None
+        while True:
+            try:
+                copied = await message.copy(
+                    chat_id=target_chat,
+                    caption="✅ Poster saved"
+                )
+                break
+            except FloodWait as e:
+                await asyncio.sleep(e.value)
+            except Exception:
+                return None
+
+        # ✅ extract stable file_id from copied message
+        new_file_id, new_type = _extract_file_id(copied)
+        return new_file_id
+
+    except Exception:
+        return None
+
+
+async def process_poster_input(client: Bot, message: Message, poster_type: str, mode: str = "new"):
+    """Process poster input (series/language/season)"""
+
+    # ✅ Basic validation
+    if not message.from_user:
+        return
+
+    user_id = message.from_user.id
+
+    # ✅ Ensure temp data exists
+    if user_id not in temp_admin_data:
+        await message.reply("Session expired. Please open admin panel again.")
+        return
+
+    series_key = temp_admin_data[user_id].get("current_series_key")
+    language_name = temp_admin_data[user_id].get("current_language")
+    season_name = temp_admin_data[user_id].get("current_season")
+
+    if not series_key:
+        await message.reply("Session expired (no series key). Please try again.")
+        return
+
+    # ✅ Get poster file_id (THIS should handle download/copy/log/upload and return file_id)
+    poster_file_id = await download_and_upload_poster(
+        client,
+        message=message,
+        send_to_log_channel=(poster_type == "series")
+    )
+
+    if not poster_file_id:
+        await message.reply("Failed to process the poster. Please try again.")
+        return
+
+    # ✅ Save poster to DB based on type
+    try:
+        if poster_type == "series":
+            ok = update_poster_file_id(series_key, poster_file_id)
+            await message.reply("✅ Series poster updated successfully." if ok else "❌ Failed to update series poster. Please try again.")
+
+        elif poster_type == "language":
+            if not language_name:
+                await message.reply("Missing language name. Please try again.")
+                return
+            ok = add_or_update_language(series_key, language_name, poster_file_id)
+            await message.reply("✅ Language poster updated successfully." if ok else "❌ Failed to update language poster. Please try again.")
+
+        elif poster_type == "season":
+            if not language_name or not season_name:
+                await message.reply("Missing language/season. Please try again.")
+                return
+            ok = add_or_update_season(series_key, language_name, season_name, poster_file_id)
+            await message.reply("✅ Season poster updated successfully." if ok else "❌ Failed to update season poster. Please try again.")
+
+        else:
+            await message.reply("Unknown poster type.")
+            return
+
+    except Exception as e:
+        logger.error(f"process_poster_input db error: {e}")
+        await message.reply("❌ Error while saving poster. Please try again.")
+        return
+
+    # ✅ Refresh UI
+    try:
+        main_message_id = temp_admin_data[user_id].get("main_message_id")
+
+        if poster_type == "series":
+            await send_series_details_message(
+                client,
+                user_id,
+                get_series_by_key(series_key),
+                main_message_id,
+                mode
+            )
+
+        elif poster_type == "language":
+            await send_season_management_message(
+                client,
+                user_id,
+                series_key,
+                language_name,
+                main_message_id,
+                mode
+            )
+
+        elif poster_type == "season":
+            await send_quality_management_message(
+                client,
+                user_id,
+                series_key,
+                language_name,
+                season_name,
+                main_message_id,
+                mode
+            )
+
+    except Exception as e:
+        logger.error(f"process_poster_input refresh ui error: {e}")
 async def send_series_selection_message(client: Bot, user_id: int, query: str, results: list, message_id: int = None, mode: str = "new"):
     """Send series selection message"""
     logger.info(f"Sending series selection message to user {user_id} (mode: {mode})")
