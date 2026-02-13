@@ -426,38 +426,41 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
 
         # 🔒 USER NOT JOINED
         if btn:
-    if required_chat_id:
-        try:
-            await set_pending(
-                int(user_id),
-                link_key,
-                int(required_chat_id),
-                int(step),
-                int(total) if total else 1
-            )
-        except Exception as e:
-            logger.error(f"set_pending error: {e}")
+            if required_chat_id:
+                try:
+                    await set_pending(
+                        int(user_id),
+                        link_key,
+                        int(required_chat_id),
+                        int(step),
+                        int(total) if total else 1
+                    )
+                except Exception as e:
+                    logger.error(f"set_pending error: {e}")
 
-    # ✅ popup remove
-    try:
-        await callback_query.answer()   # or use show_alert=False toast
-    except:
-        pass
+            try:
+                await callback_query.answer("⚠️ Join the channel first!", show_alert=True)
+            except:
+                pass
 
-    try:
-        await client.send_message(
-            chat_id=user_id,
-            text="<b>🔒 Please join this channel to continue</b>\n\n✅ After join-request, files will come automatically.",
-            reply_markup=InlineKeyboardMarkup(btn),
-            parse_mode=enums.ParseMode.HTML
-        )
-    except Exception as e:
-        logger.error(f"Failed to send fsub buttons in PM: {e}")
-        try:
-            await callback_query.answer("Open bot PM and press /start first!", show_alert=False)
-        except:
-            pass
-    return
+            try:
+                await client.send_message(
+                    chat_id=user_id,
+                    text="<b>🔒 Please join this channel to continue</b>\n\n"
+                         "✅ After join-request, files will come automatically.",
+                    reply_markup=InlineKeyboardMarkup(btn),
+                    parse_mode=enums.ParseMode.HTML
+                )
+            except Exception as e:
+                logger.error(f"Failed to send fsub buttons in PM: {e}")
+                try:
+                    await callback_query.answer(
+                        "Open bot PM and press /start first!",
+                        show_alert=True
+                    )
+                except:
+                    pass
+            return
 
         # ✅ ALREADY JOINED → SEND FILES
         try:
