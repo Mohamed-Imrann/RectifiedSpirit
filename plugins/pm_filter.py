@@ -1,7 +1,8 @@
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
+from pyrogram.types import ChatJoinRequest
+from pyrogram.errors import PeerIdInvalid, UserIsBlocked
 from bot import Bot
 import asyncio
 import re
@@ -335,32 +336,51 @@ async def start_scheduler():
 # User sends join request -> bot auto sends files in PM (NO need click again)
 # ----------------------------
 @Bot.on_chat_join_request()
-async def on_join_request_handler(client: Bot, join_request):
+async def on_join_request_handler(client: Bot, join_request: ChatJoinRequest):
     try:
-        user_id = join_request.from_user.id
-        chat_id = join_request.chat.id
+        user_id = int(join_request.from_user.id)
+        chat_id = int(join_request.chat.id)
 
-        pending = await get_pending(int(user_id))
+        logger.info(f"[JOIN_REQ] got request user={user_id} chat={chat_id}")
+
+        pending = await get_pending(user_id)
         if not pending:
+            logger.info(f"[JOIN_REQ] no pending for user={user_id}")
             return
 
         required_chat_id = int(pending.get("required_chat_id", 0))
-        if required_chat_id != int(chat_id):
+        if required_chat_id != chat_id:
+            logger.info(f"[JOIN_REQ] chat mismatch user={user_id} required={required_chat_id} got={chat_id}")
             return
 
         link_key = pending.get("link_key")
         total = int(pending.get("total", 1))
 
         if not link_key:
-            await clear_pending(int(user_id))
+            logger.info(f"[JOIN_REQ] link_key missing user={user_id} -> clear pending")
+            await clear_pending(user_id)
             return
 
-        # Send files now (auto)
+        # ✅ Fetch files
         files_to_send, *_ = await get_links_for_quality(client, link_key)
         if not files_to_send:
-            await clear_pending(int(user_id))
+            logger.info(f"[JOIN_REQ] no files for key={link_key} -> clear pending user={user_id}")
+            await clear_pending(user_id)
             return
 
+        # ✅ PM must be open (user should /start bot once)
+        try:
+            await client.send_message(user_id, "✅ Join request received. Sending files...")
+        except (PeerIdInvalid, UserIsBlocked) as e:
+            logger.error(f"[JOIN_REQ] cannot PM user={user_id} ({e}). User must /start bot. KEEP pending.")
+            return
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+        except Exception as e:
+            logger.error(f"[JOIN_REQ] send_message error user={user_id}: {e}. KEEP pending.")
+            return
+
+        sent = 0
         for item in files_to_send:
             file_id = item.get("file_id")
             caption = item.get("caption") or ""
@@ -368,20 +388,29 @@ async def on_join_request_handler(client: Bot, join_request):
                 continue
             try:
                 await client.send_cached_media(chat_id=user_id, file_id=file_id, caption=caption)
-                await asyncio.sleep(0.2)
-            except Exception:
-                pass
+                sent += 1
+                await asyncio.sleep(0.3)
+            except FloodWait as e:
+                await asyncio.sleep(e.value)
+            except (PeerIdInvalid, UserIsBlocked) as e:
+                logger.error(f"[JOIN_REQ] user blocked/invalid user={user_id}: {e}. STOP. KEEP pending.")
+                return
+            except Exception as e:
+                logger.error(f"[JOIN_REQ] send_cached_media error user={user_id}: {e}")
 
-        # ✅ advance step for next request (we assume user requested join)
-        try:
-            await advance_user_step(int(user_id), total)
-        except Exception:
-            pass
+        if sent > 0:
+            try:
+                await advance_user_step(user_id, total)
+            except Exception as e:
+                logger.error(f"[JOIN_REQ] advance_user_step error user={user_id}: {e}")
 
-        await clear_pending(int(user_id))
+            await clear_pending(user_id)
+            logger.info(f"[JOIN_REQ] done user={user_id} sent={sent} cleared pending")
+        else:
+            logger.error(f"[JOIN_REQ] sent=0 user={user_id}. KEEP pending (not cleared).")
 
     except Exception as e:
-        logger.error(f"on_join_request_handler error: {e}")
+        logger.error(f"[JOIN_REQ] handler crashed: {e}", exc_info=True)
 
 
 # ----------------------------
