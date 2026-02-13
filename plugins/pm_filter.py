@@ -411,53 +411,56 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
             return
 
         # ✅ GET REQUIRED FSUB CHAT
+        # ✅ STRICT CHECK (NOT JOINED => save pending + show join btn, DO NOT send files)
         try:
             required_chat_id, total, step = await get_required_fsub_chat(client, user_id)
         except Exception as e:
             logger.error(f"get_required_fsub_chat error: {e}")
             required_chat_id, total, step = None, 0, 0
 
-        # ask join button if user not joined
-        try:
-            btn = await create_request_forcesub_buttons(client, user_id)
-        except Exception as e:
-            logger.error(f"create_request_forcesub_buttons error: {e}")
-            btn = None
-
-        # 🔒 USER NOT JOINED
-        if btn:
-            if required_chat_id:
-                try:
-                    await set_pending(
-                        int(user_id),
-                        link_key,
-                        int(required_chat_id),
-                        int(step),
-                        int(total) if total else 1
-                    )
-                except Exception as e:
-                    logger.error(f"set_pending error: {e}")
-
+        # ✅ show ONLY required channel button (prevents mismatch)
+        btn = None
+        if required_chat_id:
             try:
-                await callback_query.answer("⚠️ Join the channel first!", show_alert=True)
+                inv = await client.create_chat_invite_link(
+                    int(required_chat_id),
+                    creates_join_request=True
+                )
+                btn = [[InlineKeyboardButton("🔔 Join Channel", url=inv.invite_link)]]
+            except Exception as e:
+                logger.error(f"invite_link error: {e}")
+                btn = None
+
+        if btn:
+            # ✅ save pending so join-request triggers auto-send
+            try:
+                await set_pending(
+                    int(user_id),
+                    link_key,
+                    int(required_chat_id),
+                    int(step),
+                    int(total) if total else 1
+                )
+            except Exception as e:
+                logger.error(f"set_pending error: {e}")
+
+            # ❌ popup venam -> show_alert=False
+            try:
+                await callback_query.answer("Join the channel first!", show_alert=False)
             except:
                 pass
 
             try:
                 await client.send_message(
                     chat_id=user_id,
-                    text="<b>🔒 Please join this channel to continue</b>\n\n"
-                         "✅ After join-request, files will come automatically.",
+                    text="<b>🔒 Please join this channel to continue</b>\n\n✅ After join-request, files will come automatically.",
                     reply_markup=InlineKeyboardMarkup(btn),
                     parse_mode=enums.ParseMode.HTML
                 )
             except Exception as e:
-                logger.error(f"Failed to send fsub buttons in PM: {e}")
+                logger.error(f"Failed to send fsub button in PM: {e}")
                 try:
-                    await callback_query.answer(
-                        "Open bot PM and press /start first!",
-                        show_alert=True
-                    )
+                    await callback_query.answer("Open bot PM and press /start first!", show_alert=True)
                 except:
                     pass
             return
