@@ -62,12 +62,20 @@ async def advance_user_step(user_id: int, total: int):
 # ✅ PENDING (AUTO SEND)
 # ---------------------------
 async def set_pending(user_id: int, link_key: str, required_chat_id: int, step: int, total: int):
+    # ✅ normalize chat id (store plain too)
+    rcid = int(required_chat_id)
+    rcid_plain = int(str(rcid).replace("-100", "")) if str(rcid).startswith("-100") else rcid
+
     pending_fsub.update_one(
         {"user_id": int(user_id)},
         {"$set": {
             "user_id": int(user_id),
             "link_key": str(link_key),
-            "required_chat_id": int(required_chat_id),
+
+            # ✅ store BOTH
+            "required_chat_id": int(rcid),
+            "required_chat_id_plain": int(rcid_plain),
+
             "step": int(step),
             "total": int(total),
         }},
