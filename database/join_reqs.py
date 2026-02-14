@@ -1,4 +1,5 @@
 import motor.motor_asyncio
+from datetime import datetime
 from info import REQ_CHANNEL_ONE, REQ_CHANNEL_TWO, REQ_CHANNEL_THREE
 
 class JoinReqs:
@@ -20,6 +21,13 @@ class JoinReqs:
         else:
             self.client = None
             self.db = None
+
+    def _collection_for_chat(self, chat_id: int):
+        if not self.db:
+            return None
+        cid = int(chat_id)
+        # Keep numeric collection name for compatibility with existing setup.
+        return self.db[str(cid)]
 
     # ---------------- chat1 ----------------
     async def add_fsub_chat1(self, chat_id: int):
@@ -53,3 +61,20 @@ class JoinReqs:
 
     async def delete_fsub_chat3(self, chat_id: int):
         await self.chat_col3.delete_one({"chat_id": int(chat_id)})
+
+    # ---------------- required-chat users ----------------
+    async def add_user(self, chat_id: int, user_id: int):
+        col = self._collection_for_chat(chat_id)
+        if not col:
+            return
+        await col.update_one(
+            {"user_id": int(user_id)},
+            {"$set": {"user_id": int(user_id), "joined_at": datetime.utcnow()}},
+            upsert=True
+        )
+
+    async def get_user(self, chat_id: int, user_id: int):
+        col = self._collection_for_chat(chat_id)
+        if not col:
+            return None
+        return await col.find_one({"user_id": int(user_id)})
