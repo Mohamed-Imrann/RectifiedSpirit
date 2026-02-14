@@ -345,30 +345,35 @@ async def send_series_selection_message(client: Bot, user_id: int, query: str, r
         return None
 
 async def send_series_details_message(client: Bot, user_id: int, series_data: dict, message_id: int = None, mode: str = "new"):
-    """Send series details message"""
+    """Send series details message with poster handling"""
     logger.info(f"Sending series details message to user {user_id} (mode: {mode})")
     prefix = "edit_" if mode == "edit" else ""
     series_key = series_data['_id']
-    poster_file_id = get_poster_file_id(series_key) or NO_POSTER_FOUND_IMG[0]
+
+    # Try to get stored poster
+    poster_file_id = get_poster_file_id(series_key)
+    if not poster_file_id:
+        logger.warning("No poster file_id found, attempting to fetch again")
+        poster_file_id = await download_and_upload_poster(
+            client,
+            poster_url=series_data.get("poster_url")
+        ) or NO_POSTER_FOUND_IMG[0]
 
     text = (
-        f"○ **Title:** `{series_data.get('title', 'N/A')}`"
-        f"○ **Released On:** `{series_data.get('released_on', 'N/A')}`"
-        f"○ **Genre:** `{series_data.get('genre', 'N/A')}`"
-        f"○ **Rating:** `{series_data.get('rating', 'N/A')}`"
+        f"○ **Title:** `{series_data.get('title', 'N/A')}`\n"
+        f"○ **Released On:** `{series_data.get('released_on', 'N/A')}`\n"
+        f"○ **Genre:** `{series_data.get('genre', 'N/A')}`\n"
+        f"○ **Rating:** `{series_data.get('rating', 'N/A')}`\n"
         f"○ **Media Type:** `{series_data.get('media_type', 'N/A').upper()}`"
     )
 
     if mode == "edit":
-        text += f"○ **Published:** `{'✅' if series_data.get('published', False) else '❌'}`"
-
-    text += ""
+        text += f"\n○ **Published:** `{'✅' if series_data.get('published', False) else '❌'}`"
 
     buttons = [
         InlineKeyboardButton("🌐 Languages", callback_data=f"{prefix}manage_languages"),
         InlineKeyboardButton("🖼️ Poster", callback_data=f"{prefix}change_poster"),
     ]
-    
     if mode == "edit":
         if not series_data.get('published', False):
             buttons.append(InlineKeyboardButton("📤 Publish", callback_data=f"{prefix}publish_series"))
@@ -376,7 +381,7 @@ async def send_series_details_message(client: Bot, user_id: int, series_data: di
             buttons.append(InlineKeyboardButton("📝 Update", callback_data=f"{prefix}update_series"))
     else:
         buttons.append(InlineKeyboardButton("📤 Publish", callback_data=f"{prefix}publish_series"))
-    
+
     layout = [[buttons[0]], [buttons[1], buttons[2]]]
     reply_markup = InlineKeyboardMarkup(layout)
 
