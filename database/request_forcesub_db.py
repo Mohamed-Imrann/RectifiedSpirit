@@ -4,6 +4,8 @@
 # database/request_forcesub_db.py
 
 import pymongo
+import secrets
+from datetime import datetime, timedelta
 from info import DATABASE_URI, DATABASE_NAME
 
 myclient = pymongo.MongoClient(DATABASE_URI)
@@ -18,6 +20,10 @@ fsub_steps = mydb["fsub_steps"]
 
 # ✅ Pending file send (so user no need to click again)
 pending_fsub = mydb["pending_fsub"]
+
+# ✅ short-lived deep-link token cache
+temp_tokens = mydb["fsub_temp_tokens"]
+temp_tokens.create_index("expires_at", expireAfterSeconds=0)
 
 
 # ---------------------------
@@ -89,6 +95,40 @@ async def get_pending(user_id: int):
 
 async def clear_pending(user_id: int):
     pending_fsub.delete_one({"user_id": int(user_id)})
+
+
+# ---------------------------
+# ✅ TEMP TOKEN (10 min cache)
+# ---------------------------
+async def create_temp_token(user_id: int, link_key: str, ttl_seconds: int = 600) -> str:
+    token = secrets.token_urlsafe(16)
+    expires_at = datetime.utcnow() + timedelta(seconds=int(ttl_seconds))
+    temp_tokens.update_one(
+        {"user_id": int(user_id), "token": token},
+        {"$set": {
+            "user_id": int(user_id),
+            "token": token,
+            "link_key": str(link_key),
+            "expires_at": expires_at,
+        }},
+        upsert=True
+    )
+    return token
+
+
+async def get_link_key_by_token(user_id: int, token: str):
+    doc = temp_tokens.find_one({
+        "user_id": int(user_id),
+        "token": str(token),
+        "expires_at": {"$gt": datetime.utcnow()},
+    })
+    if not doc:
+        return None
+    return doc.get("link_key")
+
+
+async def delete_temp_token(user_id: int, token: str):
+    temp_tokens.delete_one({"user_id": int(user_id), "token": str(token)})
 
 
 # ---------------------------
