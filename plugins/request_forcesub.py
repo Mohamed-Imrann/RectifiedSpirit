@@ -1,6 +1,6 @@
 # plugins/request_forcesub.py
 import logging
-from pyrogram import enums, filters
+from pyrogram import enums
 from pyrogram.types import InlineKeyboardButton
 from pyrogram.errors import UserNotParticipant
 
@@ -28,7 +28,6 @@ async def _is_joined_or_requested(client, chat_id: int, user_id: int) -> bool:
         mem = await client.get_chat_member(int(chat_id), int(user_id))
         logger.info(f"_is_joined_or_requested get_chat_member: chat={chat_id} user={user_id} status={mem.status}")
         return mem.status != enums.ChatMemberStatus.BANNED
-
     except UserNotParticipant:
         logger.info(f"_is_joined_or_requested: user {user_id} not participant in chat {chat_id} — checking join requests")
         try:
@@ -41,7 +40,6 @@ async def _is_joined_or_requested(client, chat_id: int, user_id: int) -> bool:
         except Exception as e:
             logger.exception(f"_is_joined_or_requested get_chat_join_requests failed for chat {chat_id}: {e}")
         return False
-
     except Exception as e:
         logger.exception(f"_is_joined_or_requested unexpected error for chat {chat_id} user {user_id}: {e}")
         return False
@@ -110,6 +108,7 @@ async def _get_chat_invite_url(client, chat_id: int) -> str:
 async def get_all_fsub_chats() -> list:
     """
     Reads fsub chats from JoinReqs DB (chat1/chat2/chat3).
+    Expected DB returns like: {"chat_id": "<id>"} or None.
     """
     chats = []
 
@@ -186,7 +185,6 @@ async def create_request_forcesub_buttons(client, user_id: int):
         logger.warning(f"create_request_forcesub_buttons: no invite url for chat {required_chat_id}")
         return None
 
-    # ✅ only one button (no "I Joined" callback)
     logger.info(f"create_request_forcesub_buttons: returning button for user {user_id} chat {required_chat_id} url={url}")
     return [[InlineKeyboardButton(f"🎗 Join Channel {step} 🎗", url=url)]]
 
@@ -204,8 +202,13 @@ async def check_and_advance_if_joined(client, user_id: int) -> bool:
         logger.info(f"check_and_advance_if_joined: user {user_id} not joined/requested chat {required_chat_id}")
         return False
 
-    await advance_user_step(int(user_id), total)
-    logger.info(f"check_and_advance_if_joined: advanced user {user_id} step (total {total})")
+    try:
+        await advance_user_step(int(user_id), int(total))
+        logger.info(f"check_and_advance_if_joined: advanced user {user_id} step (total {total})")
+    except Exception as e:
+        logger.exception(f"check_and_advance_if_joined: failed to advance user step for {user_id}: {e}")
+        return False
+
     return True
 
 
@@ -251,22 +254,25 @@ async def forward_files_to_user(client, user_id: int, chat_id: int):
 
 
 # ----------------------------
-# Optional: /checkjoin command handler
+# /checkjoin command handler (to register in main bot)
 # ----------------------------
 # Register this handler in your main bot file. Example (Pyrogram v2):
-# app.add_handler(pyrogram.handlers.MessageHandler(cmd_checkjoin, filters=filters.command("checkjoin") & filters.private))
-#
-# Or using decorator in main where `app` is available:
 # @app.on_message(filters.command("checkjoin") & filters.private)
-# async def cmd_checkjoin(client, message): ...
+# async def cmd_checkjoin_wrapper(client, message):
+#     await cmd_checkjoin(client, message)
 #
-# The handler below is provided so you can register it as shown above.
+# Or add handler manually:
+# app.add_handler(pyrogram.handlers.MessageHandler(cmd_checkjoin, filters=filters.command("checkjoin") & filters.private))
 
 async def cmd_checkjoin(client, message):
     """
     User runs /checkjoin to re-check membership and receive files if approved.
     """
     try:
+        if not message.from_user:
+            await message.reply_text("Unable to identify you. Try again.")
+            return
+
         user_id = message.from_user.id
         required_chat_id, total, step = await get_required_fsub_chat(client, user_id)
         if not required_chat_id:
@@ -281,7 +287,13 @@ async def cmd_checkjoin(client, message):
             return
 
         # Advance user step
-        await advance_user_step(int(user_id), total)
+        try:
+            await advance_user_step(int(user_id), int(total))
+            logger.info(f"cmd_checkjoin: advanced user {user_id} step (total {total})")
+        except Exception as e:
+            logger.exception(f"cmd_checkjoin: failed to advance user step for {user_id}: {e}")
+            await message.reply_text("Could not update your subscription step. Try again later.")
+            return
 
         # Forward files for this chat to user
         forwarded = await forward_files_to_user(client, user_id, required_chat_id)
