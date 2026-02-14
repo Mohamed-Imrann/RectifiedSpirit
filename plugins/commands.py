@@ -14,7 +14,12 @@ from pyrogram.errors import ChatAdminRequired, FloodWait, BadRequest
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from database.users_chats_db import db
-from database.request_forcesub_db import delete_all_one, delete_all_two
+from database.request_forcesub_db import (
+    delete_all_one,
+    delete_all_two,
+    set_pending,
+    create_temp_token,
+)
 from database.join_reqs import JoinReqs
 
 from pymongo import MongoClient
@@ -28,7 +33,7 @@ from utils import get_size, is_subscribed
 import json
 
 # ✅ correct import path
-from plugins.request_forcesub import create_request_forcesub_buttons
+from plugins.request_forcesub import create_request_forcesub_buttons, get_required_fsub_chat
 
 # Configure logging
 logging.basicConfig(
@@ -121,7 +126,17 @@ async def start_command(client, message):
             # ✅ FSUB check only for deep_link
             btn = await create_request_forcesub_buttons(client, message.from_user.id)
             if btn:
-                btn.append([InlineKeyboardButton("↻ Tʀʏ Aɢᴀɪɴ", callback_data=f"b:{deep_link}")])
+                required_chat_id, total, step = await get_required_fsub_chat(client, message.from_user.id)
+                token = await create_temp_token(message.from_user.id, deep_link, ttl_seconds=600)
+                if required_chat_id:
+                    await set_pending(
+                        int(message.from_user.id),
+                        f"tk:{token}",
+                        int(required_chat_id),
+                        int(step),
+                        int(total) if total else 1,
+                    )
+                btn.append([InlineKeyboardButton("↻ Tʀʏ Aɢᴀɪɴ", callback_data=f"btk:{message.from_user.id}:{token}")])
                 await client.send_message(
                     chat_id=message.from_user.id,
                     text="<b>Please join channel(s) below to use bot</b>",
