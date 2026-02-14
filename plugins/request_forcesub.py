@@ -1,6 +1,6 @@
 # plugins/request_forcesub.py
 import logging
-from pyrogram import enums
+from pyrogram import enums, filters
 from pyrogram.types import InlineKeyboardButton
 from pyrogram.errors import UserNotParticipant
 
@@ -20,7 +20,7 @@ db1 = JoinReqs()
 # ----------------------------
 async def _is_joined_or_requested(client, chat_id: int, user_id: int) -> bool:
     """
-    ✅ True if:
+    True if:
       - user is already member
       - OR user sent Join Request (pending)
     """
@@ -31,7 +31,6 @@ async def _is_joined_or_requested(client, chat_id: int, user_id: int) -> bool:
 
     except UserNotParticipant:
         logger.info(f"_is_joined_or_requested: user {user_id} not participant in chat {chat_id} — checking join requests")
-        # If join-request pending => allow
         try:
             reqs = await client.get_chat_join_requests(int(chat_id), limit=200)
             logger.info(f"_is_joined_or_requested: join requests fetched count={len(reqs)} for chat={chat_id}")
@@ -50,12 +49,11 @@ async def _is_joined_or_requested(client, chat_id: int, user_id: int) -> bool:
 
 async def _get_chat_invite_url(client, chat_id: int) -> str:
     """
-    ✅ Prefer join-request invite link (creates_join_request=True)
-    Fallback order:
-      1. create_chat_invite_link with creates_join_request=True
-      2. export_chat_invite_link (older API) if available
-      3. public username t.me/username
-      4. empty string or generic t.me/
+    Prefer join-request invite link (creates_join_request=True)
+    Fallbacks:
+      - export_chat_invite_link if available
+      - public username t.me/username
+      - generic t.me/
     """
     try:
         cid = int(chat_id)
@@ -75,7 +73,7 @@ async def _get_chat_invite_url(client, chat_id: int) -> str:
     except Exception as e:
         logger.exception(f"_get_chat_invite_url create_chat_invite_link failed for chat {cid}: {e}")
 
-    # 2) Try export_chat_invite_link (older Bot API method) if available
+    # 2) Try export_chat_invite_link (older API) if available
     try:
         if hasattr(client, "export_chat_invite_link"):
             logger.info(f"_get_chat_invite_url: trying export_chat_invite_link for chat {cid}")
@@ -89,7 +87,6 @@ async def _get_chat_invite_url(client, chat_id: int) -> str:
             except Exception as e:
                 logger.exception(f"_get_chat_invite_url export_chat_invite_link failed for chat {cid}: {e}")
     except Exception:
-        # defensive: if hasattr check itself errors, ignore
         pass
 
     # 3) Fallback to public username link
@@ -173,7 +170,7 @@ async def get_required_fsub_chat(client, user_id: int):
 
 async def create_request_forcesub_buttons(client, user_id: int):
     """
-    Returns buttons if NOT joined/requested required channel.
+    Returns only one button (join link) if NOT joined/requested required channel.
     """
     required_chat_id, total, step = await get_required_fsub_chat(client, int(user_id))
     if not required_chat_id:
@@ -189,14 +186,14 @@ async def create_request_forcesub_buttons(client, user_id: int):
         logger.warning(f"create_request_forcesub_buttons: no invite url for chat {required_chat_id}")
         return None
 
-    # ✅ only one button
+    # ✅ only one button (no "I Joined" callback)
     logger.info(f"create_request_forcesub_buttons: returning button for user {user_id} chat {required_chat_id} url={url}")
     return [[InlineKeyboardButton(f"🎗 Join Channel {step} 🎗", url=url)]]
 
 
 async def check_and_advance_if_joined(client, user_id: int) -> bool:
     """
-    ✅ If joined/requested => advance step and return True
+    If joined/requested => advance step and return True
     """
     required_chat_id, total, step = await get_required_fsub_chat(client, int(user_id))
     if not required_chat_id:
@@ -216,3 +213,85 @@ async def check_and_advance_if_joined(client, user_id: int) -> bool:
 async def advance_user_fsub_step(user_id: int, total: int = 3):
     # not used now
     await advance_user_step(int(user_id), int(total))
+
+
+# ----------------------------
+# Forwarding files after approval
+# ----------------------------
+async def forward_files_to_user(client, user_id: int, chat_id: int):
+    """
+    Forward files/messages from the fsub chat to the user.
+    Assumes DB has stored message_ids for files in that chat.
+    Example DB API used: db1.get_files_for_chat(chat_id) -> list of {"chat_id":..., "message_id":...}
+    """
+    try:
+        files = []
+        if hasattr(db1, "get_files_for_chat"):
+            files = await db1.get_files_for_chat(int(chat_id))
+        else:
+            logger.warning("forward_files_to_user: db1.get_files_for_chat not implemented")
+            return False
+
+        if not files:
+            logger.info(f"forward_files_to_user: no files configured for chat {chat_id}")
+            return False
+
+        for f in files:
+            try:
+                src_chat = int(f.get("chat_id", chat_id))
+                msg_id = int(f.get("message_id"))
+                await client.forward_messages(chat_id=int(user_id), from_chat_id=src_chat, message_ids=msg_id)
+                logger.info(f"forward_files_to_user: forwarded message {msg_id} from {src_chat} to user {user_id}")
+            except Exception as e:
+                logger.exception(f"forward_files_to_user: failed to forward message {f} to user {user_id}: {e}")
+        return True
+    except Exception as e:
+        logger.exception(f"forward_files_to_user unexpected error: {e}")
+        return False
+
+
+# ----------------------------
+# Optional: /checkjoin command handler
+# ----------------------------
+# Register this handler in your main bot file. Example (Pyrogram v2):
+# app.add_handler(pyrogram.handlers.MessageHandler(cmd_checkjoin, filters=filters.command("checkjoin") & filters.private))
+#
+# Or using decorator in main where `app` is available:
+# @app.on_message(filters.command("checkjoin") & filters.private)
+# async def cmd_checkjoin(client, message): ...
+#
+# The handler below is provided so you can register it as shown above.
+
+async def cmd_checkjoin(client, message):
+    """
+    User runs /checkjoin to re-check membership and receive files if approved.
+    """
+    try:
+        user_id = message.from_user.id
+        required_chat_id, total, step = await get_required_fsub_chat(client, user_id)
+        if not required_chat_id:
+            await message.reply_text("No subscription channels configured.")
+            return
+
+        ok = await _is_joined_or_requested(client, required_chat_id, user_id)
+        if not ok:
+            await message.reply_text(
+                "You are not a member and no pending join request found. Please join the channel and wait for admin approval, then run /checkjoin again."
+            )
+            return
+
+        # Advance user step
+        await advance_user_step(int(user_id), total)
+
+        # Forward files for this chat to user
+        forwarded = await forward_files_to_user(client, user_id, required_chat_id)
+        if forwarded:
+            await message.reply_text("Thanks! Files have been sent to you.")
+        else:
+            await message.reply_text("You're approved, but no files are configured to send.")
+    except Exception as e:
+        logger.exception(f"cmd_checkjoin error: {e}")
+        try:
+            await message.reply_text("Something went wrong while checking. Try again later.")
+        except Exception:
+            pass
