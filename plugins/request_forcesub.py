@@ -1,5 +1,6 @@
 # plugins/request_forcesub.py
 import logging
+import time
 from pyrogram import enums
 from pyrogram.types import InlineKeyboardButton
 from pyrogram.errors import UserNotParticipant
@@ -9,6 +10,9 @@ from database.request_forcesub_db import (
     get_user_step,
     set_user_step,
     advance_user_step,
+    set_pending,
+    get_pending,
+    clear_pending,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,6 +35,7 @@ async def _is_joined_or_requested(client, chat_id: int, user_id: int) -> bool:
     except UserNotParticipant:
         logger.info(f"_is_joined_or_requested: user {user_id} not participant in chat {chat_id} — checking join requests")
         try:
+            # requires bot to be admin in the chat
             reqs = await client.get_chat_join_requests(int(chat_id), limit=200)
             logger.info(f"_is_joined_or_requested: join requests fetched count={len(reqs)} for chat={chat_id}")
             for r in reqs:
@@ -108,7 +113,7 @@ async def _get_chat_invite_url(client, chat_id: int) -> str:
 async def get_all_fsub_chats() -> list:
     """
     Reads fsub chats from JoinReqs DB (chat1/chat2/chat3).
-    Expected DB returns like: {"chat_id": "<id>"} or None.
+    Uses JoinReqs class (db1) to fetch configured chats.
     """
     chats = []
 
@@ -170,6 +175,7 @@ async def get_required_fsub_chat(client, user_id: int):
 async def create_request_forcesub_buttons(client, user_id: int):
     """
     Returns only one button (join link) if NOT joined/requested required channel.
+    Also sets a pending record in DB so the bot can auto-send later if desired.
     """
     required_chat_id, total, step = await get_required_fsub_chat(client, int(user_id))
     if not required_chat_id:
@@ -185,6 +191,15 @@ async def create_request_forcesub_buttons(client, user_id: int):
         logger.warning(f"create_request_forcesub_buttons: no invite url for chat {required_chat_id}")
         return None
 
+    # create a link_key and set pending so bot can later auto-send when approved
+    try:
+        link_key = f"fsub:{int(user_id)}:{int(required_chat_id)}:{int(time.time())}"
+        await set_pending(int(user_id), link_key, int(required_chat_id), int(step), int(total))
+        logger.info(f"create_request_forcesub_buttons: set pending for user {user_id} chat {required_chat_id} link_key={link_key}")
+    except Exception as e:
+        logger.exception(f"create_request_forcesub_buttons: failed to set pending for user {user_id}: {e}")
+
+    # ✅ only one button (no "I Joined" callback)
     logger.info(f"create_request_forcesub_buttons: returning button for user {user_id} chat {required_chat_id} url={url}")
     return [[InlineKeyboardButton(f"🎗 Join Channel {step} 🎗", url=url)]]
 
@@ -209,6 +224,15 @@ async def check_and_advance_if_joined(client, user_id: int) -> bool:
         logger.exception(f"check_and_advance_if_joined: failed to advance user step for {user_id}: {e}")
         return False
 
+    # clear pending if exists
+    try:
+        pending = await get_pending(int(user_id))
+        if pending:
+            await clear_pending(int(user_id))
+            logger.info(f"check_and_advance_if_joined: cleared pending for user {user_id}")
+    except Exception as e:
+        logger.exception(f"check_and_advance_if_joined: failed to clear pending for {user_id}: {e}")
+
     return True
 
 
@@ -224,8 +248,9 @@ async def advance_user_fsub_step(user_id: int, total: int = 3):
 async def forward_files_to_user(client, user_id: int, chat_id: int):
     """
     Forward files/messages from the fsub chat to the user.
-    Assumes DB has stored message_ids for files in that chat.
-    Example DB API used: db1.get_files_for_chat(chat_id) -> list of {"chat_id":..., "message_id":...}
+    Assumes JoinReqs (db1) has a method get_files_for_chat(chat_id) that returns
+    a list of {"chat_id": <id>, "message_id": <msg_id>}.
+    If your JoinReqs uses different method names, adapt accordingly.
     """
     try:
         files = []
@@ -254,56 +279,44 @@ async def forward_files_to_user(client, user_id: int, chat_id: int):
 
 
 # ----------------------------
-# /checkjoin command handler (to register in main bot)
+# Helper: process pending entries (optional)
 # ----------------------------
-# Register this handler in your main bot file. Example (Pyrogram v2):
-# @app.on_message(filters.command("checkjoin") & filters.private)
-# async def cmd_checkjoin_wrapper(client, message):
-#     await cmd_checkjoin(client, message)
-#
-# Or add handler manually:
-# app.add_handler(pyrogram.handlers.MessageHandler(cmd_checkjoin, filters=filters.command("checkjoin") & filters.private))
-
-async def cmd_checkjoin(client, message):
+async def process_pending_for_user(client, user_id: int):
     """
-    User runs /checkjoin to re-check membership and receive files if approved.
+    If a pending record exists for user, re-check membership and auto-send files.
+    Call this from your main bot when you detect user activity (e.g., on /start or any command),
+    or run a periodic task to scan pending_fsub collection and attempt delivery.
     """
     try:
-        if not message.from_user:
-            await message.reply_text("Unable to identify you. Try again.")
-            return
+        pending = await get_pending(int(user_id))
+        if not pending:
+            return False
 
-        user_id = message.from_user.id
-        required_chat_id, total, step = await get_required_fsub_chat(client, user_id)
-        if not required_chat_id:
-            await message.reply_text("No subscription channels configured.")
-            return
-
-        ok = await _is_joined_or_requested(client, required_chat_id, user_id)
+        required_chat_id = int(pending.get("required_chat_id"))
+        # re-check membership
+        ok = await _is_joined_or_requested(client, required_chat_id, int(user_id))
         if not ok:
-            await message.reply_text(
-                "You are not a member and no pending join request found. Please join the channel and wait for admin approval, then run /checkjoin again."
-            )
-            return
+            logger.info(f"process_pending_for_user: user {user_id} still not joined/requested chat {required_chat_id}")
+            return False
 
-        # Advance user step
+        # advance step
+        total = int(pending.get("total", 1))
         try:
             await advance_user_step(int(user_id), int(total))
-            logger.info(f"cmd_checkjoin: advanced user {user_id} step (total {total})")
+            logger.info(f"process_pending_for_user: advanced user {user_id} step (total {total})")
         except Exception as e:
-            logger.exception(f"cmd_checkjoin: failed to advance user step for {user_id}: {e}")
-            await message.reply_text("Could not update your subscription step. Try again later.")
-            return
+            logger.exception(f"process_pending_for_user: failed to advance step for {user_id}: {e}")
 
-        # Forward files for this chat to user
+        # forward files
         forwarded = await forward_files_to_user(client, user_id, required_chat_id)
-        if forwarded:
-            await message.reply_text("Thanks! Files have been sent to you.")
-        else:
-            await message.reply_text("You're approved, but no files are configured to send.")
-    except Exception as e:
-        logger.exception(f"cmd_checkjoin error: {e}")
+        # clear pending
         try:
-            await message.reply_text("Something went wrong while checking. Try again later.")
-        except Exception:
-            pass
+            await clear_pending(int(user_id))
+            logger.info(f"process_pending_for_user: cleared pending for user {user_id}")
+        except Exception as e:
+            logger.exception(f"process_pending_for_user: failed to clear pending for {user_id}: {e}")
+
+        return forwarded
+    except Exception as e:
+        logger.exception(f"process_pending_for_user unexpected error: {e}")
+        return False
