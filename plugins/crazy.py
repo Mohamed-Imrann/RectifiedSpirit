@@ -210,8 +210,13 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
         logger.error(f"An unexpected error occurred with TMDB: {e}")
         return None
 
-async def download_and_upload_poster(client: Bot, poster_url: str = None, message: Message = None, send_to_log_channel: bool = True):
-    """Download and upload poster to log channel"""
+async def download_and_upload_poster(
+    client: Bot,
+    poster_url: str = None,
+    message: Message = None,
+    send_to_log_channel: bool = True
+) -> Optional[str]:
+    """Download and upload poster to log channel or admin channel, return file_id"""
     logger.info("Downloading and uploading poster")
     temp_dir = os.path.join(TMP_DOWNLOAD_DIRECTORY, str(uuid.uuid4()))
     os.makedirs(temp_dir, exist_ok=True)
@@ -219,40 +224,72 @@ async def download_and_upload_poster(client: Bot, poster_url: str = None, messag
     file_id = None
 
     try:
-        if poster_url:
+        # --- Step 1: Download poster ---
+        if poster_url and poster_url.startswith("http"):
             logger.info(f"Downloading poster from URL: {poster_url}")
-            response = requests.get(poster_url, stream=True)
+            response = requests.get(poster_url, stream=True, timeout=15)
             response.raise_for_status()
             download_path = os.path.join(temp_dir, "poster.jpg")
-            with open(download_path, 'wb') as f:
+            with open(download_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
+
         elif message and message.photo and message.photo.file_id:
             logger.info("Downloading user-provided photo")
-            download_path = await client.download_media(message.photo.file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
+            download_path = await client.download_media(
+                message.photo.file_id,
+                file_name=os.path.join(temp_dir, "poster.jpg")
+            )
+
         elif message and message.video and message.video.thumbs and message.video.thumbs[0].file_id:
             logger.info("Downloading user-provided video thumbnail")
-            download_path = await client.download_media(message.video.thumbs[0].file_id, file_name=os.path.join(temp_dir, "poster.jpg"))
+            download_path = await client.download_media(
+                message.video.thumbs[0].file_id,
+                file_name=os.path.join(temp_dir, "poster.jpg")
+            )
+
         else:
             logger.warning("No valid poster source provided")
-            return None
+            return NO_POSTER_FOUND_IMG[0]
 
+        # --- Step 2: Upload poster ---
         if download_path:
-            logger.info("Uploading poster to LOG_CHANNEL")
+            logger.info("Uploading poster")
             caption = "#MainPoster" if send_to_log_channel else "Series Poster"
-            sent_msg = await client.send_photo(ADMINS[1], photo=download_path, caption=caption)
-            file_id = sent_msg.photo.file_id
+            target_chat = LOG_CHANNEL if send_to_log_channel else ADMINS[0]
+
             try:
-                await sent_msg.delete()
-                logger.debug("Deleted temporary poster from LOG_CHANNEL")
+                sent_msg = await client.send_photo(
+                    chat_id=target_chat,
+                    photo=download_path,
+                    caption=caption
+                )
+                file_id = sent_msg.photo.file_id
+
+                # Clean up temporary message
+                try:
+                    await sent_msg.delete()
+                    logger.debug("Deleted temporary poster message")
+                except Exception as e:
+                    logger.warning(f"Could not delete temporary poster message: {e}")
+
             except Exception as e:
-                logger.warning(f"Could not delete temporary poster message from LOG_CHANNEL: {e}")
+                logger.error(f"Telegram upload failed: {e}")
+                file_id = NO_POSTER_FOUND_IMG[0]
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Poster download failed: {e}")
+        file_id = NO_POSTER_FOUND_IMG[0]
+
     except Exception as e:
-        logger.error(f"Error downloading/uploading poster: {e}")
+        logger.error(f"Unexpected error in poster handling: {e}")
+        file_id = NO_POSTER_FOUND_IMG[0]
+
     finally:
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
             logger.debug(f"Cleaned up temporary directory: {temp_dir}")
+
     return file_id
 
 async def send_series_selection_message(client: Bot, user_id: int, query: str, results: list, message_id: int = None, mode: str = "new"):
