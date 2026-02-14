@@ -62,6 +62,9 @@ async def _get_invite_url(client, chat_id: int) -> str:
     return "https://t.me/"
 
 
+from pyrogram import enums
+from pyrogram.errors import UserNotParticipant, ChatAdminRequired
+
 async def _is_joined(client, chat_id: int, user_id: int) -> bool:
     try:
         mem = await client.get_chat_member(int(chat_id), int(user_id))
@@ -70,13 +73,17 @@ async def _is_joined(client, chat_id: int, user_id: int) -> bool:
             enums.ChatMemberStatus.ADMINISTRATOR,
             enums.ChatMemberStatus.OWNER,
         )
+
     except UserNotParticipant:
+        # ✅ join-request pending check
         try:
             reqs = await client.get_chat_join_requests(int(chat_id), limit=200)
-            return any(r.user.id == user_id for r in reqs)
-        except:
+            return any(int(r.user.id) == int(user_id) for r in reqs)
+        except ChatAdminRequired:
             return False
-
+        except Exception:
+            return False
+            
 async def get_required_fsub_chat(client, user_id: int):
     """
     Returns (required_chat_id, total, step)
