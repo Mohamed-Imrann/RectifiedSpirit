@@ -63,23 +63,19 @@ async def _get_invite_url(client, chat_id: int) -> str:
 
 
 async def _is_joined(client, chat_id: int, user_id: int) -> bool:
-    """
-    ONLY joined check.
-    (Join-request pending check வேண்டாம். join_request event மூலம் files auto send ஆகும்.)
-    """
     try:
         mem = await client.get_chat_member(int(chat_id), int(user_id))
         return mem.status in (
             enums.ChatMemberStatus.MEMBER,
             enums.ChatMemberStatus.ADMINISTRATOR,
-            enums.ChatMemberStatus.OWNER
+            enums.ChatMemberStatus.OWNER,
         )
     except UserNotParticipant:
-        return False
-    except Exception as e:
-        logger.error(f"_is_joined error: {e}")
-        return False
-
+        try:
+            reqs = await client.get_chat_join_requests(int(chat_id), limit=200)
+            return any(r.user.id == user_id for r in reqs)
+        except:
+            return False
 
 async def get_required_fsub_chat(client, user_id: int):
     """
