@@ -824,43 +824,54 @@ async def process_quality_input(client: Bot, message: Message, quality_name: str
         logger.error(f"Error adding quality: {e}")
         await message.reply(f"Error adding quality: {e}")
 
-async def process_poster_input(client: Bot, message: Message, poster_type: str, mode: str = "new"):
-    """Process poster input"""
+async def process_poster_input(client: Bot, message: Message, poster_type: str, mode: str):
+    """
+    poster_type: 'series' | 'language' | 'season'
+    mode: 'new' | 'edit'
+    """
     user_id = message.from_user.id
-    series_key = temp_admin_data[user_id].get("current_series_key")
-    language_name = temp_admin_data[user_id].get("current_language")
-    season_name = temp_admin_data[user_id].get("current_season")
-    
-    poster_file_id = await download_and_upload_poster(client, message=message, send_to_log_channel=(poster_type == "series"))
-    
-    if not poster_file_id:
-        await message.reply("Failed to process the poster. Please try again.")
-        return
-    
-    if poster_type == "series":
-        if update_poster_file_id(series_key, poster_file_id):
-            await message.reply("Series poster updated successfully.")
-        else:
-            await message.reply("Failed to update series poster. Please try again.")
-    elif poster_type == "language":
-        if add_or_update_language(series_key, language_name, poster_file_id):
-            await message.reply("Language poster updated successfully.")
-        else:
-            await message.reply("Failed to update language poster. Please try again.")
-    elif poster_type == "season":
-        if add_or_update_season(series_key, language_name, season_name, poster_file_id):
-            await message.reply("Season poster updated successfully.")
-        else:
-            await message.reply("Failed to update season poster. Please try again.")
-    
-    main_message_id = temp_admin_data[user_id].get("main_message_id")
-    if poster_type == "series":
-        await send_series_details_message(client, user_id, get_series_by_key(series_key), main_message_id, mode)
-    elif poster_type == "language":
-        await send_season_management_message(client, user_id, series_key, language_name, main_message_id, mode)
-    elif poster_type == "season":
-        await send_quality_management_message(client, user_id, series_key, language_name, season_name, main_message_id, mode)
 
+    file_id, media_type = _extract_media_file_id(message)
+    if not file_id:
+        await message.reply_text("❌ Photo / Video / Document mattum anuppunga.")
+        return
+
+    # ✅ safest: try store in log channel but fallback
+    file_id = await _store_in_log_channel(client, message, file_id)
+
+    logger.info(f"Poster received type={poster_type} media={media_type} file_id={file_id}")
+
+    # -------------------------
+    # ✅ SAVE TO YOUR TEMP DATA / DB
+    # -------------------------
+    # Example mapping (change keys based on your DB schema)
+    # temp_admin_data[user_id]["data"]["series_poster"] = file_id
+
+    data = temp_admin_data.get(user_id, {}).get("data", {})
+    if "data" not in temp_admin_data.get(user_id, {}):
+        temp_admin_data.setdefault(user_id, {})["data"] = data
+
+    key_map = {
+        "series": "series_poster",
+        "language": "language_poster",
+        "season": "season_poster",
+    }
+    poster_key = key_map.get(poster_type, "series_poster")
+    temp_admin_data[user_id]["data"][poster_key] = file_id
+
+    # ✅ If you save directly into Mongo, do it here
+    # (Adjust collection, filter, and field name)
+    # series_id = temp_admin_data[user_id]["data"].get("series_id")
+    # if series_id:
+    #     series_collection.update_one({"_id": series_id}, {"$set": {"poster": file_id}})
+
+    # -------------------------
+    # ✅ IMPORTANT: CLEAR STATE so it won't ask again
+    # -------------------------
+    temp_admin_data[user_id]["state"] = None
+
+    await message.reply_text("✅ Poster updated successfully!")
+    
 async def process_first_file_input(client: Bot, message: Message, mode: str = "new"):
     """Process first file input"""
     user_id = message.from_user.id
