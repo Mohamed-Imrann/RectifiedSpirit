@@ -1,4 +1,6 @@
-@Bot.on_message(filters.private & filters.command("start"))
+from pyrogram import Client, filters
+
+@Client.on_message(filters.private & filters.command("start"))
 async def start_cmd(client, message):
     user_id = message.from_user.id
     parts = message.text.split(maxsplit=1)
