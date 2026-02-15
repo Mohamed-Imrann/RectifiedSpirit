@@ -25,3 +25,4 @@ asyncpg
 tenacity
 speedtest-cli
 cachetools
+Pillow
