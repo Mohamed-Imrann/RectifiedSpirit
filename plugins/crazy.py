@@ -823,6 +823,7 @@ async def process_quality_input(client: Bot, message: Message, quality_name: str
     except Exception as e:
         logger.error(f"Error adding quality: {e}")
         await message.reply(f"Error adding quality: {e}")
+        
 def _extract_media_file_id(message):
     """Return (file_id, media_type) from a Pyrogram Message."""
     if message.photo:
