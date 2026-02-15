@@ -65,6 +65,21 @@ async def _get_chat_invite_url(client, chat_id: int) -> str:
     return "https://t.me/"
 
 
+def _get_bot_deeplink(client, start_payload: str = "checksub") -> str:
+    """
+    ✅ Group message button click -> Bot PM open aaganum na
+    URL deep-link must:
+      https://t.me/<bot_username>?start=<payload>
+    """
+    try:
+        bot_username = getattr(getattr(client, "me", None), "username", None)
+        if bot_username:
+            return f"https://t.me/{bot_username}?start={start_payload}"
+    except Exception:
+        pass
+    return "https://t.me/"
+
+
 async def get_all_fsub_chats() -> list:
     """
     Reads fsub chats from JoinReqs DB (chat1/chat2/chat3).
@@ -126,6 +141,7 @@ async def get_required_fsub_chat(client, user_id: int):
 async def create_request_forcesub_buttons(client, user_id: int):
     """
     Returns buttons if NOT joined/requested required channel.
+    ✅ NOW: Adds "Open Bot" deep link so group click redirects to bot PM.
     """
     required_chat_id, total, step = await get_required_fsub_chat(client, int(user_id))
     if not required_chat_id:
@@ -135,10 +151,17 @@ async def create_request_forcesub_buttons(client, user_id: int):
     if ok:
         return None
 
-    url = await _get_chat_invite_url(client, required_chat_id)
+    join_url = await _get_chat_invite_url(client, required_chat_id)
 
-    # ✅ only one button
-    return [[InlineKeyboardButton(f"🎗 Join Channel {step} 🎗", url=url)]]
+    # ✅ Deep link payload includes step so you can show which channel step pending
+    # Example: /start checksub_s1
+    bot_pm_url = _get_bot_deeplink(client, start_payload=f"checksub_s{step}")
+
+    # ✅ Buttons (URL only) -> group-la click pannina PM open aagum
+    return [
+        [InlineKeyboardButton(f"🔔 Join Channel {step} ", url=join_url)],
+        [InlineKeyboardButton("✅ Open Bot (After Join)", url=bot_pm_url)],
+    ]
 
 
 async def check_and_advance_if_joined(client, user_id: int) -> bool:
