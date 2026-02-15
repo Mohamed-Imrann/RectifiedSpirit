@@ -932,38 +932,67 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
 
     # Season click
     if cb_type == "season":
-        language_index = stored_data.get("language_index")
-        languages = series.get("languages", [])
-        seasons = languages[language_index].get("seasons", [])
-        if not (0 <= cb_index < len(seasons)):
-            return
-
-        season_name = seasons[cb_index]["name"]
-        qualities = seasons[cb_index].get("qualities", [])
-
-        stored_data.update({"season_name": season_name, "season_index": cb_index})
-        user_requestor[f"{chat_id}•{message_id}"] = {"data": stored_data, "timestamp": time.time()}
-        request_timestamps[f"{chat_id}•{message_id}"] = time.time()
-
-        text = (
-            base_text
-            + f"○ **Language:** `{stored_data.get('language_name')}`\n"
-            + f"○ **Season:** `{season_name}`\n"
-            + "Select the quality you need...!"
-        )
-
-        layout = []
-        for q in qualities:
-            if q.get("link_key"):
-                layout.append([InlineKeyboardButton(q["name"], callback_data=f"b:{q['link_key']}")])
-
-        layout.append([InlineKeyboardButton("⬅️ Back", callback_data="back_season")])
-
-        try:
-            await query.message.edit_media(
-                media=InputMediaPhoto(media=query.message.photo.file_id, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
-                reply_markup=InlineKeyboardMarkup(layout)
-            )
-        except Exception:
-            pass
+    language_index = stored_data.get("language_index")
+    languages = series.get("languages", [])
+    seasons = languages[language_index].get("seasons", [])
+    if not (0 <= cb_index < len(seasons)):
         return
+
+    season_name = seasons[cb_index]["name"]
+    qualities = seasons[cb_index].get("qualities", [])
+
+    stored_data.update({"season_name": season_name, "season_index": cb_index})
+    user_requestor[f"{chat_id}•{message_id}"] = {"data": stored_data, "timestamp": time.time()}
+    request_timestamps[f"{chat_id}•{message_id}"] = time.time()
+
+    text = (
+        base_text
+        + f"○ **Language:** `{stored_data.get('language_name')}`\n"
+        + f"○ **Season:** `{season_name}`\n"
+        + "Select the quality you need...!"
+    )
+
+    # ✅ Bot username for deep-link redirect to PM
+    try:
+        me = await client.get_me()
+        bot_username = me.username
+    except Exception:
+        bot_username = None
+
+    layout = []
+    for q in qualities:
+        link_key = q.get("link_key")
+        if not link_key:
+            continue
+
+        # ✅ Quality click -> open bot PM immediately (NO callback)
+        if bot_username:
+            layout.append([
+                InlineKeyboardButton(
+                    q["name"],
+                    url=f"https://t.me/{bot_username}?start=b_{link_key}"
+                )
+            ])
+        else:
+            # Fallback: if bot username not available, keep callback (won't redirect)
+            layout.append([
+                InlineKeyboardButton(
+                    q["name"],
+                    callback_data=f"b:{link_key}"
+                )
+            ])
+
+    layout.append([InlineKeyboardButton("⬅️ Back", callback_data="back_season")])
+
+    try:
+        await query.message.edit_media(
+            media=InputMediaPhoto(
+                media=query.message.photo.file_id,
+                caption=text,
+                parse_mode=enums.ParseMode.MARKDOWN
+            ),
+            reply_markup=InlineKeyboardMarkup(layout)
+        )
+    except Exception:
+        pass
+    return
