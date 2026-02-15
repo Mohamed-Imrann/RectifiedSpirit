@@ -823,6 +823,36 @@ async def process_quality_input(client: Bot, message: Message, quality_name: str
     except Exception as e:
         logger.error(f"Error adding quality: {e}")
         await message.reply(f"Error adding quality: {e}")
+        
+def _extract_media_file_id(message):
+    """Return (file_id, media_type) from a Pyrogram Message."""
+    if message.photo:
+        return message.photo[-1].file_id, "photo"
+    if message.video:
+        return message.video.file_id, "video"
+    if message.document:
+        return message.document.file_id, "document"
+    return None, None
+
+
+async def _store_in_log_channel(client, message, file_id: str):
+    """Copy to LOG_CHANNEL and return stored file_id. Fallback to original."""
+    try:
+        if LOG_CHANNEL:
+            copied = await client.copy_message(
+                chat_id=int(LOG_CHANNEL),
+                from_chat_id=message.chat.id,
+                message_id=message.id
+            )
+            if copied.photo:
+                return copied.photo[-1].file_id
+            if copied.video:
+                return copied.video.file_id
+            if copied.document:
+                return copied.document.file_id
+    except Exception as e:
+        logger.warning(f"Log channel copy failed, using original file_id: {e}")
+    return file_id
 
 async def process_poster_input(client: Bot, message: Message, poster_type: str, mode: str):
     """
