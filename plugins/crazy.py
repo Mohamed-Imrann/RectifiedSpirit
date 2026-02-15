@@ -1,4 +1,5 @@
 
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from bot import Bot
@@ -216,42 +217,8 @@ async def get_tmdb_info(query, bulk=False, tmdb_id=None, media_type=None):
         logger.error(f"An unexpected error occurred with TMDB: {e}")
         return None
 
-async def download_and_upload_poster(client, message=None, poster_url: str = None):
-    """
-    ✅ Works for BOTH:
-    - manual poster upload (message.photo/video/document)
-    - TMDB/IMDb poster_url download
-
-    Returns: Telegram file_id (stored in LOG_CHANNEL if possible)
-    """
+async def download_and_upload_poster(client, message):
     try:
-        # -------------------------
-        # Case A: Poster from URL (TMDB/IMDb)
-        # -------------------------
-        if poster_url:
-            try:
-                r = requests.get(poster_url, timeout=20)
-                r.raise_for_status()
-                bio = BytesIO(r.content)
-                bio.name = "poster.jpg"
-
-                # store in log channel if possible
-                target = int(LOG_CHANNEL) if LOG_CHANNEL else message.chat.id if message else None
-                if not target:
-                    return None
-
-                sent = await client.send_photo(chat_id=target, photo=bio)
-                return sent.photo.file_id if sent.photo else None
-            except Exception as e:
-                logger.warning(f"Poster URL download failed: {e}")
-                return None
-
-        # -------------------------
-        # Case B: Poster from message (manual upload)
-        # -------------------------
-        if not message:
-            return None
-
         if message.photo:
             file_id = message.photo.file_id
         elif message.video:
@@ -269,21 +236,25 @@ async def download_and_upload_poster(client, message=None, poster_url: str = Non
                     from_chat_id=message.chat.id,
                     message_id=message.id
                 )
+
+                # Extract new file_id from copied message
                 if copied.photo:
                     return copied.photo.file_id
                 elif copied.video:
                     return copied.video.file_id
                 elif copied.document:
                     return copied.document.file_id
-        except Exception as e:
-            logger.warning(f"Copy failed, using original file_id: {e}")
 
+        except Exception as e:
+            print("Copy failed, using original file_id:", e)
+
+        # If copy fails → return original file_id
         return file_id
 
     except Exception as e:
-        logger.error(f"Poster process error: {e}")
+        print("Poster process error:", e)
         return None
-        
+
 async def send_series_selection_message(client: Bot, user_id: int, query: str, results: list, message_id: int = None, mode: str = "new"):
     """Send series selection message"""
     logger.info(f"Sending series selection message to user {user_id} (mode: {mode})")
