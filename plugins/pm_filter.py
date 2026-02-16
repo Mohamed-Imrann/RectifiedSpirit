@@ -502,7 +502,7 @@ async def start_scheduler():
 # User sends join request -> bot auto sends files in PM (NO need click again)
 # ----------------------------
 @Bot.on_chat_join_request()
-async def on_join_request_handler(client: Bot, join_request: ChatJoinRequest):
+async def on_join_request(client, join_request: ChatJoinRequest):
     try:
         user_id = int(join_request.from_user.id)
         chat_id = int(join_request.chat.id)
