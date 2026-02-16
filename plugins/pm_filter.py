@@ -522,7 +522,7 @@ async def on_join_request(client, join_request: ChatJoinRequest):
         except Exception as e:
             logger.error(f"[JOIN_REQ] failed to save user in fsub chat collection: {e}")
 
-                pending_key = (
+        pending_key = (
             pending.get("link_key")
             or pending.get("key")
             or pending.get("temp_key")
