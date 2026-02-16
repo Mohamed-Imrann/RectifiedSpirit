@@ -981,7 +981,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
             layout.append([
                 InlineKeyboardButton(
                     q["name"],
-                    url=f"https://t.me/{bot_username}?start=b_{link_key}"
+                    callback_data="b:{link_key}"
                 )
             ])
 
