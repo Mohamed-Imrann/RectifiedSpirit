@@ -23,7 +23,7 @@ class JoinReqs:
             self.db = None
 
     def _collection_for_chat(self, chat_id: int):
-        if not self.db:
+        if self.db is not None:
             return None
         cid = int(chat_id)
         # Keep numeric collection name for compatibility with existing setup.
