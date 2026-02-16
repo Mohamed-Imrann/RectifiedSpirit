@@ -592,6 +592,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                 except Exception:
                     pass
                 return
+
             token_user_id = int(parts[0])
             token = parts[1]
             if token_user_id != user_id:
@@ -600,6 +601,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                 except Exception:
                     pass
                 return
+
             temp_key = f"tk:{token}"
         else:
             link_key = data.split(":", 1)[1]
@@ -615,7 +617,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
         if origin_chat_id < 0 and requested_user and user_id != requested_user:
             try:
                 await callback_query.answer("Not your request!", show_alert=True)
-            except:
+            except Exception:
                 pass
             return
 
@@ -631,17 +633,20 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
         btn = await create_request_forcesub_buttons(client, int(user_id))
 
         if btn:
-            if not temp_key:
-                token = await create_temp_token(int(user_id), link_key, ttl_seconds=600)
-                temp_key = f"tk:{token}"
-
-            # ✅ save pending so join-request triggers auto-send
             try:
+                # keep token only for retry buttons (optional)
+                if not temp_key and link_key:
+                    token = await create_temp_token(int(user_id), link_key, ttl_seconds=600)
+                    temp_key = f"tk:{token}"
+
+                # ✅ store REAL link_key for join-request auto send
+                key_to_store = link_key if link_key else temp_key
+
                 await set_pending(
                     int(user_id),
-                    temp_key,
-                    int(required_chat_id),
-                    int(step),
+                    key_to_store,
+                    int(required_chat_id) if required_chat_id else 0,
+                    int(step) if step else 0,
                     int(total) if total else 1
                 )
             except Exception as e:
@@ -650,7 +655,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
             # ❌ popup venam -> show_alert=False
             try:
                 await callback_query.answer("Join the channel first!", show_alert=False)
-            except:
+            except Exception:
                 pass
 
             try:
@@ -664,19 +669,20 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                 logger.error(f"Failed to send fsub button in PM: {e}")
                 try:
                     await callback_query.answer("Open bot PM and press /start first!", show_alert=True)
-                except:
+                except Exception:
                     pass
             return
 
         # ✅ ALREADY JOINED → SEND FILES
         try:
             await callback_query.answer("Sending files in PM...", show_alert=False)
-        except:
+        except Exception:
             pass
 
         try:
             send_key = temp_key if temp_key else link_key
             sent = await sendseries(client, f"{user_id}:click", send_key)
+
             if not sent:
                 try:
                     await callback_query.answer("❌ No files found!", show_alert=True)
@@ -697,14 +703,14 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
 
             try:
                 await callback_query.answer("✅ Sent in PM!", show_alert=False)
-            except:
+            except Exception:
                 pass
 
         except Exception as e:
-            logger.error(f"b: send error for key={link_key}: {e}")
+            logger.error(f"b: send error for key={link_key}: {e}", exc_info=True)
             try:
                 await callback_query.answer("❌ Failed to send files.", show_alert=True)
-            except:
+            except Exception:
                 pass
 
         return
@@ -718,7 +724,6 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
     if data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_"):
         await user_interface_callback_handler(client, callback_query)
         return
-
 
 # ----------------------------
 # Series Callback
