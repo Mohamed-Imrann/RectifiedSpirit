@@ -497,9 +497,7 @@ async def start_scheduler():
 
 
 # ----------------------------
-# ✅ JOIN REQUEST HANDLER
-# User presses quality -> bot asks "Join Channel"
-# User sends join request -> bot auto sends files in PM (NO need click again)
+# ✅ JOIN REQUEST HANDLER (KEEP ONLY THIS ONE)
 # ----------------------------
 @Bot.on_chat_join_request()
 async def on_join_request(client, join_request: ChatJoinRequest):
@@ -532,7 +530,7 @@ async def on_join_request(client, join_request: ChatJoinRequest):
             await clear_pending(user_id)
             return
 
-        # ✅ PM must be open (user should /start bot once)
+        # ✅ PM must be open
         try:
             await client.send_message(user_id, "✅ Join request received. Sending files...")
         except (PeerIdInvalid, UserIsBlocked) as e:
@@ -566,7 +564,6 @@ async def on_join_request(client, join_request: ChatJoinRequest):
 
     except Exception as e:
         logger.error(f"[JOIN_REQ] handler crashed: {e}", exc_info=True)
-
 
 # ----------------------------
 # Callback handler
