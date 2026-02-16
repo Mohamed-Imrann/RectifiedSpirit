@@ -996,7 +996,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
 
         return
 @Bot.on_chat_join_request()
-async def on_join_request(client: Client, join_request: ChatJoinRequest):
+async def on_join_request(client, join_request: ChatJoinRequest):
     """
     ✅ User join-request send pannina udane pending irundha
     files auto-send pannum.
