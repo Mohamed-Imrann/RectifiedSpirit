@@ -549,7 +549,7 @@ async def on_join_request(client, join_request: ChatJoinRequest):
 
         sent = False
         try:
-            sent = await sendseries(client, f"{user_id}:pending", pending_key)
+            sent = await sendseries(client, f"{user_id}:click", pending_key)
         except (PeerIdInvalid, UserIsBlocked) as e:
             logger.error(f"[JOIN_REQ] user blocked/invalid user={user_id}: {e}. STOP. KEEP pending.")
             return
