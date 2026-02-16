@@ -522,12 +522,17 @@ async def on_join_request(client, join_request: ChatJoinRequest):
         except Exception as e:
             logger.error(f"[JOIN_REQ] failed to save user in fsub chat collection: {e}")
 
-        pending_key = pending.get("link_key")
+                pending_key = (
+            pending.get("link_key")
+            or pending.get("key")
+            or pending.get("temp_key")
+            or pending.get("pending_key")
+            or pending.get("data_key")
+        )
         total = int(pending.get("total", 1))
 
         if not pending_key:
-            logger.info(f"[JOIN_REQ] link key missing user={user_id} -> clear pending")
-            await clear_pending(user_id)
+            logger.info(f"[JOIN_REQ] link key missing user={user_id} -> NOT clearing pending. pending={pending}")
             return
 
         # ✅ PM must be open
