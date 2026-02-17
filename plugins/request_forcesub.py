@@ -122,6 +122,7 @@ async def get_all_fsub_chats() -> list:
 async def get_required_fsub_chat(client, user_id: int):
     """
     Returns (required_chat_id, total, step)
+    ✅ Auto-skip steps that user already joined/requested
     """
     chats = await get_all_fsub_chats()
     if not chats:
@@ -134,9 +135,22 @@ async def get_required_fsub_chat(client, user_id: int):
         step = 1
         await set_user_step(int(user_id), 1)
 
-    required_chat_id = chats[step - 1]
-    return required_chat_id, total, step
+    # ✅ AUTO SKIP: if already joined/requested -> move forward
+    while step <= total:
+        required_chat_id = chats[step - 1]
+        ok = await _is_joined_or_requested(client, required_chat_id, int(user_id))
 
+        if ok:
+            # already satisfied this step, advance
+            step += 1
+            await set_user_step(int(user_id), step if step <= total else total)
+            continue
+
+        # not joined -> this is required
+        return required_chat_id, total, step
+
+    # all done
+    return None, total, total
 
 async def create_request_forcesub_buttons(client, user_id: int):
     """
