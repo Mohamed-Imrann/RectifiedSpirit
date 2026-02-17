@@ -45,6 +45,7 @@ from database.request_forcesub_db import (
     delete_temp_token,
 )
 
+BOT_USERNAME = "Spidy_Series_Bot"   # ✅ set this (without @)
 
 # ----------------------------
 # ✅ Helper: Resolve tk:token -> real link_key
@@ -690,7 +691,6 @@ async def on_join_request(client, join_request: ChatJoinRequest):
 # ----------------------------
 # Callback handler
 # ----------------------------
-BOT_USERNAME = "Spidy_Series_Bot"   # ✅ set this (without @)
 
 @Bot.on_callback_query()
 async def callback_handler(client: Bot, callback_query: CallbackQuery):
