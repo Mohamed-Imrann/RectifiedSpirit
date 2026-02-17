@@ -417,22 +417,27 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                 pass
             return
 
-        # ✅ STRICT CHECK (NOT JOINED => save pending + show join btn, DO NOT send files)
+        # ✅ REMOVE GROUP TOAST
+        try:
+            await callback_query.answer()
+        except:
+            pass
+
+        # ✅ STRICT FSUB CHECK
         try:
             required_chat_id, total, step = await get_required_fsub_chat(client, user_id)
         except Exception as e:
             logger.error(f"get_required_fsub_chat error: {e}")
             required_chat_id, total, step = None, 0, 0
 
-        # ask join button if user not joined
         try:
-            btn = await create_request_forcesub_buttons(client, user_id)  # returns [[button]] or None
+            btn = await create_request_forcesub_buttons(client, user_id)
         except Exception as e:
             logger.error(f"create_request_forcesub_buttons error: {e}")
             btn = None
 
+        # 🔒 NOT JOINED
         if btn:
-            # ✅ save pending so join-request triggers auto-send
             if required_chat_id:
                 try:
                     await set_pending(
@@ -446,11 +451,6 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                     logger.error(f"set_pending error: {e}")
 
             try:
-                await callback_query.answer("⚠️ Join the channel first!", show_alert=True)
-            except:
-                pass
-
-            try:
                 await client.send_message(
                     chat_id=user_id,
                     text="<b>🔒 Please join this channel to continue</b>\n\n✅ After join-request, files will come automatically.",
@@ -459,22 +459,15 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                 )
             except Exception as e:
                 logger.error(f"Failed to send fsub buttons in PM: {e}")
-            return  # ✅ STOP HERE
 
-        # ✅ If no fsub configured OR already joined => send files in PM
-        try:
-            await callback_query.answer("Sending files in PM...", show_alert=False)
-        except:
-            pass
+            return
 
+        # ✅ ALREADY JOINED → SEND FILES IN PM
         try:
             files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(client, link_key)
 
             if not files_to_send:
-                try:
-                    await callback_query.answer("❌ No files found!", show_alert=True)
-                except:
-                    pass
+                await callback_query.answer("❌ No files found!", show_alert=True)
                 return
 
             for item in files_to_send:
@@ -485,33 +478,30 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
 
                 try:
                     await client.send_cached_media(
-                        chat_id=user_id,   # ✅ ALWAYS PM
+                        chat_id=user_id,
                         file_id=file_id,
                         caption=caption
                     )
                     await asyncio.sleep(0.2)
+
                 except FloodWait as e:
                     await asyncio.sleep(e.x)
+
                 except Exception as e:
                     logger.error(f"send_cached_media error: {e}")
 
-            # if user was pending from earlier, clear it
+            # clear pending
             try:
                 await clear_pending(int(user_id))
             except Exception:
                 pass
 
-            # ✅ advance after successful send (not before)
+            # advance step
             if required_chat_id and total:
                 try:
                     await advance_user_step(int(user_id), int(total))
                 except Exception:
                     pass
-
-            try:
-                await callback_query.answer("✅ Sent in PM!", show_alert=False)
-            except:
-                pass
 
         except Exception as e:
             logger.error(f"b: send error for key={link_key}: {e}")
@@ -527,11 +517,10 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
         await user_series_callback_handler(client, callback_query)
         return
 
-    # ✅ UI BUTTONS (language/season/back)
+    # ✅ UI BUTTONS
     if data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_"):
         await user_interface_callback_handler(client, callback_query)
         return
-
 
 # ----------------------------
 # Series Callback
