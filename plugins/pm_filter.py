@@ -646,7 +646,7 @@ async def on_join_request(client, join_request: ChatJoinRequest):
             logger.info(f"[JOIN_REQ] link key missing user={user_id} -> NOT clearing pending. pending={pending}")
             return
 
-        # ✅ PM must be open
+# ✅ PM must be open
         try:
             await client.send_message(user_id, "✅ Join request received. Sending files...")
         except (PeerIdInvalid, UserIsBlocked) as e:
@@ -660,7 +660,14 @@ async def on_join_request(client, join_request: ChatJoinRequest):
 
         sent = False
         try:
+            # ✅ FIX: tk:token -> real link_key resolve BEFORE sending
+            try:
+                pending_key = await resolve_send_key(int(user_id), str(pending_key))
+            except Exception as e:
+                logger.error(f"[JOIN_REQ] resolve_send_key error user={user_id}: {e}")
+
             sent = await sendseries(client, f"{user_id}:click", pending_key)
+
         except (PeerIdInvalid, UserIsBlocked) as e:
             logger.error(f"[JOIN_REQ] user blocked/invalid user={user_id}: {e}. STOP. KEEP pending.")
             return
@@ -678,8 +685,7 @@ async def on_join_request(client, join_request: ChatJoinRequest):
         else:
             logger.error(f"[JOIN_REQ] send failed user={user_id}. KEEP pending (not cleared).")
 
-    except Exception as e:
-        logger.error(f"[JOIN_REQ] handler crashed: {e}", exc_info=True)
+# outer except stays same
 
 # ----------------------------
 # Callback handler
