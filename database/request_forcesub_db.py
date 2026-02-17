@@ -1,7 +1,6 @@
+
 # database/request_forcesub_db.py
 import pymongo
-import secrets
-import time
 from info import DATABASE_URI, DATABASE_NAME
 
 myclient = pymongo.MongoClient(DATABASE_URI)
@@ -16,66 +15,6 @@ fsub_steps = mydb["fsub_steps"]
 
 # ✅ Pending file send (so user no need to click again)
 pending_fsub = mydb["pending_fsub"]
-
-# ✅ Temp token store (for button retry / secure callbacks)
-temp_tokens = mydb["temp_tokens"]
-
-
-# ---------------------------
-# ✅ TEMP TOKEN SYSTEM
-# ---------------------------
-async def create_temp_token(user_id: int, ttl_seconds: int = 900) -> str:
-    """
-    Create a short-lived token for inline button callbacks.
-    Default TTL = 15 minutes.
-    """
-    token = secrets.token_urlsafe(16)
-    expires_at = int(time.time()) + int(ttl_seconds)
-
-    temp_tokens.update_one(
-        {"token": token},
-        {"$set": {
-            "token": token,
-            "user_id": int(user_id),
-            "expires_at": int(expires_at),
-            "created_at": int(time.time()),
-        }},
-        upsert=True
-    )
-    return token
-
-
-async def verify_temp_token(token: str, user_id: int, consume: bool = True) -> bool:
-    """
-    Validate token belongs to user and not expired.
-    If consume=True => one-time use (deletes after success).
-    """
-    if not token:
-        return False
-
-    doc = temp_tokens.find_one({"token": str(token)})
-    if not doc:
-        return False
-
-    if int(doc.get("user_id", 0)) != int(user_id):
-        return False
-
-    exp = int(doc.get("expires_at", 0))
-    now = int(time.time())
-    if now > exp:
-        temp_tokens.delete_one({"token": str(token)})
-        return False
-
-    if consume:
-        temp_tokens.delete_one({"token": str(token)})
-
-    return True
-
-
-async def cleanup_expired_tokens():
-    """Optional: remove expired tokens to keep DB clean."""
-    now = int(time.time())
-    temp_tokens.delete_many({"expires_at": {"$lte": now}})
 
 
 # ---------------------------
