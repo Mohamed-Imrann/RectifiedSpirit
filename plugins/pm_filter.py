@@ -619,6 +619,144 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                 # send_cached_media is assumed available in your client wrapper
                 await client.send_cached_media(
                     chat_id=user_id,   # ✅ ALWAYS PM
+                    
+# ----------------------------
+# Callback handler
+# ----------------------------
+@Bot.on_callback_query()
+async def callback_handler(client: Bot, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    data = callback_query.data
+
+    # ✅ QUALITY BUTTON HANDLER (b:)
+    if data and data.startswith("b:"):
+        link_key = data.split(":", 1)[1]
+        origin_chat_id = callback_query.message.chat.id
+        origin_msg_id = getattr(callback_query.message, "message_id", callback_query.message.id)
+
+        # ownership check for group clicks
+        stored_entry = user_requestor.get(f"{origin_chat_id}•{origin_msg_id}") or {}
+        stored_data = stored_entry.get("data") if isinstance(stored_entry, dict) else None
+        requested_user = stored_data.get("requested_user") if isinstance(stored_data, dict) else None
+
+        if origin_chat_id < 0 and requested_user and user_id != requested_user:
+            try:
+                await callback_query.answer("Not your request!", show_alert=True)
+            except Exception:
+                pass
+            return
+
+        # get required fsub config
+        try:
+            required_chat_id, total, step = await get_required_fsub_chat(client, user_id)
+        except Exception as e:
+            logger.error(f"get_required_fsub_chat error: {e}")
+            required_chat_id, total, step = None, 0, 0
+
+        # prepare join buttons (if any)
+        try:
+            btn = await create_request_forcesub_buttons(client, user_id)  # returns [[InlineKeyboardButton]] or None
+        except Exception as e:
+            logger.error(f"create_request_forcesub_buttons error: {e}")
+            btn = None
+
+        if btn:
+            # save pending so join-request triggers auto-send
+            if required_chat_id:
+                try:
+                    await set_pending(
+                        int(user_id),
+                        link_key,
+                        int(required_chat_id),
+                        int(step),
+                        int(total) if total else 1
+                    )
+                except Exception as e:
+                    logger.error(f"set_pending error: {e}")
+
+            # Build bot deep link
+            try:
+                me = await client.get_me()
+                bot_username = getattr(me, "username", None) or ""
+                bot_link = f"https://t.me/{bot_username}?start=from_group_{link_key}"
+            except Exception as e:
+                logger.error(f"get_me error: {e}")
+                bot_link = None
+
+            # 1) Redirect client to bot chat (no group popup)
+            if bot_link:
+                try:
+                    # This tells Telegram client to open the bot chat
+                    await callback_query.answer(text="Opening bot to continue...", show_alert=False, url=bot_link)
+                except Exception as e:
+                    logger.error(f"answer callback with url failed: {e}")
+
+            # 2) Try to send full PM block (best-effort)
+            pm_text = (
+                "<b>🔒 Please join this channel to continue</b>\n\n"
+                "✅ After you send a join-request, files will be delivered automatically.\n\n"
+                "Steps:\n"
+                "1. Tap Join Channel and send the join request.\n"
+                "2. If you haven't started the bot, open the bot and press Start.\n"
+                "3. Files will be delivered automatically after approval.\n\n"
+                "If automatic delivery doesn't work, open the bot and send /start."
+            )
+
+            try:
+                await client.send_message(
+                    chat_id=user_id,
+                    text=pm_text,
+                    reply_markup=InlineKeyboardMarkup(btn),
+                    parse_mode=enums.ParseMode.HTML
+                )
+                # stop here; user redirected to bot and PM sent
+                return
+            except Exception as e:
+                logger.debug(f"send PM failed (user may not have started bot): {e}")
+
+            # 3) Fallback: reply in origin chat with bot open button + join buttons
+            try:
+                fallback_kb = btn[:]  # join buttons
+                if bot_link:
+                    fallback_kb.append([InlineKeyboardButton("Open Bot", url=bot_link)])
+                await callback_query.message.reply_text(
+                    pm_text,
+                    parse_mode=enums.ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(fallback_kb)
+                )
+            except Exception as e:
+                logger.error(f"Failed to send fallback join message in chat: {e}")
+
+            return  # STOP here until user joins / opens bot
+
+        # If no fsub configured OR already joined => send files in PM
+        try:
+            await callback_query.answer("Sending files in PM...", show_alert=False)
+        except Exception:
+            pass
+
+        try:
+            files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(client, link_key)
+        except Exception as e:
+            logger.error(f"get_links_for_quality error for key={link_key}: {e}")
+            files_to_send = None
+
+        if not files_to_send:
+            try:
+                await callback_query.answer("❌ No files found!", show_alert=True)
+            except Exception:
+                pass
+            return
+
+        for item in files_to_send:
+            file_id = item.get("file_id")
+            caption = item.get("caption") or ""
+            if not file_id:
+                continue
+
+            try:
+                await client.send_cached_media(
+                    chat_id=user_id,   # ALWAYS PM
                     file_id=file_id,
                     caption=caption
                 )
@@ -628,13 +766,13 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
             except Exception as e:
                 logger.error(f"send_cached_media error: {e}")
 
-        # if user was pending from earlier, clear it
+        # clear pending if any
         try:
             await clear_pending(int(user_id))
         except Exception:
             pass
 
-        # ✅ advance after successful send (not before)
+        # advance step after successful send
         if required_chat_id and total:
             try:
                 await advance_user_step(int(user_id), int(total))
@@ -648,12 +786,12 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
 
         return
 
-    # ✅ SERIES BUTTON
+    # SERIES BUTTON
     if data and data.startswith("user_series>"):
         await user_series_callback_handler(client, callback_query)
         return
 
-    # ✅ UI BUTTONS (language/season/back)
+    # UI BUTTONS (language/season/back)
     if data and (data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_")):
         await user_interface_callback_handler(client, callback_query)
         return
