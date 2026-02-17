@@ -624,11 +624,16 @@ async def on_join_request(client, join_request: ChatJoinRequest):
             logger.info(f"[JOIN_REQ] no pending for user={user_id}")
             return
 
+        # ✅ required chats normalize (support both -100.. and plain)
         required_chats = await _all_required_chats()
-        if chat_id not in required_chats:
-            logger.info(f"[JOIN_REQ] chat {chat_id} is not in required chats -> ignore")
+        required_plain = set(int(str(x).replace("-100", "")) if str(x).startswith("-100") else int(x) for x in required_chats)
+        chat_plain = int(str(chat_id).replace("-100", "")) if str(chat_id).startswith("-100") else int(chat_id)
+
+        if chat_id not in required_chats and chat_plain not in required_plain:
+            logger.info(f"[JOIN_REQ] chat {chat_id} not required -> ignore")
             return
 
+        # optional save
         try:
             await dbj.add_user(chat_id, user_id)
         except Exception as e:
@@ -644,36 +649,61 @@ async def on_join_request(client, join_request: ChatJoinRequest):
         total = int(pending.get("total", 1))
 
         if not pending_key:
-            logger.info(f"[JOIN_REQ] link key missing user={user_id} -> NOT clearing pending. pending={pending}")
+            logger.error(f"[JOIN_REQ] link key missing user={user_id} -> KEEP pending. pending={pending}")
             return
 
         # ✅ PM must be open
         try:
             await client.send_message(user_id, "✅ Join request received. Sending files...")
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+            try:
+                await client.send_message(user_id, "✅ Join request received. Sending files...")
+            except Exception as e2:
+                logger.error(f"[JOIN_REQ] cannot PM user={user_id} after floodwait: {e2}. KEEP pending.")
+                return
         except (PeerIdInvalid, UserIsBlocked) as e:
             logger.error(f"[JOIN_REQ] cannot PM user={user_id} ({e}). User must /start bot. KEEP pending.")
             return
-        except FloodWait as e:
-            await asyncio.sleep(e.value)
         except Exception as e:
             logger.error(f"[JOIN_REQ] send_message error user={user_id}: {e}. KEEP pending.")
             return
 
+        # ✅ resolve key
+        logger.error(f"[JOIN_REQ] pending_key BEFORE resolve = {pending_key}")
+        try:
+            pending_key = await resolve_send_key(int(user_id), str(pending_key))
+        except Exception as e:
+            logger.error(f"[JOIN_REQ] resolve_send_key error user={user_id}: {e}", exc_info=True)
+
+        logger.error(f"[JOIN_REQ] pending_key AFTER  resolve = {pending_key}")
+
+        # ✅ send with timeout to prevent hanging forever
         sent = False
         try:
-            # ✅ FIX: tk:token -> real link_key resolve BEFORE sending
+            sent = await asyncio.wait_for(
+                sendseries(client, f"{user_id}:click", pending_key),
+                timeout=180
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"[JOIN_REQ] sendseries TIMEOUT user={user_id} key={pending_key}")
+            sent = False
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
             try:
-                pending_key = await resolve_send_key(int(user_id), str(pending_key))
-            except Exception as e:
-                logger.error(f"[JOIN_REQ] resolve_send_key error user={user_id}: {e}")
-
-            sent = await sendseries(client, f"{user_id}:click", pending_key)
-
+                sent = await asyncio.wait_for(
+                    sendseries(client, f"{user_id}:click", pending_key),
+                    timeout=180
+                )
+            except Exception as e2:
+                logger.error(f"[JOIN_REQ] sendseries failed after floodwait user={user_id}: {e2}", exc_info=True)
+                sent = False
         except (PeerIdInvalid, UserIsBlocked) as e:
             logger.error(f"[JOIN_REQ] user blocked/invalid user={user_id}: {e}. STOP. KEEP pending.")
             return
         except Exception as e:
-            logger.error(f"[JOIN_REQ] sendseries failed user={user_id}: {e}")
+            logger.error(f"[JOIN_REQ] sendseries failed user={user_id}: {e}", exc_info=True)
+            sent = False
 
         if sent:
             try:
@@ -681,11 +711,14 @@ async def on_join_request(client, join_request: ChatJoinRequest):
             except Exception as e:
                 logger.error(f"[JOIN_REQ] advance_user_step error user={user_id}: {e}")
 
-            await clear_pending(user_id)
+            try:
+                await clear_pending(user_id)
+            except Exception as e:
+                logger.error(f"[JOIN_REQ] clear_pending error user={user_id}: {e}")
+
             logger.info(f"[JOIN_REQ] done user={user_id} cleared pending")
         else:
             logger.error(f"[JOIN_REQ] send failed user={user_id}. KEEP pending (not cleared).")
-
 
     except Exception as e:
         logger.error(f"[JOIN_REQ] handler crashed: {e}", exc_info=True)
