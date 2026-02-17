@@ -573,6 +573,8 @@ async def on_join_request(client, join_request: ChatJoinRequest):
 # ----------------------------
 # Callback handler
 # ----------------------------
+BOT_USERNAME = "Spidy_Series_Bot"   # ✅ set this (without @)
+
 @Bot.on_callback_query()
 async def callback_handler(client: Bot, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
@@ -620,6 +622,36 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
             except Exception:
                 pass
             return
+
+        # =========================================================
+        # ✅ NEW FIX: GROUP click -> OPEN BOT PM FIRST (NO FSUB POPUP)
+        # =========================================================
+        if origin_chat_id < 0:
+            try:
+                # ✅ make token from link_key if needed
+                if not temp_key and link_key:
+                    token = await create_temp_token(int(user_id), link_key, ttl_seconds=600)
+                    temp_key = f"tk:{token}"
+
+                # deep-link param (you can parse in /start)
+                # send only token value (without "tk:")
+                start_token = temp_key.split(":", 1)[1] if temp_key and temp_key.startswith("tk:") else ""
+                url = f"https://t.me/{BOT_USERNAME}?start={start_token}"
+
+                # ✅ opens bot directly
+                await callback_query.answer("Opening bot…", url=url)
+            except Exception as e:
+                logger.error(f"Open bot deep-link failed: {e}")
+                try:
+                    await callback_query.answer("❌ Unable to open bot. Check BOT_USERNAME.", show_alert=True)
+                except Exception:
+                    pass
+            return
+
+        # =========================================================
+        # ✅ FROM HERE: ONLY PM clicks (origin_chat_id > 0)
+        # Your existing FSUB + send logic 그대로
+        # =========================================================
 
         # ✅ GET REQUIRED FSUB CHAT
         # ✅ STRICT CHECK (NOT JOINED => save pending + show join btn, DO NOT send files)
@@ -724,7 +756,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
     if data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_"):
         await user_interface_callback_handler(client, callback_query)
         return
-
+        
 # ----------------------------
 # Series Callback
 # ----------------------------
