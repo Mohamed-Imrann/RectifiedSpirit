@@ -399,20 +399,21 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
     data = callback_query.data
 
     # ✅ QUALITY BUTTON HANDLER (b:)
-    if data.startswith("b:"):
+    if data and data.startswith("b:"):
         link_key = data.split(":", 1)[1]
+        # origin chat/message where the inline keyboard was pressed
         origin_chat_id = callback_query.message.chat.id
-        origin_msg_id = callback_query.message.id
+        origin_msg_id = getattr(callback_query.message, "message_id", callback_query.message.id)
 
         # ownership check for group clicks
-        stored_entry = user_requestor.get(f"{origin_chat_id}•{origin_msg_id}", {})
+        stored_entry = user_requestor.get(f"{origin_chat_id}•{origin_msg_id}") or {}
         stored_data = stored_entry.get("data") if isinstance(stored_entry, dict) else None
         requested_user = stored_data.get("requested_user") if isinstance(stored_data, dict) else None
 
         if origin_chat_id < 0 and requested_user and user_id != requested_user:
             try:
                 await callback_query.answer("Not your request!", show_alert=True)
-            except:
+            except Exception:
                 pass
             return
 
@@ -423,9 +424,9 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
             logger.error(f"get_required_fsub_chat error: {e}")
             required_chat_id, total, step = None, 0, 0
 
-        # ask join button if user not joined
+        # prepare join buttons (if any)
         try:
-            btn = await create_request_forcesub_buttons(client, user_id)  # returns [[button]] or None
+            btn = await create_request_forcesub_buttons(client, user_id)  # returns [[InlineKeyboardButton]] or None
         except Exception as e:
             logger.error(f"create_request_forcesub_buttons error: {e}")
             btn = None
@@ -444,93 +445,101 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                 except Exception as e:
                     logger.error(f"set_pending error: {e}")
 
-            try:
-                await callback_query.answer("⚠️ Join the channel first!", show_alert=True)
-            except:
-                pass
-
+            # DO NOT show an in-chat alert popup. Instead send the full PM block (or fallback to chat)
             try:
                 await client.send_message(
                     chat_id=user_id,
-                    text="<b>🔒 Please join this channel to continue</b>\n\n✅ After join-request, files will come automatically.",
+                    text=(
+                        "<b>🔒 Please join this channel to continue</b>\n\n"
+                        "✅ After you send a join-request, files will be delivered automatically.\n\n"
+                        "If you haven't started the bot before, tap Open Bot first and then join the channel."
+                    ),
                     reply_markup=InlineKeyboardMarkup(btn),
                     parse_mode=enums.ParseMode.HTML
                 )
             except Exception as e:
+                # If sending PM fails (user hasn't started bot), fallback to replying in the origin chat with the full block
                 logger.error(f"Failed to send fsub buttons in PM: {e}")
+                try:
+                    # Try to reply to the origin message so user sees the join buttons in the group
+                    await callback_query.message.reply_text(
+                        "<b>🔒 Please join this channel to continue</b>\n\n"
+                        "✅ After you send a join-request, files will be delivered automatically.\n\n"
+                        "Open the bot to receive files after joining.",
+                        parse_mode=enums.ParseMode.HTML,
+                        reply_markup=InlineKeyboardMarkup(btn)
+                    )
+                except Exception as e2:
+                    logger.error(f"Failed to send fallback join message in chat: {e2}")
             return  # ✅ STOP HERE
 
         # ✅ If no fsub configured OR already joined => send files in PM
         try:
             await callback_query.answer("Sending files in PM...", show_alert=False)
-        except:
+        except Exception:
             pass
 
         try:
             files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(client, link_key)
+        except Exception as e:
+            logger.error(f"get_links_for_quality error for key={link_key}: {e}")
+            files_to_send = None
 
-            if not files_to_send:
-                try:
-                    await callback_query.answer("❌ No files found!", show_alert=True)
-                except:
-                    pass
-                return
-
-            for item in files_to_send:
-                file_id = item.get("file_id")
-                caption = item.get("caption") or ""
-                if not file_id:
-                    continue
-
-                try:
-                    await client.send_cached_media(
-                        chat_id=user_id,   # ✅ ALWAYS PM
-                        file_id=file_id,
-                        caption=caption
-                    )
-                    await asyncio.sleep(0.2)
-                except FloodWait as e:
-                    await asyncio.sleep(e.x)
-                except Exception as e:
-                    logger.error(f"send_cached_media error: {e}")
-
-            # if user was pending from earlier, clear it
+        if not files_to_send:
             try:
-                await clear_pending(int(user_id))
+                await callback_query.answer("❌ No files found!", show_alert=True)
+            except Exception:
+                pass
+            return
+
+        for item in files_to_send:
+            file_id = item.get("file_id")
+            caption = item.get("caption") or ""
+            if not file_id:
+                continue
+
+            try:
+                # send_cached_media is assumed available in your client wrapper
+                await client.send_cached_media(
+                    chat_id=user_id,   # ✅ ALWAYS PM
+                    file_id=file_id,
+                    caption=caption
+                )
+                await asyncio.sleep(0.2)
+            except FloodWait as e:
+                await asyncio.sleep(e.x)
+            except Exception as e:
+                logger.error(f"send_cached_media error: {e}")
+
+        # if user was pending from earlier, clear it
+        try:
+            await clear_pending(int(user_id))
+        except Exception:
+            pass
+
+        # ✅ advance after successful send (not before)
+        if required_chat_id and total:
+            try:
+                await advance_user_step(int(user_id), int(total))
             except Exception:
                 pass
 
-            # ✅ advance after successful send (not before)
-            if required_chat_id and total:
-                try:
-                    await advance_user_step(int(user_id), int(total))
-                except Exception:
-                    pass
-
-            try:
-                await callback_query.answer("✅ Sent in PM!", show_alert=False)
-            except:
-                pass
-
-        except Exception as e:
-            logger.error(f"b: send error for key={link_key}: {e}")
-            try:
-                await callback_query.answer("❌ Failed to send files.", show_alert=True)
-            except:
-                pass
+        try:
+            await callback_query.answer("✅ Sent in PM!", show_alert=False)
+        except Exception:
+            pass
 
         return
 
     # ✅ SERIES BUTTON
-    if data.startswith("user_series>"):
+    if data and data.startswith("user_series>"):
         await user_series_callback_handler(client, callback_query)
         return
 
     # ✅ UI BUTTONS (language/season/back)
-    if data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_"):
+    if data and (data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_")):
         await user_interface_callback_handler(client, callback_query)
         return
-
 
 # ----------------------------
 # Series Callback
