@@ -486,6 +486,123 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
             files_to_send = None
 
         if not files_to_send:
+# ----------------------------
+# Callback handler
+# ----------------------------
+@Bot.on_callback_query()
+async def callback_handler(client: Bot, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    data = callback_query.data
+
+    # ✅ QUALITY BUTTON HANDLER (b:)
+    if data and data.startswith("b:"):
+        link_key = data.split(":", 1)[1]
+        # origin chat/message where the inline keyboard was pressed
+        origin_chat_id = callback_query.message.chat.id
+        origin_msg_id = getattr(callback_query.message, "message_id", callback_query.message.id)
+
+        # ownership check for group clicks
+        stored_entry = user_requestor.get(f"{origin_chat_id}•{origin_msg_id}") or {}
+        stored_data = stored_entry.get("data") if isinstance(stored_entry, dict) else None
+        requested_user = stored_data.get("requested_user") if isinstance(stored_data, dict) else None
+
+        if origin_chat_id < 0 and requested_user and user_id != requested_user:
+            try:
+                await callback_query.answer("Not your request!", show_alert=True)
+            except Exception:
+                pass
+            return
+
+        # ✅ STRICT CHECK (NOT JOINED => save pending + show join btn, DO NOT send files)
+        try:
+            required_chat_id, total, step = await get_required_fsub_chat(client, user_id)
+        except Exception as e:
+            logger.error(f"get_required_fsub_chat error: {e}")
+            required_chat_id, total, step = None, 0, 0
+
+        # prepare join buttons (if any)
+        try:
+            btn = await create_request_forcesub_buttons(client, user_id)  # returns [[InlineKeyboardButton]] or None
+        except Exception as e:
+            logger.error(f"create_request_forcesub_buttons error: {e}")
+            btn = None
+
+        if btn:
+            # ✅ save pending so join-request triggers auto-send
+            if required_chat_id:
+                try:
+                    await set_pending(
+                        int(user_id),
+                        link_key,
+                        int(required_chat_id),
+                        int(step),
+                        int(total) if total else 1
+                    )
+                except Exception as e:
+                    logger.error(f"set_pending error: {e}")
+
+            # Instead of showing a popup in the group, redirect the user to the bot (deep link)
+            try:
+                me = await client.get_me()
+                bot_username = getattr(me, "username", None) or ""
+                bot_link = f"https://t.me/{bot_username}?start=from_group_{link_key}"
+            except Exception as e:
+                logger.error(f"get_me error: {e}")
+                bot_link = None
+
+            # If we have a bot link, instruct Telegram client to open it (no group popup)
+            if bot_link:
+                try:
+                    # This will prompt the Telegram client to open the bot chat
+                    await callback_query.answer(text="Opening bot to continue...", show_alert=False, url=bot_link)
+                except Exception as e:
+                    logger.error(f"answer callback with url failed: {e}")
+
+            # Send the full PM block with instructions and join buttons (best-effort)
+            pm_text = (
+                "<b>🔒 Please join this channel to continue</b>\n\n"
+                "✅ After you send a join-request, files will be delivered automatically.\n\n"
+                "Steps:\n"
+                "1. Tap Join Channel and send the join request.\n"
+                "2. If you haven't started the bot, tap Open Bot and press Start.\n"
+                "3. Files will be delivered automatically after approval.\n\n"
+                "If automatic delivery doesn't work, open the bot and send /start."
+            )
+
+            try:
+                await client.send_message(
+                    chat_id=user_id,
+                    text=pm_text,
+                    reply_markup=InlineKeyboardMarkup(btn),
+                    parse_mode=enums.ParseMode.HTML
+                )
+            except Exception as e:
+                # If sending PM fails (user hasn't started bot), fallback to replying in the origin chat with the full block
+                logger.error(f"Failed to send fsub buttons in PM: {e}")
+                try:
+                    # Reply in the origin chat so user sees the join buttons in the group
+                    await callback_query.message.reply_text(
+                        pm_text,
+                        parse_mode=enums.ParseMode.HTML,
+                        reply_markup=InlineKeyboardMarkup(btn)
+                    )
+                except Exception as e2:
+                    logger.error(f"Failed to send fallback join message in chat: {e2}")
+            return  # ✅ STOP HERE
+
+        # ✅ If no fsub configured OR already joined => send files in PM
+        try:
+            await callback_query.answer("Sending files in PM...", show_alert=False)
+        except Exception:
+            pass
+
+        try:
+            files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(client, link_key)
+        except Exception as e:
+            logger.error(f"get_links_for_quality error for key={link_key}: {e}")
+            files_to_send = None
+
+        if not files_to_send:
             try:
                 await callback_query.answer("❌ No files found!", show_alert=True)
             except Exception:
