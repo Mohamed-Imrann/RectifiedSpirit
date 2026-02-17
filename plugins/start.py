@@ -10,30 +10,18 @@ async def start_cmd(client, message):
     if not payload:
         return await message.reply_text("✅ Go to group and click quality button.")
 
-    # ----------------------------
-    # ✅ Decode payload
-    # ----------------------------
     link_key = None
     temp_key = None
 
-    # deep link: b_<link_key>
     if payload.startswith("b_"):
         link_key = payload.split("_", 1)[1].strip()
-
-    # deep link: tk_<token>  (if you use token deep link)
     elif payload.startswith("tk_"):
         token = payload.split("_", 1)[1].strip()
         temp_key = f"tk:{token}"
-
-    # deep link: raw token only (if you open bot with ?start=<token>)
     else:
-        # treat as token (safe fallback)
         temp_key = f"tk:{payload}"
 
-    # ----------------------------
-    # ✅ ForceSub Check
-    # (ONLY block if user not joined)
-    # ----------------------------
+    # ✅ ForceSub check
     try:
         required_chat_id, total, step = await get_required_fsub_chat(client, user_id)
     except Exception as e:
@@ -42,10 +30,9 @@ async def start_cmd(client, message):
 
     btn = await create_request_forcesub_buttons(client, int(user_id))
 
-    if btn:
-        # ✅ store pending so after join-request -> auto send
+    # ✅ IMPORTANT: use required_chat_id (not btn)
+    if required_chat_id:
         try:
-            # if we got link_key but not token, create token for pending retry flow
             if not temp_key and link_key:
                 token = await create_temp_token(int(user_id), link_key, ttl_seconds=600)
                 temp_key = f"tk:{token}"
@@ -64,14 +51,13 @@ async def start_cmd(client, message):
 
         return await message.reply_text(
             "<b>🔒 Please join this channel to continue</b>\n\n✅ After join-request, files will come automatically.",
-            reply_markup=InlineKeyboardMarkup(btn),
+            reply_markup=InlineKeyboardMarkup(btn) if btn else None,
             parse_mode=enums.ParseMode.HTML
         )
 
-    # ----------------------------
-    # ✅ Already Joined → Send Files
-    # ----------------------------
+    # ✅ Already joined → send
     send_key = temp_key if temp_key else link_key
+    send_key = await resolve_send_key(int(user_id), send_key)  # ✅ CRITICAL
 
     try:
         await message.reply_text("✅ Sending files...")
@@ -85,13 +71,6 @@ async def start_cmd(client, message):
                 await clear_pending(int(user_id))
             except Exception:
                 pass
-
-            # optional: advance step
-            if required_chat_id and total:
-                try:
-                    await advance_user_step(int(user_id), int(total))
-                except Exception:
-                    pass
 
             return await message.reply_text("✅ Sent!")
         else:
