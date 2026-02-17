@@ -1,9 +1,7 @@
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import secrets
 
-PENDING = {}  # token -> link_key
 from bot import Bot
 import asyncio
 import re
@@ -42,7 +40,6 @@ from database.request_forcesub_db import (
 
 import imdb
 import difflib
-import secrets
 
 logging.basicConfig(
     level=logging.INFO,
@@ -420,19 +417,106 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                 pass
             return
 
-        # 🔥 CREATE REDIRECT TOKEN
-        token = secrets.token_urlsafe(8)
-        PENDING_REDIRECT[token] = link_key
-
-        me = await client.get_me()
-        start_link = f"https://t.me/{me.username}?start=dl_{token}"
-
-        # ✅ DIRECT REDIRECT TO PM
+        # ✅ STRICT CHECK (NOT JOINED => save pending + show join btn, DO NOT send files)
         try:
-            await callback_query.answer(url=start_link)
-        except Exception:
+            required_chat_id, total, step = await get_required_fsub_chat(client, user_id)
+        except Exception as e:
+            logger.error(f"get_required_fsub_chat error: {e}")
+            required_chat_id, total, step = None, 0, 0
+
+        # ask join button if user not joined
+        try:
+            btn = await create_request_forcesub_buttons(client, user_id)  # returns [[button]] or None
+        except Exception as e:
+            logger.error(f"create_request_forcesub_buttons error: {e}")
+            btn = None
+
+        if btn:
+            # ✅ save pending so join-request triggers auto-send
+            if required_chat_id:
+                try:
+                    await set_pending(
+                        int(user_id),
+                        link_key,
+                        int(required_chat_id),
+                        int(step),
+                        int(total) if total else 1
+                    )
+                except Exception as e:
+                    logger.error(f"set_pending error: {e}")
+
             try:
-                await callback_query.answer()
+                await callback_query.answer("⚠️ Join the channel first!", show_alert=True)
+            except:
+                pass
+
+            try:
+                await client.send_message(
+                    chat_id=user_id,
+                    text="<b>🔒 Please join this channel to continue</b>\n\n✅ After join-request, files will come automatically.",
+                    reply_markup=InlineKeyboardMarkup(btn),
+                    parse_mode=enums.ParseMode.HTML
+                )
+            except Exception as e:
+                logger.error(f"Failed to send fsub buttons in PM: {e}")
+            return  # ✅ STOP HERE
+
+        # ✅ If no fsub configured OR already joined => send files in PM
+        try:
+            await callback_query.answer("Sending files in PM...", show_alert=False)
+        except:
+            pass
+
+        try:
+            files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(client, link_key)
+
+            if not files_to_send:
+                try:
+                    await callback_query.answer("❌ No files found!", show_alert=True)
+                except:
+                    pass
+                return
+
+            for item in files_to_send:
+                file_id = item.get("file_id")
+                caption = item.get("caption") or ""
+                if not file_id:
+                    continue
+
+                try:
+                    await client.send_cached_media(
+                        chat_id=user_id,   # ✅ ALWAYS PM
+                        file_id=file_id,
+                        caption=caption
+                    )
+                    await asyncio.sleep(0.2)
+                except FloodWait as e:
+                    await asyncio.sleep(e.x)
+                except Exception as e:
+                    logger.error(f"send_cached_media error: {e}")
+
+            # if user was pending from earlier, clear it
+            try:
+                await clear_pending(int(user_id))
+            except Exception:
+                pass
+
+            # ✅ advance after successful send (not before)
+            if required_chat_id and total:
+                try:
+                    await advance_user_step(int(user_id), int(total))
+                except Exception:
+                    pass
+
+            try:
+                await callback_query.answer("✅ Sent in PM!", show_alert=False)
+            except:
+                pass
+
+        except Exception as e:
+            logger.error(f"b: send error for key={link_key}: {e}")
+            try:
+                await callback_query.answer("❌ Failed to send files.", show_alert=True)
             except:
                 pass
 
@@ -443,104 +527,11 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
         await user_series_callback_handler(client, callback_query)
         return
 
-    # ✅ UI BUTTONS
+    # ✅ UI BUTTONS (language/season/back)
     if data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_"):
         await user_interface_callback_handler(client, callback_query)
         return
 
-@Bot.on_message(filters.private & filters.command("start"))
-async def start_handler(client: Bot, message: Message):
-    user_id = message.from_user.id
-    parts = message.text.split(maxsplit=1)
-    param = parts[1] if len(parts) > 1 else ""
-
-    if not param.startswith("dl_"):
-        return
-
-    token = param.replace("dl_", "", 1)
-    link_key = PENDING_REDIRECT.get(token)
-
-    if not link_key:
-        return await message.reply("❌ Link expired. Click quality again.")
-
-    # 🔥 NOW CALL YOUR EXISTING FSUB + FILE SEND LOGIC HERE
-    # same logic you already have inside b: block
-    # example:
-    await process_quality_request(client, user_id, link_key)
-
-async def process_quality_request(client: Bot, user_id: int, link_key: str):
-    # ✅ STRICT FSUB CHECK (same as before)
-    try:
-        required_chat_id, total, step = await get_required_fsub_chat(client, user_id)
-    except Exception as e:
-        logger.error(f"get_required_fsub_chat error: {e}")
-        required_chat_id, total, step = None, 0, 0
-
-    try:
-        btn = await create_request_forcesub_buttons(client, user_id)
-    except Exception as e:
-        logger.error(f"create_request_forcesub_buttons error: {e}")
-        btn = None
-
-    # 🔒 NOT JOINED -> show join btn in PM and save pending
-    if btn:
-        if required_chat_id:
-            try:
-                await set_pending(int(user_id), link_key, int(required_chat_id), int(step), int(total) if total else 1)
-            except Exception as e:
-                logger.error(f"set_pending error: {e}")
-
-        try:
-            await client.send_message(
-                chat_id=user_id,
-                text="<b>🔒 Please join this channel to continue</b>\n\n✅ After join-request, files will come automatically.",
-                reply_markup=InlineKeyboardMarkup(btn),
-                parse_mode=enums.ParseMode.HTML
-            )
-        except Exception as e:
-            logger.error(f"Failed to send fsub buttons in PM: {e}")
-        return
-
-    # ✅ ALREADY JOINED -> send files in PM
-    try:
-        files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(client, link_key)
-
-        if not files_to_send:
-            return await client.send_message(user_id, "❌ No files found!")
-
-        for item in files_to_send:
-            file_id = item.get("file_id")
-            caption = item.get("caption") or ""
-            if not file_id:
-                continue
-
-            try:
-                await client.send_cached_media(chat_id=user_id, file_id=file_id, caption=caption)
-                await asyncio.sleep(0.2)
-            except FloodWait as e:
-                await asyncio.sleep(e.x)
-            except Exception as e:
-                logger.error(f"send_cached_media error: {e}")
-
-        # clear pending
-        try:
-            await clear_pending(int(user_id))
-        except Exception:
-            pass
-
-        # advance step
-        if required_chat_id and total:
-            try:
-                await advance_user_step(int(user_id), int(total))
-            except Exception:
-                pass
-
-    except Exception as e:
-        logger.error(f"process_quality_request error key={link_key}: {e}")
-        try:
-            await client.send_message(user_id, "❌ Failed to send files.")
-        except:
-            pass
 
 # ----------------------------
 # Series Callback
