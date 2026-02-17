@@ -1,6 +1,10 @@
-
 # database/request_forcesub_db.py
+
 import pymongo
+import secrets
+import time
+from typing import Optional, Dict, Any
+
 from info import DATABASE_URI, DATABASE_NAME
 
 myclient = pymongo.MongoClient(DATABASE_URI)
@@ -18,6 +22,57 @@ pending_fsub = mydb["pending_fsub"]
 
 
 # ---------------------------
+# ✅ TEMP TOKEN SYSTEM (for PM redirect)
+# ---------------------------
+# NOTE:
+# - This is in-memory (fast)
+# - Container restart aana tokens clear aagum (OK)
+# - TTL default 10 min
+_TEMP_TOKENS: Dict[str, Dict[str, Any]] = {}
+
+
+async def create_temp_token(user_id: int, payload: dict, ttl: int = 600) -> str:
+    token = secrets.token_urlsafe(10)
+    _TEMP_TOKENS[token] = {
+        "user_id": int(user_id),
+        "payload": payload,
+        "exp": time.time() + int(ttl),
+    }
+    return token
+
+
+async def get_temp_token(token: str, user_id: Optional[int] = None) -> Optional[dict]:
+    data = _TEMP_TOKENS.get(token)
+    if not data:
+        return None
+
+    if data.get("exp", 0) < time.time():
+        _TEMP_TOKENS.pop(token, None)
+        return None
+
+    if user_id is not None and int(data.get("user_id", 0)) != int(user_id):
+        return None
+
+    return data.get("payload")
+
+
+async def consume_temp_token(token: str, user_id: Optional[int] = None) -> Optional[dict]:
+    payload = await get_temp_token(token, user_id=user_id)
+    if payload is None:
+        return None
+    _TEMP_TOKENS.pop(token, None)
+    return payload
+
+
+async def cleanup_temp_tokens() -> int:
+    now = time.time()
+    dead = [t for t, v in _TEMP_TOKENS.items() if v.get("exp", 0) < now]
+    for t in dead:
+        _TEMP_TOKENS.pop(t, None)
+    return len(dead)
+
+
+# ---------------------------
 # STEP SYSTEM ✅
 # ---------------------------
 async def get_user_step(user_id: int) -> int:
@@ -26,12 +81,14 @@ async def get_user_step(user_id: int) -> int:
         return 1
     return int(doc.get("step", 1))
 
+
 async def set_user_step(user_id: int, step: int):
     fsub_steps.update_one(
         {"user_id": int(user_id)},
         {"$set": {"step": int(step)}},
         upsert=True
     )
+
 
 async def advance_user_step(user_id: int, total: int):
     # ✅ total MUST come from actual chat list length
@@ -62,8 +119,10 @@ async def set_pending(user_id: int, link_key: str, required_chat_id: int, step: 
         upsert=True
     )
 
+
 async def get_pending(user_id: int):
     return pending_fsub.find_one({"user_id": int(user_id)})
+
 
 async def clear_pending(user_id: int):
     pending_fsub.delete_one({"user_id": int(user_id)})
@@ -75,17 +134,22 @@ async def clear_pending(user_id: int):
 async def get_req_one(user_id):
     return req_one.find_one({"user_id": int(user_id)})
 
+
 async def get_req_two(user_id):
     return req_two.find_one({"user_id": int(user_id)})
+
 
 async def get_req_one_count():
     return req_one.count_documents({})
 
+
 async def get_req_two_count():
     return req_two.count_documents({})
 
+
 async def delete_all_one():
     req_one.delete_many({})
+
 
 async def delete_all_two():
     req_two.delete_many({})
