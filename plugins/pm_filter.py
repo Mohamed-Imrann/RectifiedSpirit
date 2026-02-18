@@ -28,6 +28,8 @@ from plugins.request_forcesub import (
 )
 
 # ✅ Pending system (JOIN REQUEST => auto send files without clicking again)
+# If you don't have these functions yet, add them in database/request_forcesub_db.py
+# (I’m assuming you will add them. If you already added, this import works.)
 from database.request_forcesub_db import (
     set_pending,
     get_pending,
@@ -166,8 +168,9 @@ async def get_main_poster(client: Bot, series_key: str) -> str:
                 break
 
             except FloodWait as e:
-                await asyncio.sleep(e.value)
-            except Exception as e:
+                # FloodWait provides seconds in .value
+                await asyncio.sleep(getattr(e, "value", 1))
+            except Exception:
                 return NO_POSTER_FOUND_IMG[0]
 
         try:
@@ -334,6 +337,8 @@ async def start_scheduler():
 
 # ----------------------------
 # ✅ JOIN REQUEST HANDLER
+# User presses quality -> bot asks "Join Channel"
+# User sends join request -> bot auto sends files in PM (NO need click again)
 # ----------------------------
 @Bot.on_chat_join_request()
 async def on_join_request_handler(client: Bot, join_request):
@@ -386,7 +391,7 @@ async def on_join_request_handler(client: Bot, join_request):
 
 
 # ----------------------------
-# Callback handler (single consolidated handler)
+# Callback handler
 # ----------------------------
 @Bot.on_callback_query()
 async def callback_handler(client: Bot, callback_query: CallbackQuery):
@@ -395,14 +400,12 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
     origin_chat_id = callback_query.message.chat.id
     origin_msg_id = getattr(callback_query.message, "message_id", callback_query.message.id)
 
-    # ----------------------------
-    # QUALITY BUTTON HANDLER (b:)
-    # ----------------------------
+    # ✅ QUALITY BUTTON HANDLER (b:)
     if data.startswith("b:"):
         link_key = data.split(":", 1)[1]
 
         # ownership check for group clicks
-        stored_entry = user_requestor.get(f"{origin_chat_id}•{origin_msg_id}") or {}
+        stored_entry = user_requestor.get(f"{origin_chat_id}•{origin_msg_id}", {})
         stored_data = stored_entry.get("data") if isinstance(stored_entry, dict) else None
         requested_user = stored_data.get("requested_user") if isinstance(stored_data, dict) else None
 
@@ -413,22 +416,22 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                 pass
             return
 
-        # get required fsub config
+        # ✅ STRICT CHECK (NOT JOINED => save pending + show join btn, DO NOT send files)
         try:
             required_chat_id, total, step = await get_required_fsub_chat(client, user_id)
         except Exception as e:
             logger.error(f"get_required_fsub_chat error: {e}")
             required_chat_id, total, step = None, 0, 0
 
-        # prepare join buttons (if any)
+        # ask join button if user not joined
         try:
-            btn = await create_request_forcesub_buttons(client, user_id)  # returns [[InlineKeyboardButton]] or None
+            btn = await create_request_forcesub_buttons(client, user_id)  # returns [[button]] or None
         except Exception as e:
             logger.error(f"create_request_forcesub_buttons error: {e}")
             btn = None
 
         if btn:
-            # save pending so join-request triggers auto-send
+            # ✅ save pending so join-request triggers auto-send
             if required_chat_id:
                 try:
                     await set_pending(
@@ -441,60 +444,23 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                 except Exception as e:
                     logger.error(f"set_pending error: {e}")
 
-            # Build bot deep link
             try:
-                me = await client.get_me()
-                bot_username = getattr(me, "username", None) or ""
-                bot_link = f"https://t.me/{bot_username}?start=from_group_{link_key}"
-            except Exception as e:
-                logger.error(f"get_me error: {e}")
-                bot_link = None
-
-            # 1) Redirect client to bot chat (no group popup)
-            if bot_link:
-                try:
-                    await callback_query.answer(text="Opening bot to continue...", show_alert=False, url=bot_link)
-                except Exception as e:
-                    logger.error(f"answer callback with url failed: {e}")
-
-            # 2) Try to send full PM block (best-effort)
-            pm_text = (
-                "<b>🔒 Please join this channel to continue</b>\n\n"
-                "✅ After you send a join-request, files will be delivered automatically.\n\n"
-                "Steps:\n"
-                "1. Tap Join Channel and send the join request.\n"
-                "2. If you haven't started the bot, open the bot and press Start.\n"
-                "3. Files will be delivered automatically after approval.\n\n"
-                "If automatic delivery doesn't work, open the bot and send /start."
-            )
+                await callback_query.answer("⚠️ Join the channel first!", show_alert=True)
+            except Exception:
+                pass
 
             try:
                 await client.send_message(
                     chat_id=user_id,
-                    text=pm_text,
+                    text="<b>🔒 Please join this channel to continue</b>\n\n✅ After join-request, files will come automatically.",
                     reply_markup=InlineKeyboardMarkup(btn),
                     parse_mode=enums.ParseMode.HTML
                 )
-                return
             except Exception as e:
-                logger.debug(f"send PM failed (user may not have started bot): {e}")
+                logger.error(f"Failed to send fsub buttons in PM: {e}")
+            return  # ✅ STOP HERE
 
-            # 3) Fallback: reply in origin chat with bot open button + join buttons
-            try:
-                fallback_kb = [row[:] for row in btn]  # shallow copy
-                if bot_link:
-                    fallback_kb.append([InlineKeyboardButton("Open Bot", url=bot_link)])
-                await callback_query.message.reply_text(
-                    pm_text,
-                    parse_mode=enums.ParseMode.HTML,
-                    reply_markup=InlineKeyboardMarkup(fallback_kb)
-                )
-            except Exception as e:
-                logger.error(f"Failed to send fallback join message in chat: {e}")
-
-            return  # STOP here until user joins / opens bot
-
-        # If no fsub configured OR already joined => send files in PM
+        # ✅ If no fsub configured OR already joined => send files in PM
         try:
             await callback_query.answer("Sending files in PM...", show_alert=False)
         except Exception:
@@ -502,120 +468,316 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
 
         try:
             files_to_send, channel_id, first_msg_id, last_msg_id = await get_links_for_quality(client, link_key)
-        except Exception as e:
-            logger.error(f"get_links_for_quality error for key={link_key}: {e}")
-            files_to_send = None
 
-        if not files_to_send:
-            try:
-                await callback_query.answer("❌ No files found!", show_alert=True)
-            except Exception:
-                pass
-            return
-
-        for item in files_to_send:
-            file_id = item.get("file_id")
-            caption = item.get("caption") or ""
-            if not file_id:
-                continue
-
-            try:
-                await client.send_cached_media(
-                    chat_id=user_id,   # ALWAYS PM
-                    file_id=file_id,
-                    caption=caption
-                )
-                await asyncio.sleep(0.2)
-            except FloodWait as e:
-                # FloodWait has attribute 'value' for seconds to sleep
+            if not files_to_send:
                 try:
-                    await asyncio.sleep(e.value)
+                    await callback_query.answer("❌ No files found!", show_alert=True)
                 except Exception:
-                    await asyncio.sleep(1)
-            except Exception as e:
-                logger.error(f"Failed to send cached media to {user_id}: {e}")
+                    pass
+                return
 
-        return
+            for item in files_to_send:
+                file_id = item.get("file_id")
+                caption = item.get("caption") or ""
+                if not file_id:
+                    continue
 
-    # ----------------------------
-    # LANGUAGE / USER ITEM / OTHER CALLBACKS
-    # (Keep existing behavior or add handlers as needed)
-    # ----------------------------
-    # Example: handle language selection (lang_0, lang_1, ...)
-    if data.startswith("lang_"):
-        try:
-            idx = int(data.split("_", 1)[1])
-        except Exception:
-            idx = None
+                try:
+                    await client.send_cached_media(
+                        chat_id=user_id,   # ✅ ALWAYS PM
+                        file_id=file_id,
+                        caption=caption
+                    )
+                    await asyncio.sleep(0.2)
+                except FloodWait as e:
+                    await asyncio.sleep(getattr(e, "value", 1))
+                except Exception as e:
+                    logger.error(f"send_cached_media error: {e}")
 
-        origin_key = f"{origin_chat_id}•{origin_msg_id}"
-        stored_entry = user_requestor.get(origin_key) or {}
-        stored_data = stored_entry.get("data") if isinstance(stored_entry, dict) else None
-        if not stored_data:
+            # if user was pending from earlier, clear it
             try:
-                await callback_query.answer("Request expired or invalid.", show_alert=True)
+                await clear_pending(int(user_id))
             except Exception:
                 pass
-            return
 
-        series_key = stored_data.get("series_key")
-        requested_user = stored_data.get("requested_user")
-        if origin_chat_id < 0 and requested_user and user_id != requested_user:
+            # ✅ advance after successful send (not before)
+            if required_chat_id and total:
+                try:
+                    await advance_user_step(int(user_id), int(total))
+                except Exception:
+                    pass
+
             try:
-                await callback_query.answer("Not your request!", show_alert=True)
+                await callback_query.answer("✅ Sent in PM!", show_alert=False)
             except Exception:
                 pass
-            return
 
-        # Fetch series and languages
-        series = get_series_name(series_key)
-        if not series:
-            try:
-                await callback_query.answer("Series not found.", show_alert=True)
-            except Exception:
-                pass
-            return
-
-        languages = series.get("languages", [])
-        if idx is None or idx < 0 or idx >= len(languages):
-            try:
-                await callback_query.answer("Invalid language selection.", show_alert=True)
-            except Exception:
-                pass
-            return
-
-        lang = languages[idx]
-        # Build quality buttons or link_key for this language
-        # Assuming lang contains 'qualities' or similar structure; adapt as needed
-        qualities = lang.get("qualities", [])
-        kb = []
-        for q in qualities:
-            key = q.get("link_key") or q.get("key")
-            label = q.get("label") or q.get("name") or "Get"
-            if key:
-                kb.append([InlineKeyboardButton(label, callback_data=f"b:{key}")])
-
-        if not kb:
-            try:
-                await callback_query.answer("No qualities available for this language.", show_alert=True)
-            except Exception:
-                pass
-            return
-
-        try:
-            await client.send_message(
-                chat_id=user_id,
-                text=f"Choose quality for {series.get('title')}:",
-                reply_markup=InlineKeyboardMarkup(kb)
-            )
         except Exception as e:
-            logger.error(f"Failed to send quality buttons PM: {e}")
+            logger.error(f"b: send error for key={link_key}: {e}")
+            try:
+                await callback_query.answer("❌ Failed to send files.", show_alert=True)
+            except Exception:
+                pass
 
         return
 
-    # Add other callback handlers here (e.g., user_item_, back_, user_series>, etc.)
-    # Fallback: try to answer gracefully
+    # ✅ SERIES BUTTON
+    if data.startswith("user_series>"):
+        await user_series_callback_handler(client, callback_query)
+        return
+
+    # ✅ UI BUTTONS (language/season/back)
+    if data.startswith("lang_") or data.startswith("season_") or data.startswith("quality_") or data.startswith("back_"):
+        await user_interface_callback_handler(client, callback_query)
+        return
+
+
+# ----------------------------
+# Series Callback
+# ----------------------------
+async def user_series_callback_handler(client: Bot, query: CallbackQuery):
+    data = query.data
+    parts = data.split(">")
+    clicked_user = query.from_user.id
+    chat_id = query.message.chat.id
+    message_id = getattr(query.message, "message_id", query.message.id)
+
     try:
-        await callback_query.answer()
+        await query.answer()
     except Exception:
         pass
+
+    reply_msg = query.message.reply_to_message
+    if reply_msg and reply_msg.from_user:
+        requested_user = reply_msg.from_user.id
+    else:
+        stored_data = user_requestor.get(f"{chat_id}•{message_id}", {}).get("data")
+        requested_user = stored_data.get("requested_user") if isinstance(stored_data, dict) else stored_data
+
+    if chat_id < 0 and requested_user and clicked_user != requested_user:
+        try:
+            await query.answer("Not your request!", show_alert=True)
+        except Exception:
+            pass
+        return
+
+    if data.startswith("user_series>"):
+        series_key = parts[1]
+        series = get_series_name(series_key)
+        if not series or not series.get('published', False):
+            try:
+                await query.message.edit_text("Series not found or not available.", parse_mode=enums.ParseMode.HTML)
+            except Exception:
+                pass
+            return
+
+        user_requestor[f"{chat_id}•{message_id}"] = {
+            "data": {"series_key": series_key, "requested_user": clicked_user},
+            "timestamp": time.time()
+        }
+        request_timestamps[f"{chat_id}•{message_id}"] = time.time()
+
+        languages = series.get("languages", [])
+        language_layout = series.get("language_layout", [1] * len(languages))
+
+        base_text = (
+            f"○ **Title:** `{series['title']}`\n"
+            f"○ **Released On:** `{series['released_on']}`\n"
+            f"○ **Genre:** `{series['genre']}`\n"
+            f"○ **Rating:** `{series['rating']}`\n\n"
+        )
+
+        language_names = [lang['name'] for lang in languages]
+        text = base_text + "Select the language you need...!"
+
+        layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
+        if not layout:
+            try:
+                await query.message.edit_text("No languages available for this series.")
+            except Exception:
+                pass
+            return
+
+        poster = await get_main_poster(client, series_key)
+
+        try:
+            await query.message.edit_media(
+                media=InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
+                reply_markup=InlineKeyboardMarkup(layout)
+            )
+        except MessageNotModified:
+            pass
+        except Exception:
+            try:
+                await query.message.edit_text(text=text, reply_markup=InlineKeyboardMarkup(layout), parse_mode=enums.ParseMode.MARKDOWN)
+            except Exception:
+                pass
+
+
+# ----------------------------
+# UI Callback Handler
+# ----------------------------
+async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
+    user_id = query.from_user.id
+    chat_id = query.message.chat.id
+    message_id = getattr(query.message, "message_id", query.message.id)
+    data = query.data
+
+    try:
+        await query.answer()
+    except Exception:
+        pass
+
+    stored_entry = user_requestor.get(f"{chat_id}•{message_id}", {})
+    stored_data = stored_entry.get("data") if isinstance(stored_entry, dict) else None
+
+    if not stored_data or not isinstance(stored_data, dict):
+        try:
+            await query.answer("Session expired. Please search again.", show_alert=True)
+        except Exception:
+            pass
+        return
+
+    series_key = stored_data.get("series_key")
+    requested_user = stored_data.get("requested_user")
+
+    if chat_id < 0 and requested_user and user_id != requested_user:
+        try:
+            await query.answer("Not your request!", show_alert=True)
+        except Exception:
+            pass
+        return
+
+    series = get_series_name(series_key)
+    if not series or not series.get('published', False):
+        try:
+            await query.answer("Series not found or not available.", show_alert=True)
+        except Exception:
+            pass
+        return
+
+    base_text = (
+        f"○ **Title:** `{series['title']}`\n"
+        f"○ **Released On:** `{series['released_on']}`\n"
+        f"○ **Genre:** `{series['genre']}`\n"
+        f"○ **Rating:** `{series['rating']}`\n\n"
+    )
+
+    # Back handling
+    if data.startswith("back_"):
+        target = data.split("_", 1)[1]
+
+        if target == "language":
+            languages = series.get("languages", [])
+            language_layout = series.get("language_layout", [1] * len(languages))
+            language_names = [lang['name'] for lang in languages]
+
+            text = base_text + "Select the language you need...!"
+            layout = create_user_layout_from_pattern(language_names, language_layout, "lang")
+            poster = await get_main_poster(client, series_key)
+
+            try:
+                await query.message.edit_media(
+                    media=InputMediaPhoto(media=poster, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
+                    reply_markup=InlineKeyboardMarkup(layout)
+                )
+            except Exception:
+                pass
+            return
+
+        if target == "season":
+            language_index = stored_data.get("language_index")
+            language_name = stored_data.get("language_name")
+
+            languages = series.get("languages", [])
+            seasons = languages[language_index].get("seasons", [])
+            season_layout = languages[language_index].get("season_layout", [1] * len(seasons))
+            season_names = [season['name'] for season in seasons]
+
+            text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
+            layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
+
+            try:
+                await query.message.edit_media(
+                    media=InputMediaPhoto(media=query.message.photo.file_id, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
+                    reply_markup=InlineKeyboardMarkup(layout)
+                )
+            except Exception:
+                pass
+            return
+
+    # Parse callback
+    parts = data.split("_", 1)
+    if len(parts) != 2:
+        return
+
+    cb_type = parts[0]
+    try:
+        cb_index = int(parts[1])
+    except ValueError:
+        return
+
+    # Language click
+    if cb_type == "lang":
+        languages = series.get("languages", [])
+        if not (0 <= cb_index < len(languages)):
+            return
+
+        language_name = languages[cb_index]["name"]
+        seasons = languages[cb_index].get("seasons", [])
+        season_layout = languages[cb_index].get("season_layout", [1] * len(seasons))
+        season_names = [season['name'] for season in seasons]
+
+        stored_data.update({"language_name": language_name, "language_index": cb_index})
+        user_requestor[f"{chat_id}•{message_id}"] = {"data": stored_data, "timestamp": time.time()}
+        request_timestamps[f"{chat_id}•{message_id}"] = time.time()
+
+        text = base_text + f"○ **Language:** `{language_name}`\nSelect the season you need...!"
+        layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
+
+        try:
+            await query.message.edit_media(
+                media=InputMediaPhoto(media=query.message.photo.file_id, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
+                reply_markup=InlineKeyboardMarkup(layout)
+            )
+        except Exception:
+            pass
+        return
+
+    # Season click
+    if cb_type == "season":
+        language_index = stored_data.get("language_index")
+        languages = series.get("languages", [])
+        seasons = languages[language_index].get("seasons", [])
+        if not (0 <= cb_index < len(seasons)):
+            return
+
+        season_name = seasons[cb_index]["name"]
+        qualities = seasons[cb_index].get("qualities", [])
+
+        stored_data.update({"season_name": season_name, "season_index": cb_index})
+        user_requestor[f"{chat_id}•{message_id}"] = {"data": stored_data, "timestamp": time.time()}
+        request_timestamps[f"{chat_id}•{message_id}"] = time.time()
+
+        text = (
+            base_text
+            + f"○ **Language:** `{stored_data.get('language_name')}`\n"
+            + f"○ **Season:** `{season_name}`\n"
+            + "Select the quality you need...!"
+        )
+
+        layout = []
+        for q in qualities:
+            if q.get("link_key"):
+                layout.append([InlineKeyboardButton(q["name"], callback_data=f"b:{q['link_key']}")])
+
+        layout.append([InlineKeyboardButton("⬅️ Back", callback_data="back_season")])
+
+        try:
+            await query.message.edit_media(
+                media=InputMediaPhoto(media=query.message.photo.file_id, caption=text, parse_mode=enums.ParseMode.MARKDOWN),
+                reply_markup=InlineKeyboardMarkup(layout)
+            )
+        except Exception:
+            pass
+        return
