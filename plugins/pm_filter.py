@@ -1,3 +1,5 @@
+
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -168,9 +170,9 @@ async def get_main_poster(client: Bot, series_key: str) -> str:
                 break
 
             except FloodWait as e:
-                # FloodWait provides seconds in .value
-                await asyncio.sleep(getattr(e, "value", 1))
-            except Exception:
+                await asyncio.sleep(e.value)
+            except Exception as e:
+                # optional: logger.error(f"send_photo poster error: {e}")
                 return NO_POSTER_FOUND_IMG[0]
 
         try:
@@ -396,13 +398,13 @@ async def on_join_request_handler(client: Bot, join_request):
 @Bot.on_callback_query()
 async def callback_handler(client: Bot, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
-    data = callback_query.data or ""
-    origin_chat_id = callback_query.message.chat.id
-    origin_msg_id = getattr(callback_query.message, "message_id", callback_query.message.id)
+    data = callback_query.data
 
     # ✅ QUALITY BUTTON HANDLER (b:)
     if data.startswith("b:"):
         link_key = data.split(":", 1)[1]
+        origin_chat_id = callback_query.message.chat.id
+        origin_msg_id = callback_query.message.id
 
         # ownership check for group clicks
         stored_entry = user_requestor.get(f"{origin_chat_id}•{origin_msg_id}", {})
@@ -412,7 +414,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
         if origin_chat_id < 0 and requested_user and user_id != requested_user:
             try:
                 await callback_query.answer("Not your request!", show_alert=True)
-            except Exception:
+            except:
                 pass
             return
 
@@ -446,7 +448,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
 
             try:
                 await callback_query.answer("⚠️ Join the channel first!", show_alert=True)
-            except Exception:
+            except:
                 pass
 
             try:
@@ -463,7 +465,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
         # ✅ If no fsub configured OR already joined => send files in PM
         try:
             await callback_query.answer("Sending files in PM...", show_alert=False)
-        except Exception:
+        except:
             pass
 
         try:
@@ -472,7 +474,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
             if not files_to_send:
                 try:
                     await callback_query.answer("❌ No files found!", show_alert=True)
-                except Exception:
+                except:
                     pass
                 return
 
@@ -490,7 +492,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                     )
                     await asyncio.sleep(0.2)
                 except FloodWait as e:
-                    await asyncio.sleep(getattr(e, "value", 1))
+                    await asyncio.sleep(e.x)
                 except Exception as e:
                     logger.error(f"send_cached_media error: {e}")
 
@@ -509,14 +511,14 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
 
             try:
                 await callback_query.answer("✅ Sent in PM!", show_alert=False)
-            except Exception:
+            except:
                 pass
 
         except Exception as e:
             logger.error(f"b: send error for key={link_key}: {e}")
             try:
                 await callback_query.answer("❌ Failed to send files.", show_alert=True)
-            except Exception:
+            except:
                 pass
 
         return
@@ -540,7 +542,7 @@ async def user_series_callback_handler(client: Bot, query: CallbackQuery):
     parts = data.split(">")
     clicked_user = query.from_user.id
     chat_id = query.message.chat.id
-    message_id = getattr(query.message, "message_id", query.message.id)
+    message_id = query.message.id
 
     try:
         await query.answer()
@@ -557,7 +559,7 @@ async def user_series_callback_handler(client: Bot, query: CallbackQuery):
     if chat_id < 0 and requested_user and clicked_user != requested_user:
         try:
             await query.answer("Not your request!", show_alert=True)
-        except Exception:
+        except:
             pass
         return
 
@@ -620,7 +622,7 @@ async def user_series_callback_handler(client: Bot, query: CallbackQuery):
 async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
     user_id = query.from_user.id
     chat_id = query.message.chat.id
-    message_id = getattr(query.message, "message_id", query.message.id)
+    message_id = query.message.id
     data = query.data
 
     try:
@@ -634,7 +636,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
     if not stored_data or not isinstance(stored_data, dict):
         try:
             await query.answer("Session expired. Please search again.", show_alert=True)
-        except Exception:
+        except:
             pass
         return
 
@@ -644,7 +646,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
     if chat_id < 0 and requested_user and user_id != requested_user:
         try:
             await query.answer("Not your request!", show_alert=True)
-        except Exception:
+        except:
             pass
         return
 
@@ -652,7 +654,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
     if not series or not series.get('published', False):
         try:
             await query.answer("Series not found or not available.", show_alert=True)
-        except Exception:
+        except:
             pass
         return
 
