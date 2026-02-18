@@ -3,6 +3,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+from pyrogram.errors import PeerIdInvalid, UserIsBlocked
 from bot import Bot
 import asyncio
 import re
@@ -458,8 +459,12 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                     reply_markup=InlineKeyboardMarkup(btn),
                     parse_mode=enums.ParseMode.HTML
                 )
+            except (PeerIdInvalid, UserIsBlocked) as e:
+                logger.error(f"PM not reachable for fsub buttons: {e}")
+                await _ask_user_to_start_bot(client, callback_query, user_id, reason="Bot PM not started / blocked")
             except Exception as e:
                 logger.error(f"Failed to send fsub buttons in PM: {e}")
+
             return  # ✅ STOP HERE
 
         # ✅ If no fsub configured OR already joined => send files in PM
@@ -491,8 +496,15 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                         caption=caption
                     )
                     await asyncio.sleep(0.2)
+
                 except FloodWait as e:
                     await asyncio.sleep(e.x)
+
+                except (PeerIdInvalid, UserIsBlocked) as e:
+                    logger.error(f"PM not reachable while sending files: {e}")
+                    await _ask_user_to_start_bot(client, callback_query, user_id, reason="Bot PM not started / blocked")
+                    return  # ✅ stop sending remaining files
+
                 except Exception as e:
                     logger.error(f"send_cached_media error: {e}")
 
