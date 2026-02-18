@@ -1,10 +1,6 @@
-
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from pyrogram.errors import PeerIdInvalid, UserIsBlocked
-from bot import Bot
 import asyncio
 import re
 import logging
@@ -12,13 +8,17 @@ import random
 import time
 from typing import Dict, List
 
+import imdb
+import difflib
+
 from pyrogram import filters, enums
 from pyrogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery,
     InputMediaPhoto
 )
-from pyrogram.errors import MessageNotModified, FloodWait
+from pyrogram.errors import MessageNotModified, FloodWait, PeerIdInvalid, UserIsBlocked
 
+from bot import Bot
 from info import SPELL_CHECK_IMAGE, NO_POSTER_FOUND_IMG, ADMINS, CHANNELS
 from database.crazy_db import get_series, get_series_name, get_poster_manuel
 from database.gfilters_mdb import find_gfilter, get_gfilters
@@ -31,17 +31,12 @@ from plugins.request_forcesub import (
 )
 
 # ✅ Pending system (JOIN REQUEST => auto send files without clicking again)
-# If you don't have these functions yet, add them in database/request_forcesub_db.py
-# (I’m assuming you will add them. If you already added, this import works.)
 from database.request_forcesub_db import (
     set_pending,
     get_pending,
     clear_pending,
     advance_user_step,   # ✅ we will advance after sending files
 )
-
-import imdb
-import difflib
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,6 +48,44 @@ user_requestor: Dict[str, Dict] = {}
 request_timestamps: Dict[str, float] = {}
 
 ia = imdb.IMDb()
+
+
+# ----------------------------
+# PM START HELPER (PeerIdInvalid / Blocked fix)
+# ----------------------------
+async def _ask_user_to_start_bot(
+    client: Bot,
+    callback_query: CallbackQuery,
+    user_id: int,
+    reason: str = ""
+):
+    # temp.U_NAME exists in your project? if not, replace with YOUR_BOT_USERNAME (without @)
+    bot_username = getattr(temp, "U_NAME", None) or "Spidy_Series_2_Bot"
+    start_url = f"https://t.me/{bot_username}?start=start"
+
+    msg = "⚠️ Open bot in PM and press START once.\nThen click again ✅"
+    if reason:
+        msg += f"\n\nReason: {reason}"
+
+    # alert in group
+    try:
+        await callback_query.answer(msg, show_alert=True)
+    except Exception:
+        pass
+
+    # try DM with button (will fail if user never started bot / blocked)
+    try:
+        await client.send_message(
+            chat_id=user_id,
+            text="<b>🔓 Please open the bot in PM and press START once.</b>\n\nThen come back and click again ✅",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("Open Bot ✅", url=start_url)]]
+            ),
+            parse_mode=enums.ParseMode.HTML
+        )
+    except Exception:
+        # ignore if blocked / cannot PM
+        pass
 
 
 # ----------------------------
@@ -171,9 +204,10 @@ async def get_main_poster(client: Bot, series_key: str) -> str:
                 break
 
             except FloodWait as e:
-                await asyncio.sleep(e.value)
-            except Exception as e:
-                # optional: logger.error(f"send_photo poster error: {e}")
+                # safe across versions
+                wait_s = getattr(e, "value", None) or getattr(e, "x", 1)
+                await asyncio.sleep(wait_s)
+            except Exception:
                 return NO_POSTER_FOUND_IMG[0]
 
         try:
@@ -207,15 +241,27 @@ async def global_filters(client: Bot, message: Message, text=False) -> bool:
             try:
                 if fileid == "None":
                     if btn == "[]":
-                        await client.send_message(group_id, reply_text, disable_web_page_preview=True, reply_to_message_id=reply_id)
+                        await client.send_message(
+                            group_id, reply_text, disable_web_page_preview=True, reply_to_message_id=reply_id
+                        )
                     else:
                         button = eval(btn)
-                        await client.send_message(group_id, reply_text, disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(button), reply_to_message_id=reply_id)
+                        await client.send_message(
+                            group_id, reply_text, disable_web_page_preview=True,
+                            reply_markup=InlineKeyboardMarkup(button),
+                            reply_to_message_id=reply_id
+                        )
                 elif btn == "[]":
-                    await client.send_cached_media(group_id, fileid, caption=reply_text or "", reply_to_message_id=reply_id)
+                    await client.send_cached_media(
+                        group_id, fileid, caption=reply_text or "", reply_to_message_id=reply_id
+                    )
                 else:
                     button = eval(btn)
-                    await message.reply_cached_media(fileid, caption=reply_text or "", reply_markup=InlineKeyboardMarkup(button), reply_to_message_id=reply_id)
+                    await message.reply_cached_media(
+                        fileid, caption=reply_text or "",
+                        reply_markup=InlineKeyboardMarkup(button),
+                        reply_to_message_id=reply_id
+                    )
                 return True
             except Exception:
                 pass
@@ -269,7 +315,8 @@ async def series_filter(client: Bot, message: Message):
                     )
 
                     reply_user = etho.reply_to_message.from_user.id if etho.reply_to_message and etho.reply_to_message.from_user else None
-                    user_requestor[f"{etho.chat.id}•{etho.id}"] = {"data": reply_user, "timestamp": time.time()}
+                    # keep consistent shape: dict with data dict
+                    user_requestor[f"{etho.chat.id}•{etho.id}"] = {"data": {"requested_user": reply_user}, "timestamp": time.time()}
                     request_timestamps[f"{etho.chat.id}•{etho.id}"] = time.time()
                     return
 
@@ -378,6 +425,17 @@ async def on_join_request_handler(client: Bot, join_request):
             try:
                 await client.send_cached_media(chat_id=user_id, file_id=file_id, caption=caption)
                 await asyncio.sleep(0.2)
+            except FloodWait as e:
+                wait_s = getattr(e, "value", None) or getattr(e, "x", 1)
+                await asyncio.sleep(wait_s)
+            except (PeerIdInvalid, UserIsBlocked):
+                # can't PM: tell user to start bot
+                # (no callback_query here, so can't show alert)
+                try:
+                    await clear_pending(int(user_id))
+                except Exception:
+                    pass
+                return
             except Exception:
                 pass
 
@@ -415,7 +473,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
         if origin_chat_id < 0 and requested_user and user_id != requested_user:
             try:
                 await callback_query.answer("Not your request!", show_alert=True)
-            except:
+            except Exception:
                 pass
             return
 
@@ -449,7 +507,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
 
             try:
                 await callback_query.answer("⚠️ Join the channel first!", show_alert=True)
-            except:
+            except Exception:
                 pass
 
             try:
@@ -470,7 +528,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
         # ✅ If no fsub configured OR already joined => send files in PM
         try:
             await callback_query.answer("Sending files in PM...", show_alert=False)
-        except:
+        except Exception:
             pass
 
         try:
@@ -479,7 +537,7 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
             if not files_to_send:
                 try:
                     await callback_query.answer("❌ No files found!", show_alert=True)
-                except:
+                except Exception:
                     pass
                 return
 
@@ -498,7 +556,8 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                     await asyncio.sleep(0.2)
 
                 except FloodWait as e:
-                    await asyncio.sleep(e.x)
+                    wait_s = getattr(e, "value", None) or getattr(e, "x", 1)
+                    await asyncio.sleep(wait_s)
 
                 except (PeerIdInvalid, UserIsBlocked) as e:
                     logger.error(f"PM not reachable while sending files: {e}")
@@ -523,14 +582,14 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
 
             try:
                 await callback_query.answer("✅ Sent in PM!", show_alert=False)
-            except:
+            except Exception:
                 pass
 
         except Exception as e:
             logger.error(f"b: send error for key={link_key}: {e}")
             try:
                 await callback_query.answer("❌ Failed to send files.", show_alert=True)
-            except:
+            except Exception:
                 pass
 
         return
@@ -571,7 +630,7 @@ async def user_series_callback_handler(client: Bot, query: CallbackQuery):
     if chat_id < 0 and requested_user and clicked_user != requested_user:
         try:
             await query.answer("Not your request!", show_alert=True)
-        except:
+        except Exception:
             pass
         return
 
@@ -648,7 +707,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
     if not stored_data or not isinstance(stored_data, dict):
         try:
             await query.answer("Session expired. Please search again.", show_alert=True)
-        except:
+        except Exception:
             pass
         return
 
@@ -658,7 +717,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
     if chat_id < 0 and requested_user and user_id != requested_user:
         try:
             await query.answer("Not your request!", show_alert=True)
-        except:
+        except Exception:
             pass
         return
 
@@ -666,7 +725,7 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
     if not series or not series.get('published', False):
         try:
             await query.answer("Series not found or not available.", show_alert=True)
-        except:
+        except Exception:
             pass
         return
 
@@ -709,7 +768,9 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
             season_names = [season['name'] for season in seasons]
 
             text = base_text + f"○ **Language:** `{language_name}`\n\nSelect the season you need...!"
-            layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
+            layout = create_user_layout_from_pattern(
+                season_names, season_layout, "season", add_back_button=True, back_target="language"
+            )
 
             try:
                 await query.message.edit_media(
@@ -747,7 +808,9 @@ async def user_interface_callback_handler(client: Bot, query: CallbackQuery):
         request_timestamps[f"{chat_id}•{message_id}"] = time.time()
 
         text = base_text + f"○ **Language:** `{language_name}`\nSelect the season you need...!"
-        layout = create_user_layout_from_pattern(season_names, season_layout, "season", add_back_button=True, back_target="language")
+        layout = create_user_layout_from_pattern(
+            season_names, season_layout, "season", add_back_button=True, back_target="language"
+        )
 
         try:
             await query.message.edit_media(
