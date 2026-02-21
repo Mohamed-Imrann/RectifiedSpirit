@@ -76,14 +76,37 @@ async def start_command(client, message):
         # ✅ GROUP START => just register group and return
         if message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
             await asyncio.sleep(2)
+
             if not await db.get_chat(message.chat.id):
                 total = await client.get_chat_members_count(message.chat.id)
-                await client.send_message(
-                    LOG_CHANNEL,
-                    script.LOG_TEXT_G.format(message.chat.title, message.chat.id, total, "Unknown")
-                )
+
+                # ✅ LOG_CHANNEL fail-safe (won't break bot)
+                try:
+                    await client.send_message(
+                        LOG_CHANNEL,
+                        script.LOG_TEXT_G.format(
+                            message.chat.title,
+                            message.chat.id,
+                            total,
+                            "Unknown"
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(f"LOG_CHANNEL invalid / cannot send: {LOG_CHANNEL} | {e}")
+
                 await db.add_chat(message.chat.id, message.chat.title)
+
             return
+
+        # ✅ your remaining private / deep_link start logic continues below...
+        # (keep your existing code after this point)
+
+    except Exception as e:
+        logger.error(f"Unexpected error in start_command: {str(e)}", exc_info=True)
+        try:
+            await message.reply_text("Something Went Wrong, Try Again")
+        except:
+            pass
 
         # ✅ add user
         if not await db.is_user_exist(message.from_user.id):
