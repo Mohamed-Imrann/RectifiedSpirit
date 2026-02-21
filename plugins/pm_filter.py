@@ -402,15 +402,47 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
     data = callback_query.data
     logger.info(f"Received callback query from user {user_id}: {data}")
 
+    # ✅ TRY AGAIN / DeepLink handler
     if data.startswith("b:"):
         start_parameter = data.split(":", 1)[1]
+
+        # acknowledge click (no popup)
         try:
-            test_string = f"https://t.me/{temp.U_NAME}?start={start_parameter}"
-            print(test_string)
-            await callback_query.answer(url=f"https://t.me/{temp.U_NAME}?start={start_parameter}")
+            await callback_query.answer()
+        except Exception:
+            pass
+
+        # ✅ Re-run /start flow with deep_link inside (AUTH + FSUB + file send)
+        try:
+            # Build a fake message object with required fields
+            class _FakeMsg:
+                def __init__(self, cq, param):
+                    self.chat = cq.message.chat
+                    self.from_user = cq.from_user
+                    self.command = ["start", param]
+                    self.text = f"/start {param}"
+                    self.message_id = cq.message.id
+
+                async def reply(self, text, **kwargs):
+                    return await client.send_message(self.chat.id, text, **kwargs)
+
+                async def reply_text(self, text, **kwargs):
+                    return await client.send_message(self.chat.id, text, **kwargs)
+
+            fake_message = _FakeMsg(callback_query, start_parameter)
+
+            # ✅ call your existing start command
+            await start_command(client, fake_message)
+
         except Exception as e:
-            logger.error(f"Error in b: callback: {e}")
-            await callback_query.answer("Invalid URL provided.", show_alert=True)
+            logger.error(f"Error in b: callback re-run start_command: {e}", exc_info=True)
+            try:
+                await client.send_message(
+                    chat_id=callback_query.from_user.id,
+                    text="Something went wrong. Please try /start again."
+                )
+            except Exception:
+                pass
         return
 
     if data.startswith("user_series>"):
