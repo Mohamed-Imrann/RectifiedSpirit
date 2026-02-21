@@ -24,11 +24,11 @@ from info import (
     BATCH_FILE_CAPTION as CUSTOM_CAPTION, RAW_DB_CHANNEL,
     START_TXT
 )
-from utils import get_size, is_subscribed
+from utils import get_size
 import json
 
-# ✅ correct import path
-from plugins.request_forcesub import create_request_forcesub_buttons
+# ✅ FSUB (OR logic)
+from plugins.request_forcesub import create_request_forcesub_buttons, is_fsub_ok_any_one
 
 # Configure logging
 logging.basicConfig(
@@ -100,31 +100,43 @@ async def start_command(client, message):
         if deep_link:
 
             # ✅ AUTH_CHANNEL check only for deep_link (files access)
-            if AUTH_CHANNEL and not await is_subscribed(client, message):
-                try:
-                    invite_link = await client.create_chat_invite_link(int(AUTH_CHANNEL))
-                except ChatAdminRequired:
-                    logger.error("AUTH_CHANNEL: bot not admin / invite permission missing")
+            if AUTH_CHANNEL:
+                from utils import is_subscribed
+                if not await is_subscribed(client, message):
+                    try:
+                        invite_link = await client.create_chat_invite_link(int(AUTH_CHANNEL))
+                    except ChatAdminRequired:
+                        logger.error("AUTH_CHANNEL: bot not admin / invite permission missing")
+                        return
+
+                    btn = [[InlineKeyboardButton("❆ Jᴏɪɴ Oᴜʀ Bᴀᴄᴋ-Uᴘ Cʜᴀɴɴᴇʟ ❆", url=invite_link.invite_link)]]
+                    btn.append([InlineKeyboardButton("⏳ Try Again ⏳", callback_data=f"b:{deep_link}")])
+
+                    await client.send_message(
+                        chat_id=message.from_user.id,
+                        text="♦️ <b><u>READ THIS INSTRUCTION</u></b> ♦️\n\n🗣 <i>Follow instructions to access movies</i>",
+                        reply_markup=InlineKeyboardMarkup(btn),
+                        parse_mode=enums.ParseMode.HTML
+                    )
                     return
 
-                btn = [[InlineKeyboardButton("❆ Jᴏɪɴ Oᴜʀ Bᴀᴄᴋ-Uᴘ Cʜᴀɴɴᴇʟ ❆", url=invite_link.invite_link)]]
-                btn.append([InlineKeyboardButton("⏳ Try Again ⏳", callback_data=f"b:{deep_link}")])
+            # ✅ FSUB OR logic (Join any one channel)
+            ok = await is_fsub_ok_any_one(client, message.from_user.id)
+            if not ok:
+                btn = await create_request_forcesub_buttons(client, message.from_user.id)
+                if not btn:
+                    # fallback message if no links
+                    await client.send_message(
+                        chat_id=message.from_user.id,
+                        text="<b>FSUB channels not configured.</b>",
+                        parse_mode=enums.ParseMode.HTML
+                    )
+                    return
 
-                await client.send_message(
-                    chat_id=message.from_user.id,
-                    text="♦️ <b><u>READ THIS INSTRUCTION</u></b> ♦️\n\n🗣 <i>Follow instructions to access movies</i>",
-                    reply_markup=InlineKeyboardMarkup(btn),
-                    parse_mode=enums.ParseMode.HTML
-                )
-                return
-
-            # ✅ FSUB check only for deep_link
-            btn = await create_request_forcesub_buttons(client, message.from_user.id)
-            if btn:
                 btn.append([InlineKeyboardButton("↻ Tʀʏ Aɢᴀɪɴ", callback_data=f"b:{deep_link}")])
                 await client.send_message(
                     chat_id=message.from_user.id,
-                    text="<b>Please join channel(s) below to use bot</b>",
+                    text="<b>Please join any ONE channel below to use bot</b>",
                     reply_markup=InlineKeyboardMarkup(btn),
                     parse_mode=enums.ParseMode.HTML
                 )
@@ -239,7 +251,7 @@ async def start_command(client, message):
                 if not msgs:
                     file = await client.download_media(file_id)
                     try:
-                        with open(file) as file_data:
+                        with open(file, encoding="utf-8") as file_data:
                             msgs = json.loads(file_data.read())
                     except Exception as e:
                         await temp_msg.edit(f"FAILED: {e}")
@@ -277,7 +289,7 @@ async def start_command(client, message):
                         await asyncio.sleep(1)
 
                     except FloodWait as e:
-                        await asyncio.sleep(e.x)
+                        await asyncio.sleep(e.value)  # ✅ fixed
                     except Exception:
                         continue
                 return
@@ -349,6 +361,8 @@ async def purge_req_two(bot: Bot, message: Message):
     await asyncio.sleep(1)
     await delete_all_two()
     await pls_wait.edit("<b>Req Two Database Purged ✅.</b>")
+
+
 from database.crazy_db import get_series
 
 # ✅ view all 3 fsub chats
@@ -431,7 +445,7 @@ async def add_fsub_chats3(bot: Bot, update: Message):
     )
 
     os.execl(sys.executable, sys.executable, "main.py")
-    from database.crazy_db import get_series
+
 
 @Bot.on_message(filters.command("stats") & filters.user(ADMINS))
 async def stats_cmd(client: Bot, message: Message):
@@ -466,7 +480,7 @@ async def stats_cmd(client: Bot, message: Message):
             f"❌ stats error: <code>{e}</code>",
             parse_mode=enums.ParseMode.HTML
         )
-from database.crazy_db import get_series
+
 
 @Bot.on_message(filters.command("fsl") & filters.user(ADMINS))
 async def full_series_list(client: Bot, message: Message):
@@ -523,4 +537,3 @@ async def full_series_list(client: Bot, message: Message):
 
     except Exception as e:
         await message.reply_text(f"❌ fsl error: <code>{e}</code>", parse_mode=enums.ParseMode.HTML)
-
