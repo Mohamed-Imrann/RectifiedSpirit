@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from plugins.commands import start_command
 from bot import Bot
 import asyncio
 import re
@@ -402,19 +403,15 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
     data = callback_query.data
     logger.info(f"Received callback query from user {user_id}: {data}")
 
-    # ✅ TRY AGAIN / DeepLink handler
     if data.startswith("b:"):
         start_parameter = data.split(":", 1)[1]
 
-        # acknowledge click (no popup)
         try:
             await callback_query.answer()
         except Exception:
             pass
 
-        # ✅ Re-run /start flow with deep_link inside (AUTH + FSUB + file send)
         try:
-            # Build a fake message object with required fields
             class _FakeMsg:
                 def __init__(self, cq, param):
                     self.chat = cq.message.chat
@@ -430,8 +427,6 @@ async def callback_handler(client: Bot, callback_query: CallbackQuery):
                     return await client.send_message(self.chat.id, text, **kwargs)
 
             fake_message = _FakeMsg(callback_query, start_parameter)
-
-            # ✅ call your existing start command
             await start_command(client, fake_message)
 
         except Exception as e:
