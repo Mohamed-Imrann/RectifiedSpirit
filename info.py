@@ -16,8 +16,8 @@ def is_enabled(value, default):
 # Required API Credentials and Bot Settings
 API_ID = '20400973' #bots
 API_HASH = '047838cb76d54bc445e155a7cab44664'
-BOT_TOKEN = '7448922857:AAEiLcjbuhP_XNSl0KOiCj70OpBJWFWKbCA'
-BOT_USERNAME = "Spidy_Series_bot"
+BOT_TOKEN = '8740215104:AAEuAWp_YeLxIKrnZLs0Kp5AMR1eE5rz3iY'
+BOT_USERNAME = "Spidy_Series_Robot"
 
 # Required Database and Channel Settings
 DATABASE_URI="mongodb://PreferableResponss:Germination@spidy_bots_speedy:27017/?tls=false"
@@ -36,9 +36,9 @@ REQ_CHANNEL_TWO = (int(REQ_CHANNEL_TWO) if REQ_CHANNEL_TWO and id_pattern.search
 REQ_CHANNEL_THREE = environ.get("REQ_CHANNEL_THREE", None)
 REQ_CHANNEL_THREE = (int(REQ_CHANNEL_THREE) if REQ_CHANNEL_THREE and id_pattern.search(REQ_CHANNEL_THREE) else False) if REQ_CHANNEL_THREE is not None else None
 
-LOG_CHANNEL = "-1002361556192"
-DB_CHANNEL = [-1002400599577, -1002964945426]
-RAW_DB_CHANNEL = [2400599577, 2964945426]
+LOG_CHANNEL = "-1003951788487"
+DB_CHANNEL = [-1003976642482]
+RAW_DB_CHANNEL = [3976642482]
 IMGBB_API_KEY = "e74d34d56644c5a9543019e408dbd891"
 TMDB_API_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIwZjY0ZTY1MDRhYTZkY2JkNmQxMWMzMjRiZTU3MGFmYSIsIm5iZiI6MTc1MTk3MDQyMy4zNTAwMDAxLCJzdWIiOiI2ODZjZjI3N2ZmMzFhNDFhNDhlN2ZlNTMiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.dI7SXasXd9LfTedzTfZAW05gQPcOD7_TpEMHKCGNdvU"
 # Optional settings with defaults
@@ -61,8 +61,8 @@ SPELL_CHECK_TXT = environ.get('SPELL_CHECK_TXT', "Did you mean something else? P
 CHANNELS_TXT = environ.get('CHANNELS_TXT', "Join our channels for more content!")
 
 # Optional: Bot owner link.
-BOT_OWNER_LINK = os.environ.get("BOT_OWNER_LINK", "t.me/Sflixbots")
-START_TXT = environ.get('START_TXT', "𝗅'm SflixSeriesBot, ᴀ Series Gʀᴏᴜᴘ ᴍᴀɴᴀɢᴇʀ Bᴏᴛ Cʀᴇᴀᴛᴇᴅ ғᴏʀ Series, ᴏɴʟʏ ᴀᴜᴛʜᴏʀɪsᴇᴅ ᴀᴅᴍɪɴs ᴄᴀɴ ᴀᴄᴄᴇss ᴅᴏɴ'ᴛ ᴡᴀsᴛᴇ ʏᴏᴜʀ ᴛɪᴍᴇ 😌")
+BOT_OWNER_LINK = os.environ.get("BOT_OWNER_LINK", "t.me/Call_Me_Proffesor")
+START_TXT = environ.get('START_TXT', "𝗅'm Spidy Series Bot, ᴀ Series Gʀᴏᴜᴘ ᴍᴀɴᴀɢᴇʀ Bᴏᴛ Cʀᴇᴀᴛᴇᴅ ғᴏʀ Series, ᴏɴʟʏ ᴀᴜᴛʜᴏʀɪsᴇᴅ ᴀᴅᴍɪɴs ᴄᴀɴ ᴀᴄᴄᴇss ᴅᴏɴ'ᴛ ᴡᴀsᴛᴇ ʏᴏᴜʀ ᴛɪᴍᴇ 😌")
 NO_POSTER_FOUND_IMG = environ.get('NO_POSTER_FOUND_IMG', "https://envs.sh/EMw.jpg").split()
 SPELL_CHECK_IMAGE = environ.get('SPELL_CHECK_IMAGE', 'https://files.catbox.moe/hj7poq.jpg').split()
 JOIN_REQS_DB = environ.get("JOIN_REQS_DB", DATABASE_URI)
