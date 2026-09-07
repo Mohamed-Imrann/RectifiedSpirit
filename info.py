@@ -21,7 +21,7 @@ def is_enabled(value, default):
 SESSION = environ.get('SESSION', 'series')
 API_ID = '20400973' #bots
 API_HASH = '047838cb76d54bc445e155a7cab44664'
-BOT_TOKEN = '7448922857:AAEiLcjbuhP_XNSl0KOiCj70OpBJWFWKbCA'
+BOT_TOKEN = '8740215104:AAEuAWp_YeLxIKrnZLs0Kp5AMR1eE5rz3iY'
 #BOT_TOKEN = '7976955865:AAGZipH-V_-jrN5fKDrB0Bi_bPMtUzavA94' #test
 
 API_ID2 = "24559508" #Userbot Should Be Added In ADMINS and In CHANNELS
