@@ -58,7 +58,7 @@ JOIN_REQS_DB = environ.get("JOIN_REQS_DB", DATABASE_URI)
 LIMIT = 2000
 
 CHANNELS = "-1002400599577"
-BOT_USERNAME = "Spidy_Series_bot"
+BOT_USERNAME = "Spidy_Series_Robot"
 # Others
 LOG_CHANNEL = '-1003951788487'
 CUSTOM_FILE_CAPTION = environ.get("CUSTOM_FILE_CAPTION", "{previouscaption}")
